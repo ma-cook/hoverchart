@@ -6,10 +6,12 @@ on:
     paths:
       - 'backend/**'
       - 'migrations/**'
+      - 'src/shared/**'
   workflow_dispatch:
 
 jobs:
-  deploy:
+  scanner:
+    name: Provision + deploy scanner
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,7 +27,139 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - run: gcloud builds submit . --config backend/cloudbuild.yaml
-        env:
-          CLOUDSQL_INSTANCE: ${{ secrets.CLOUDSQL_INSTANCE }}
-          REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
+      - name: Resolve project + region
+        run: |
+          echo "PROJECT_ID=$(gcloud config get-value project 2>/dev/null)" >> "$GITHUB_ENV"
+          echo "REGION=${{ secrets.GCP_REGION || 'us-central1' }}" >> "$GITHUB_ENV"
+
+      # One-shot provisioning is idempotent, so every push is a safe no-op once
+      # the resources exist. The OIDC runner SA must be able to modify project
+      # IAM + Secret Manager (e.g. roles/resourcemanager.projectIamAdmin,
+      # roles/iam.serviceAccountAdmin, roles/secretmanager.admin); otherwise the
+      # first run fails with a clear gcloud permission error and scripts/
+      # deploy/00-setup-scanner-sa.ps1 remains the fallback.
+      - name: Ensure ENCRYPTION_KEY (only if missing/invalid)
+        run: |
+          set -eu
+          KEY=""
+          if gcloud secrets describe ENCRYPTION_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
+            KEY="$(gcloud secrets versions access latest --secret=ENCRYPTION_KEY --project "$PROJECT_ID" 2>/dev/null || true)"
+            KEY="${KEY%$'\n'}"
+          fi
+          if [ "${#KEY}" -eq 44 ]; then
+            echo "ENCRYPTION_KEY already set (44 chars) - leaving untouched"
+            exit 0
+          fi
+          # Never rotate a valid key; generate only when absent/empty so the
+          # currently-empty secret gets populated without invalidating anything.
+          KEY="$(head -c 32 /dev/urandom | base64 -w0)"
+          if gcloud secrets describe ENCRYPTION_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
+            printf '%s' "$KEY" | gcloud secrets versions add ENCRYPTION_KEY --data-file=- --project "$PROJECT_ID"
+          else
+            printf '%s' "$KEY" | gcloud secrets create ENCRYPTION_KEY --data-file=- --project "$PROJECT_ID"
+          fi
+          echo "Stored fresh 44-char ENCRYPTION_KEY."
+
+      - name: Ensure SCAN_INTERNAL_KEY (only if missing)
+        run: |
+          set -eu
+          KEY=""
+          if gcloud secrets describe SCAN_INTERNAL_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
+            KEY="$(gcloud secrets versions access latest --secret=SCAN_INTERNAL_KEY --project "$PROJECT_ID" 2>/dev/null || true)"
+            KEY="${KEY%$'\n'}"
+          fi
+          [ -n "$KEY" ] && { echo 'SCAN_INTERNAL_KEY already set - leaving untouched'; exit 0; }
+          KEY="$(cat /proc/sys/kernel/random/uuid)"
+          if gcloud secrets describe SCAN_INTERNAL_KEY --project "$PROJECT_ID" >/dev/null 2>&1; then
+            printf '%s' "$KEY" | gcloud secrets versions add SCAN_INTERNAL_KEY --data-file=- --project "$PROJECT_ID"
+          else
+            printf '%s' "$KEY" | gcloud secrets create SCAN_INTERNAL_KEY --data-file=- --project "$PROJECT_ID"
+          fi
+          echo "Stored fresh SCAN_INTERNAL_KEY."
+
+      - name: Provision scanner service account
+        run: |
+          set -euo pipefail
+          SA="hoverchart-scanner-sa@$PROJECT_ID.iam.gserviceaccount.com"
+          APP_SA="hoverchart-api-sa@$PROJECT_ID.iam.gserviceaccount.com"
+          gcloud iam service-accounts describe "$SA" --project "$PROJECT_ID" >/dev/null 2>&1 || \
+            gcloud iam service-accounts create hoverchart-scanner-sa \
+              --display-name="Hoverchart scanner Cloud Run" --project "$PROJECT_ID" --quiet
+          for ROLE in roles/cloudsql.client roles/storage.objectAdmin roles/secretmanager.secretAccessor; do
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+              --member="serviceAccount:$SA" --role="$ROLE" --quiet
+          done
+          gcloud iam service-accounts add-iam-policy-binding "$SA" \
+            --member="serviceAccount:$APP_SA" --role=roles/iam.serviceAccountUser --quiet
+
+      - name: Deploy scanner
+        run: gcloud builds submit . --config backend/cloudbuild-scanner.yaml --project "$PROJECT_ID"
+
+      - name: Wire invoker + SCANNER_SERVICE_URL
+        run: |
+          set -euo pipefail
+          APP_SA="hoverchart-api-sa@$PROJECT_ID.iam.gserviceaccount.com"
+          gcloud run services add-iam-policy-binding hoverchart-scanner --region "$REGION" \
+            --member="serviceAccount:$APP_SA" --role=roles/run.invoker --quiet
+          URL="$(gcloud run services describe hoverchart-scanner --region "$REGION" \
+            --format='value(status.url)' --project "$PROJECT_ID")"
+          echo "Scanner URL: $URL"
+          if gcloud secrets describe SCANNER_SERVICE_URL --project "$PROJECT_ID" >/dev/null 2>&1; then
+            printf '%s' "$URL" | gcloud secrets versions add SCANNER_SERVICE_URL --data-file=- --project "$PROJECT_ID"
+          else
+            printf '%s' "$URL" | gcloud secrets create SCANNER_SERVICE_URL --data-file=- --project "$PROJECT_ID"
+          fi
+          echo "STORE_SCANNER_URL=$URL" >> "$GITHUB_ENV"
+
+      - name: Smoke test scanner
+        run: |
+          set -euo pipefail
+          URL="$STORE_SCANNER_URL"
+          RUNNER_SA="$(gcloud auth list --format='value(account)')"
+          # The scanner is --no-allow-unauthenticated, so the check must carry an
+          # id-token. Bind the OIDC runner SA as invoker (idempotent), call
+          # /health, then drop the binding.
+          gcloud run services add-iam-policy-binding hoverchart-scanner --region "$REGION" \
+            --member="serviceAccount:$RUNNER_SA" --role=roles/run.invoker --quiet 2>/dev/null || true
+          for i in $(seq 1 12); do
+            TOKEN="$(gcloud auth print-identity-token --audiences="$URL" --project "$PROJECT_ID" 2>/dev/null || true)"
+            BODY="$(curl -s -m 30 -H "Authorization: Bearer $TOKEN" "$URL/health" || true)"
+            if [ -n "$BODY" ]; then
+              echo "scanner /health -> $BODY"
+              gcloud run services remove-iam-policy-binding hoverchart-scanner --region "$REGION" \
+                --member="serviceAccount:$RUNNER_SA" --role=roles/run.invoker --quiet >/dev/null 2>&1 || true
+              exit 0
+            fi
+            echo "waiting for scanner cold start... ($i/12)"
+            sleep 10
+          done
+          echo "scanner /health did not respond after 120s"
+          exit 1
+
+  api:
+    name: Deploy API
+    runs-on: ubuntu-latest
+    needs: scanner
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve project id
+        run: |
+          echo "PROJECT_ID=$(gcloud config get-value project 2>/dev/null)" >> "$GITHUB_ENV"
+
+      # Redeploy after the scanner URL landed in SCANNER_SERVICE_URL so
+      # ENCRYPTION_KEY / SCAN_INTERNAL_KEY / SCANNER_SERVICE_URL (:latest) are
+      # injected into the service at deploy time.
+      - name: Deploy API
+        run: gcloud builds submit . --config backend/cloudbuild.yaml --project "$PROJECT_ID"

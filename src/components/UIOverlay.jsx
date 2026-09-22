@@ -27,7 +27,19 @@ import {
   getGithubOAuthUrl,
   rescanRepositoryForChanges,
   refreshGithubConnection,
+  scanRepositoryAndGenerateDiagram,
 } from '../services/githubRepoService';
+import {
+  makeSession,
+  startScanJob,
+  cancelScanJob,
+  fetchScanJob,
+  pollScanJob,
+  hydrateServerResult,
+  isLocalFallbackError,
+  getErrorStatus,
+} from '../services/durableScan';
+import { saveScanSession, loadScanSession, clearScanSession } from '../services/scanJobSession';
 import {
   scanWebsiteAndGenerateDiagram,
   validateScanUrl,
@@ -262,6 +274,7 @@ const UIOverlay = ({
   const lastGeneratedMarkdownBlobRef = useRef(null);
   const lastGeneratedMarkdownTextRef = useRef(null);
   const backgroundJobRef = useRef(null);
+  const activePollRef = useRef(null); // { spaceId, cancel } — durable poll for the current space
 
   const storeGeneratedMarkdown = useCallback((markdown, spaceId) => {
     if (lastGeneratedMarkdownBlobRef.current) {
@@ -424,6 +437,120 @@ const UIOverlay = ({
         .catch(() => {});
     }
   }, [currentSpaceId, user, storeGeneratedMarkdown]);
+
+  // Hydrator shared by every durable-scan entry point (BG button, rescan
+  // button, reopened-tab re-attach): fetch the uploaded markdown, persist it,
+  // repopulate the content store, update space metadata, and re-hydrate 3D.
+  const clearDurablePoll = useCallback((jobId) => {
+    if (activePollRef.current?.jobId === jobId) activePollRef.current = null;
+    if (backgroundJobRef.current?.jobId === jobId) backgroundJobRef.current = null;
+  }, []);
+
+  const buildDurableHydrate = useCallback((kind, repo) => {
+    return async (doneJob) => {
+      try {
+        const markdown = await hydrateServerResult({
+          job: doneJob,
+          spaceId: currentSpaceId,
+          storeMarkdown: storeGeneratedMarkdown,
+          setLatestMarkdownUrl,
+        });
+        if (doneJob.sha) setLastCommitSha(doneJob.sha);
+        if (currentSpaceId) {
+          const payload = { diagramRepo: repo };
+          if (doneJob.markdown_storage_url) payload.markdownStorageUrl = doneJob.markdown_storage_url;
+          if (doneJob.sha) payload.diagramCommitSha = doneJob.sha;
+          api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
+        }
+        diagramIsBeingGenerated.current = true;
+        await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
+        setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
+        setNotification({
+          show: true,
+          message: kind === 'rescan'
+            ? `Rescan complete: ${doneJob.objects_created ?? 0} nodes, ${doneJob.connections_created ?? 0} connections`
+            : `Background scan complete: ${doneJob.objects_created ?? 0} nodes, ${doneJob.connections_created ?? 0} connections`,
+        });
+        setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+      } finally {
+        clearDurablePoll(doneJob.id);
+      }
+    };
+  }, [currentSpaceId, storeGeneratedMarkdown, clearDurablePoll]);
+
+  const buildDurableFailed = useCallback(() => (doneJob) => {
+    try {
+      setNotification({
+        show: true,
+        message: doneJob.status === 'cancelled'
+          ? 'Scan cancelled'
+          : `Scan failed: ${doneJob.error || 'unknown error'}`,
+      });
+      setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+    } finally {
+      clearDurablePoll(doneJob.id);
+    }
+  }, [clearDurablePoll]);
+
+  const registerDurablePoll = useCallback((spaceId, jobId, cancel) => {
+    if (activePollRef.current?.cancel && activePollRef.current.spaceId !== spaceId) {
+      activePollRef.current.cancel();
+    }
+    const wrapped = () => {
+      cancel();
+      if (activePollRef.current?.jobId === jobId) activePollRef.current = null;
+      if (backgroundJobRef.current?.jobId === jobId) backgroundJobRef.current = null;
+    };
+    activePollRef.current = { spaceId, jobId, cancel: wrapped };
+    return wrapped;
+  }, []);
+
+  // Re-attach a durable server scan session on (re)open: a minimized/closed
+  // tab resumes progress from where the server left off, and a finished job
+  // hydrates the diagram right away.
+  useEffect(() => {
+    if (!currentSpaceId || !user?.uid || user.isGuest) return;
+    let disposed = false;
+    (async () => {
+      const session = loadScanSession(currentSpaceId);
+      if (!session?.jobId || disposed) return;
+      if (backgroundJobRef.current?.jobId === session.jobId) return;
+      const job = await fetchScanJob({ api, jobId: session.jobId });
+      if (disposed) return;
+      if (!job) {
+        clearScanSession(currentSpaceId);
+        return;
+      }
+      const repo = {
+        owner: { login: session.repoOwner },
+        name: session.repoName,
+        default_branch: session.branch,
+        branch: session.branch,
+      };
+      const cancel = pollScanJob({
+        api,
+        session: {
+          ...session,
+          status: job.status,
+          progress: job.progress || 0,
+          stage: job.stage || null,
+        },
+        spaceId: currentSpaceId,
+        onProgress: setScanProgress,
+        hydrate: buildDurableHydrate(session.kind === 'rescan' ? 'rescan' : 'full', repo),
+        onFailed: buildDurableFailed(),
+      });
+      const wrapped = registerDurablePoll(currentSpaceId, session.jobId, cancel);
+      backgroundJobRef.current = { cancelled: wrapped, jobId: session.jobId, kind: session.kind };
+    })();
+    return () => {
+      disposed = true;
+      if (activePollRef.current?.spaceId === currentSpaceId) {
+        activePollRef.current.cancel();
+        activePollRef.current = null;
+      }
+    };
+  }, [currentSpaceId, user, buildDurableHydrate, buildDurableFailed, registerDurablePoll]);
 
   // Chat scans run inside SpaceChat which has no access to latestMarkdownUrl
   // persistence. Mirror the in-canvas scan's success handling so the markdown
@@ -843,12 +970,12 @@ const UIOverlay = ({
     }
   };
 
-  // Rescan: check for new commits and only process changed files
-  const handleRescan = async (repo) => {
+  // Local rescan: the durable server path's in-browser fallback (401/429 or
+  // guest account). Compares locally, filters changed files, merges markdown.
+  const runLocalRescan = async (repo) => {
     try {
       setScanProgress({ isScanning: true, progress: 0, stage: 'Checking for changes...' });
 
-      // Must have a commit SHA from the initial scan to compare against
       if (!lastCommitSha) {
         setScanProgress({ isScanning: false, progress: 0, stage: '' });
         setNotification({
@@ -869,7 +996,6 @@ const UIOverlay = ({
         }
       }
 
-      // Must have existing markdown to merge into
       if (!existingMarkdown) {
         setScanProgress({ isScanning: false, progress: 0, stage: '' });
         setNotification({
@@ -889,7 +1015,6 @@ const UIOverlay = ({
         },
       );
 
-      // No changes detected
       if (rescanResult.noChanges) {
         setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
         setLastCommitSha(rescanResult.commitSha);
@@ -901,7 +1026,6 @@ const UIOverlay = ({
         return;
       }
 
-      // Process only the NEW merfolk entries to create new objects
       let storageUrl = null;
       if (user?.uid && currentSpaceId) {
         setScanProgress({ isScanning: true, progress: 50, stage: 'Uploading updated diagram...' });
@@ -917,9 +1041,6 @@ const UIOverlay = ({
         }
       }
 
-      // Process the merged markdown (existing + new content) to recompute the full diagram layout
-      // with all nodes and connections, ensuring new objects integrate into the correct positions
-      // rather than being placed in cloned containers to the side.
       diagramIsBeingGenerated.current = true;
       setScanProgress({ isScanning: true, progress: 65, stage: 'Recomputing diagram layout...' });
       const mergedBlob = new Blob([rescanResult.mergedMarkdown], { type: 'text/markdown' });
@@ -934,18 +1055,9 @@ const UIOverlay = ({
 
       setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
 
-      // Update stored state
       setLastCommitSha(rescanResult.commitSha);
       storeGeneratedMarkdown(rescanResult.mergedMarkdown, currentSpaceId);
-      // Deferred so the scan-complete state can paint before the digest
-      // snapshot is serialized.
       setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
-      // Fire-and-forget: re-index the merged markdown off the main thread.
-      // Merge the rescan's changed-file contents into the full repo corpus so
-      // search_code and read_file both reflect the NEW commit (rescan previously
-      // passed null, which reset the worker and left search on the stale
-      // pre-rescan contents). The merged map keeps every path, so the purge in
-      // populateContentStoreWorker removes nothing.
       const codeStoreState = useCodeStore.getState();
       const baseContents = codeStoreState.repoFileContents;
       let mergedContents = null;
@@ -971,11 +1083,9 @@ const UIOverlay = ({
         setLatestMarkdownUrl(storageUrl);
       }
 
-      // Persist updated diagram metadata via API
       if (currentSpaceId) {
-        const payload = { diagramRepo: repo };
+        const payload = { diagramRepo: repo, diagramCommitSha: rescanResult.commitSha };
         if (storageUrl) payload.markdownStorageUrl = storageUrl;
-        if (rescanResult.commitSha) payload.diagramCommitSha = rescanResult.commitSha;
         api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
       }
 
@@ -1003,73 +1113,107 @@ const UIOverlay = ({
     }
   };
 
+  // Rescan button: prefer a durable server-side diff rescan (survives tab
+  // minimize/close). Falls back to the in-browser local rescan when server
+  // scans are unavailable (guest account, 401, 429, or no previous commit).
+  const handleRescan = async (repo) => {
+    if (!repo || !currentSpaceId) return;
+
+    if (!lastCommitSha) {
+      setScanProgress({ isScanning: false, progress: 0, stage: '' });
+      setNotification({
+        show: true,
+        message: 'No previous scan commit found. Run a full scan first.',
+      });
+      setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+      return;
+    }
+
+    if (!user?.uid || user.isGuest) {
+      await runLocalRescan(repo);
+      return;
+    }
+
+    if (backgroundJobRef.current?.cancelled) {
+      const handle = backgroundJobRef.current;
+      backgroundJobRef.current = null;
+      handle.cancelled();
+      setScanProgress({ isScanning: false, progress: 0, stage: '' });
+    }
+
+    setScanProgress({ isScanning: true, progress: 2, stage: 'Queuing server rescan...' });
+    try {
+      const job = await startScanJob({ api, spaceId: currentSpaceId, repo, rescan: true });
+      const session = makeSession(job, 'rescan', repo);
+      saveScanSession(currentSpaceId, session);
+      const cancel = pollScanJob({
+        api,
+        session,
+        spaceId: currentSpaceId,
+        onProgress: setScanProgress,
+        hydrate: buildDurableHydrate('rescan', repo),
+        onFailed: buildDurableFailed(),
+      });
+      const wrapped = registerDurablePoll(currentSpaceId, job.id, cancel);
+      backgroundJobRef.current = { cancelled: wrapped, jobId: job.id, kind: 'rescan' };
+    } catch (err) {
+      if (isLocalFallbackError(err)) {
+        setNotification({ show: true, message: 'Server scans unavailable — running local rescan instead' });
+        setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+        await runLocalRescan(repo);
+      } else if (getErrorStatus(err) === 400) {
+        setScanProgress({ isScanning: false, progress: 0, stage: '' });
+        setNotification({ show: true, message: err.message.replace(/^\d+: /, '') });
+        setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+      } else {
+        setScanProgress({ isScanning: false, progress: 0, stage: '' });
+        setNotification({ show: true, message: `Could not start rescan: ${err.message}` });
+        setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+      }
+    }
+  };
+
+  // Local full-scan fallback when server scans are unavailable (guest account,
+  // 401, or 429): run the established in-browser full repository scan, then
+  // persist the result exactly like a chat scan would.
+  const runLocalFullScan = useCallback(async (repo) => {
+    try {
+      setScanProgress({ isScanning: true, progress: 0, stage: 'Local scan (server unavailable)...' });
+      const result = await scanRepositoryAndGenerateDiagram(
+        repo,
+        onCreateObject,
+        user,
+        currentSpaceId,
+        uploadMarkdownToStorage,
+        markdownDiagramService,
+        (progress, stage) => setScanProgress({ isScanning: true, progress, stage }),
+      );
+      setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
+      if (result.commitSha) setLastCommitSha(result.commitSha);
+      if (result.markdown) storeGeneratedMarkdown(result.markdown, currentSpaceId);
+      if (result.storageUrl) setLatestMarkdownUrl(result.storageUrl);
+      if (currentSpaceId) {
+        const payload = { diagramRepo: repo };
+        if (result.storageUrl) payload.markdownStorageUrl = result.storageUrl;
+        if (result.commitSha) payload.diagramCommitSha = result.commitSha;
+        api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
+      }
+      setNotification({
+        show: true,
+        message: `Local scan complete: ${result.objectsCreated} objects, ${result.connectionsCreated} connections`,
+      });
+      setTimeout(() => setNotification({ show: false, message: '' }), 4000);
+    } catch (err) {
+      console.error('Local full scan failed:', err);
+      setScanProgress({ isScanning: false, progress: 0, stage: '' });
+      setNotification({ show: true, message: `Local scan failed: ${err.message}` });
+      setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+    }
+  }, [onCreateObject, user, currentSpaceId, storeGeneratedMarkdown]);
+
   // Background scan: the heavy repository scan runs server-side (dedicated
-  // scanner Cloud Run service). We only enqueue the job, poll its status, then
-  // hydrate from the uploaded markdown once it lands.
-  const hydrateBackgroundResult = useCallback(async (job) => {
-    const markdown = await fetchStoredMarkdown(job.markdown_storage_url);
-    if (!markdown) throw new Error('Background scan finished but produced no markdown');
-
-    storeGeneratedMarkdown(markdown, currentSpaceId);
-    if (job.markdown_storage_url) {
-      setLatestMarkdownUrl(job.markdown_storage_url);
-    }
-    setNotification({ show: true, message: `Background scan complete: ${job.objects_created ?? 0} nodes, ${job.connections_created ?? 0} connections` });
-    setTimeout(() => setNotification({ show: false, message: '' }), 4000);
-
-    if (currentSpaceId) {
-      const payload = { diagramRepo: currentDiagramRepo };
-      if (job.markdown_storage_url) payload.markdownStorageUrl = job.markdown_storage_url;
-      api.patch(`/api/spaces/${currentSpaceId}`, payload).catch(() => {});
-    }
-
-    diagramIsBeingGenerated.current = true;
-    await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
-    setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
-  }, [currentSpaceId, currentDiagramRepo, storeGeneratedMarkdown]);
-
-  const pollBackgroundJob = useCallback(async (jobId) => {
-    let cancelled = false;
-    backgroundJobRef.current = { cancelled: () => cancelled };
-    const tick = async (delay) => {
-      if (cancelled) return;
-      let job;
-      try {
-        job = await api.get(`/api/scan-jobs/${jobId}`);
-      } catch (err) {
-        console.warn('[UIOverlay] background scan poll failed:', err.message);
-        setTimeout(() => tick(Math.min(delay * 1.5, 15000)), 4000);
-        return;
-      }
-      if (!job || cancelled) return;
-      if (['done', 'failed', 'cancelled'].includes(job.status)) {
-        backgroundJobRef.current = null;
-        setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
-        if (job.status === 'done') {
-          try {
-            await hydrateBackgroundResult(job);
-          } catch (err) {
-            console.error('Background scan hydrate failed:', err);
-            setNotification({ show: true, message: `Background scan done but hydration failed: ${err.message}` });
-            setTimeout(() => setNotification({ show: false, message: '' }), 4000);
-          }
-        } else {
-          setNotification({
-            show: true,
-            message: job.status === 'cancelled'
-              ? 'Background scan cancelled'
-              : `Background scan failed: ${job.error || 'unknown error'}`,
-          });
-          setTimeout(() => setNotification({ show: false, message: '' }), 5000);
-        }
-        return;
-      }
-      setScanProgress({ isScanning: true, progress: job.progress || 0, stage: job.stage || `Background scan (${job.status})...` });
-      setTimeout(() => tick(Math.min(delay * 1.5, 15000)), delay);
-    };
-    tick(2000);
-  }, [hydrateBackgroundResult]);
-
+  // scanner Cloud Run service). The job is durable — the session survives tab
+  // minimize/close and is reattached on reopen.
   const handleBackgroundScan = useCallback(async (repo) => {
     if (!repo) return;
     if (!user?.uid || user.isGuest) {
@@ -1080,30 +1224,42 @@ const UIOverlay = ({
 
     // If a background job is already running, this button cancels it.
     if (backgroundJobRef.current) {
-      if (backgroundJobRef.current.cancelled) {
-        backgroundJobRef.current.cancelled();
-        backgroundJobRef.current = null;
-        setScanProgress({ isScanning: false, progress: 0, stage: '' });
-      }
+      const handle = backgroundJobRef.current;
+      backgroundJobRef.current = null;
+      cancelScanJob({ api, jobId: handle.jobId }).finally(() => handle.cancelled());
+      setScanProgress({ isScanning: false, progress: 0, stage: '' });
       return;
     }
 
     try {
       setScanProgress({ isScanning: true, progress: 1, stage: 'Queuing background scan...' });
-      const job = await api.post('/api/scan-jobs', {
+      const job = await startScanJob({ api, spaceId: currentSpaceId, repo, rescan: false });
+      const session = makeSession(job, 'full', repo);
+      saveScanSession(currentSpaceId, session);
+      const cancel = pollScanJob({
+        api,
+        session,
         spaceId: currentSpaceId,
-        repoOwner: repo.owner?.login || repo.owner,
-        repoName: repo.name,
-        branch: repo.default_branch || null,
+        onProgress: setScanProgress,
+        hydrate: buildDurableHydrate('full', repo),
+        onFailed: buildDurableFailed(),
       });
-      await pollBackgroundJob(job.id);
+      const wrapped = registerDurablePoll(currentSpaceId, job.id, cancel);
+      backgroundJobRef.current = { cancelled: wrapped, jobId: job.id, kind: 'full' };
     } catch (err) {
-      console.error('Background scan start failed:', err);
-      setScanProgress({ isScanning: false, progress: 0, stage: '' });
-      setNotification({ show: true, message: `Could not start background scan: ${err.message}` });
-      setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+      if (isLocalFallbackError(err)) {
+        setScanProgress({ isScanning: false, progress: 0, stage: '' });
+        setNotification({ show: true, message: 'Server scan unavailable — running local in-browser scan' });
+        setTimeout(() => setNotification({ show: false, message: '' }), 3000);
+        await runLocalFullScan(repo);
+      } else {
+        console.error('Background scan start failed:', err);
+        setScanProgress({ isScanning: false, progress: 0, stage: '' });
+        setNotification({ show: true, message: `Could not start background scan: ${err.message}` });
+        setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+      }
     }
-  }, [currentSpaceId, user, pollBackgroundJob]);
+  }, [currentSpaceId, user, buildDurableHydrate, buildDurableFailed, registerDurablePoll, runLocalFullScan]);
 
   // Download the latest generated markdown file
   const handleDownloadMarkdown = useCallback(async () => {

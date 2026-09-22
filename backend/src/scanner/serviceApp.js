@@ -3,7 +3,7 @@ import { Storage } from '@google-cloud/storage';
 import { fileURLToPath } from 'node:url';
 import pool from '../db.js';
 import { decryptSecret } from '../security/crypto.js';
-import { runBackgroundScan } from './runScan.js';
+import { runBackgroundScan, runBackgroundRescan, DiffTooLargeError } from './runScan.js';
 
 const bucketName = process.env.GCS_BUCKET;
 const storage = bucketName ? new Storage() : null;
@@ -59,7 +59,7 @@ export async function runJob(jobId) {
   }
 
   try {
-    const result = await runBackgroundScan({
+    const options = {
       token,
       owner: job.repo_owner,
       repo: job.repo_name,
@@ -67,7 +67,66 @@ export async function runJob(jobId) {
       onProgress: async (pct, stage) => {
         await setJob(job.id, { progress: pct, stage: String(stage).slice(0, 200) });
       },
-    });
+    };
+
+    let result;
+    let escalatedToFull = false;
+
+    if (job.is_rescan) {
+      const spaceRows = await pool.query(
+        'SELECT markdown_storage_url, diagram_commit_sha FROM spaces WHERE id = $1',
+        [job.space_id]
+      );
+      const space = spaceRows.rows[0];
+
+      let existingMarkdown = null;
+      if (storage && space?.markdown_storage_url) {
+        try {
+          const [file] = await storage.bucket(bucketName).file(space.markdown_storage_url).download();
+          existingMarkdown = file.toString('utf8');
+        } catch (e) {
+          console.warn(`[rescan ${job.id}] existing markdown unreadable: ${e.message}`);
+        }
+      }
+
+      try {
+        result = await runBackgroundRescan({
+          ...options,
+          baseCommitSha: job.base_commit_sha || space?.diagram_commit_sha,
+          existingMarkdown,
+        });
+      } catch (err) {
+        // Diff un-computable or no previous diagram — rebuild from HEAD.
+        if (err instanceof DiffTooLargeError) {
+          console.warn(`[rescan ${job.id}] escalated to full scan: ${err.message}`);
+          escalatedToFull = true;
+          await setJob(job.id, { stage: 'Full rescan (diff too large)', progress: 1 });
+          result = await runBackgroundScan(options);
+        } else {
+          throw err;
+        }
+      }
+
+      if (result.noChanges) {
+        const newSha = result.commitSha;
+        await setJob(job.id, {
+          status: 'done',
+          stage: 'Complete',
+          progress: 100,
+          sha: newSha,
+          base_commit_sha: newSha,
+          changed_file_count: result.changedFileCount ?? 0,
+        });
+        await pool.query(`UPDATE spaces SET diagram_commit_sha = $1, updated_at = NOW() WHERE id = $2`, [
+          newSha,
+          job.space_id,
+        ]);
+        console.log(`[rescan ${job.repo_owner}/${job.repo_name}] no changes at ${newSha.slice(0, 8)}`);
+        return { ok: true, noChanges: true, counts: { nodes: job.objects_created ?? 0, edges: job.connections_created ?? 0 } };
+      }
+    } else {
+      result = await runBackgroundScan(options);
+    }
 
     await setJob(job.id, { status: 'uploading', stage: 'Uploading diagram', progress: 95 });
 
@@ -75,21 +134,25 @@ export async function runJob(jobId) {
     await uploadMarkdown(relPath, result.markdown);
 
     const counts = countMerfolk(result.markdown);
+    const headSha = result.commitSha || null;
     await setJob(job.id, {
       status: 'done',
       stage: 'Complete',
       progress: 100,
       markdown_storage_url: relPath,
+      sha: headSha,
+      base_commit_sha: headSha,
+      changed_file_count: job.is_rescan ? result.changedFileCount ?? null : null,
       objects_created: counts.nodes,
       connections_created: counts.edges,
     });
-    await pool.query(`UPDATE spaces SET markdown_storage_url = $1, updated_at = NOW() WHERE id = $2`, [
-      relPath,
-      job.space_id,
-    ]);
+    await pool.query(
+      `UPDATE spaces SET markdown_storage_url = $1, diagram_commit_sha = $2, diagram_repo = $3, updated_at = NOW() WHERE id = $4`,
+      [relPath, headSha, `${job.repo_owner}/${job.repo_name}`, job.space_id]
+    );
 
-    console.log(`[scan ${job.repo_owner}/${job.repo_name}] done: ${counts.nodes} nodes, ${counts.edges} edges -> ${relPath}`);
-    return { ok: true, counts };
+    console.log(`[scan ${job.repo_owner}/${job.repo_name}]${job.is_rescan ? ' (rescan)' : ''} done: ${counts.nodes} nodes, ${counts.edges} edges -> ${relPath}`);
+    return { ok: true, counts, escalatedToFull, noChanges: false };
   } catch (err) {
     console.error(`Scan ${job.id} failed:`, err);
     await setJob(job.id, {

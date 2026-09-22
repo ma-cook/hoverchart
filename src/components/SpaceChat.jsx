@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { onSocket, emitSocket } from '../api-client';
+import { onSocket, emitSocket, api } from '../api-client';
+import {
+  makeSession,
+  startScanJob,
+  pollScanJob,
+  hydrateServerResult,
+  isLocalFallbackError,
+} from '../services/durableScan';
+import { saveScanSession } from '../services/scanJobSession';
 import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker } from '../services/zenService';
 import { sendWithRetrieval, getContentStore, waitForContentStoreHydration } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
@@ -1324,6 +1332,72 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     let lastProgressTime = 0;
     window._connectionUpdateSkip = true;
     useDiagramStore.getState().clearConnectionsProgress();
+
+    // Durable server-side scan first. The job survives tab minimize/close and
+    // the browser reattaches it from the saved session on reopen. Falls back
+    // to the in-browser scan below when server scans are unavailable
+    // (guest account, 401/429, or no previous scan to diff against).
+    if (user?.uid && !user.isGuest) {
+      const branch = selectedBranch || repo.default_branch || 'main';
+      const repoForJob = { ...repo, default_branch: branch };
+      try {
+        const job = await startScanJob({ api, spaceId, repo: repoForJob, rescan: false });
+        const session = makeSession(job, 'full', repoForJob);
+        saveScanSession(spaceId, session);
+        setScanProgress({ stage: 'Queued server scan — keeps running if you close this tab', progress: 2 });
+        pollScanJob({
+          api,
+          session,
+          spaceId,
+          onProgress: (p) =>
+            setScanProgress(
+              p.isScanning === false
+                ? null
+                : { stage: p.stage || `Background scan (${p.status})...`, progress: p.progress || 0 }
+            ),
+          hydrate: async (doneJob) => {
+            const markdown = await hydrateServerResult({
+              job: doneJob,
+              spaceId,
+              storeMarkdown: () => {},
+              setLatestMarkdownUrl: () => {},
+            });
+            await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
+            setTimeout(() => saveDiagramDigest(spaceId), 0);
+            onDiagramGenerated?.({
+              markdown,
+              storageUrl: doneJob.markdown_storage_url,
+              commitSha: doneJob.sha,
+              repo,
+            });
+            setScanProgress(null);
+            window._connectionUpdateSkip = false;
+            setPushNotification({
+              type: 'success',
+              message: `Diagram created via server scan: ${doneJob.objects_created ?? 0} objects, ${doneJob.connections_created ?? 0} connections`,
+            });
+            setTimeout(() => setPushNotification(null), 5000);
+          },
+          onFailed: (doneJob) => {
+            window._connectionUpdateSkip = false;
+            setScanProgress(null);
+            setPushNotification({
+              type: 'error',
+              message: doneJob.status === 'cancelled'
+                ? 'Scan cancelled'
+                : `Server scan failed: ${doneJob.error || 'unknown error'}`,
+            });
+            setTimeout(() => setPushNotification(null), 5000);
+          },
+        });
+        return;
+      } catch (err) {
+        if (!isLocalFallbackError(err)) {
+          console.warn('[scan] server scan unavailable, falling back to local:', err.message);
+        }
+      }
+    }
+
     try {
       const result = await scanRepositoryAndGenerateDiagram(
         repo,

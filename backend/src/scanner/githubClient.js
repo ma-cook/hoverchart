@@ -25,6 +25,7 @@ const classifyFileType = (filePath) => {
   if (tsLang) return tsLang;
   return null;
 };
+export { classifyFileType };
 
 export class GithubClient {
   /**
@@ -39,6 +40,7 @@ export class GithubClient {
     this.owner = owner;
     this.repo = repo;
     this.ref = ref;
+    this.headSha = null;
   }
 
   async request(path, { query = {}, headers = {}, method = 'GET', body } = {}) {
@@ -76,7 +78,46 @@ export class GithubClient {
     const res = await this.request(path, { query: { per_page: 1 } });
     if (!res.ok) throw new Error(`GitHub API error fetching commit: ${res.status}`);
     const data = await res.json();
+    this.headSha = data.sha;
     return data.sha;
+  }
+
+  /**
+   * Changed files between two commits via the Compare API. Returns
+   * `[{ filename, status }]` with status in added/removed/modified/renamed.
+   * Throws a `DiffTooLargeError` when GitHub refuses the compare (base older
+   * than ~250 commits) so the caller can escalate to a full scan.
+   */
+  async compare(base, head = this.headSha ?? 'HEAD') {
+    const path = `/repos/${this.owner}/${this.repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
+    const perPage = 100;
+    const files = [];
+    let totalCommits = 0;
+    let page = 1;
+    for (;;) {
+      const res = await this.request(path, { query: { per_page: perPage, page } });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        if (body.includes('LIBSAIL') || res.status === 404 || res.status === 422) {
+          throw new DiffTooLargeError(`Compare unavailable (${res.status}): ${body.slice(0, 120)}`);
+        }
+        throw new Error(`GitHub API error comparing commits: ${res.status}`);
+      }
+      const data = await res.json();
+      totalCommits = data.total_commits ?? totalCommits;
+      if (totalCommits > 250) {
+        throw new DiffTooLargeError(`Compare range too large (${totalCommits} commits)`);
+      }
+      const pageFiles = data.files || [];
+      files.push(...pageFiles);
+
+      const link = res.headers.get('Link') || '';
+      const hasNextLink = /rel="?next"?/.test(link);
+      if (!hasNextLink && pageFiles.length < perPage) break;
+      if (page >= 25) break; // hard cap — GitHub caps diffs well below this
+      page += 1;
+    }
+    return files;
   }
 
   /**
@@ -86,6 +127,7 @@ export class GithubClient {
    */
   async fetchStructure() {
     const commitSha = await this.latestCommitSha();
+    this.headSha = commitSha;
     const commitRes = await this.request(`/repos/${this.owner}/${this.repo}/git/commits/${commitSha}`);
     if (!commitRes.ok) throw new Error(`GitHub API error fetching commit: ${commitRes.status}`);
     const commitData = await commitRes.json();
@@ -158,3 +200,11 @@ export class GithubClient {
 
 /** Encode each path segment so the Contents API accepts special characters. */
 const encodePath = (filePath) => filePath.split('/').map(encodeURIComponent).join('/');
+
+/** Raised when a Compare-based diff cannot be computed (too large / unsupported). */
+export class DiffTooLargeError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'DiffTooLargeError';
+  }
+}

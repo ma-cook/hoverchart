@@ -35,6 +35,13 @@ async function tierLimit(ownerId) {
   return TIER_LIMITS[rows[0]?.tier] ?? TIER_LIMITS.free;
 }
 
+const RESCAN_NEEDED = 'No previous scan to increment against — run a full scan first';
+
+const JOB_COLUMNS = `id, space_id, repo_owner, repo_name, branch, is_rescan,
+       base_commit_sha, changed_file_count, status, progress, stage,
+       error, markdown_storage_url, objects_created, connections_created,
+       created_at, updated_at, sha`;
+
 // GET /api/scan-jobs?spaceId=&status= — recent scan jobs for the user
 router.get('/', async (req, res) => {
   if (!requireConnected(req, res)) return;
@@ -51,9 +58,7 @@ router.get('/', async (req, res) => {
       where += ` AND status = $${params.length}`;
     }
     const { rows } = await pool.query(
-      `SELECT id, space_id, repo_owner, repo_name, branch, status, progress, stage,
-              error, markdown_storage_url, objects_created, connections_created,
-              created_at, updated_at
+      `SELECT ${JOB_COLUMNS}
        FROM scan_jobs
        WHERE ${where}
        ORDER BY created_at DESC
@@ -72,9 +77,7 @@ router.get('/:id', async (req, res) => {
   if (!requireConnected(req, res)) return;
   try {
     const { rows } = await pool.query(
-      `SELECT id, space_id, repo_owner, repo_name, branch, status, progress, stage,
-              error, markdown_storage_url, objects_created, connections_created,
-              created_at, updated_at
+      `SELECT ${JOB_COLUMNS}
        FROM scan_jobs
        WHERE id = $1 AND owner_id = $2`,
       [req.params.id, req.user.sub]
@@ -91,7 +94,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   if (!requireConnected(req, res)) return;
   const userId = req.user.sub;
-  const { spaceId, repoOwner, repoName, branch } = req.body || {};
+  const { spaceId, repoOwner, repoName, branch, rescan = false } = req.body || {};
   if (!spaceId || !repoOwner || !repoName) {
     return res.status(400).json({ error: 'spaceId, repoOwner and repoName are required' });
   }
@@ -101,7 +104,8 @@ router.post('/', async (req, res) => {
 
   try {
     const space = await pool.query(
-      `SELECT id, markdown_storage_url FROM spaces WHERE id = $1 AND owner_id = $2`,
+      `SELECT id, markdown_storage_url, diagram_commit_sha, diagram_repo
+       FROM spaces WHERE id = $1 AND owner_id = $2`,
       [spaceId, userId]
     );
     if (space.rows.length === 0) {
@@ -116,6 +120,12 @@ router.post('/', async (req, res) => {
       return res.status(401).json({ error: 'Connect GitHub to start background scans' });
     }
 
+    const spaceRow = space.rows[0];
+    const baseCommitSha = rescan ? spaceRow.diagram_commit_sha : null;
+    if (rescan && !baseCommitSha) {
+      return res.status(400).json({ error: RESCAN_NEEDED });
+    }
+
     const [active, limit] = await Promise.all([activeCount(userId), tierLimit(userId)]);
     if (active >= limit) {
       return res.status(429).json({
@@ -127,10 +137,10 @@ router.post('/', async (req, res) => {
 
     const id = randomUUID();
     const { rows } = await pool.query(
-      `INSERT INTO scan_jobs (id, owner_id, space_id, repo_owner, repo_name, branch)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO scan_jobs (id, owner_id, space_id, repo_owner, repo_name, branch, is_rescan, base_commit_sha)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [id, userId, spaceId, repoOwner, repoName, branch || null]
+      [id, userId, spaceId, repoOwner, repoName, branch || null, rescan, baseCommitSha]
     );
     const job = rows[0];
 
