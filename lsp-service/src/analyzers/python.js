@@ -161,6 +161,38 @@ export async function analyzePython(lspManager, files, options = {}, onProgress)
           }
         }
       }
+
+      // ── Call graph: cross-file callers of each function ──────────────
+      if (includeCallGraph) {
+        // `def` may be indented (methods) and may be `async`; classes are not
+        // call-graph nodes, matching the TypeScript analyzer.
+        const funcMatch = line.match(/^\s*(?:async\s+)?def\s+(\w+)\s*\(/);
+        if (funcMatch) {
+          try {
+            const refsResult = await lspManager.request(language, 'textDocument/references', {
+              textDocument: { uri: `file:///${file.path}` },
+              position: { line: lineIdx, character: line.indexOf(funcMatch[1]) },
+              context: { includeDeclaration: false },
+            }, 5000);
+
+            if (refsResult && Array.isArray(refsResult)) {
+              for (const ref of refsResult) {
+                const callerFile = (ref.uri || '').replace('file:///', '');
+                if (!callerFile || callerFile === file.path) continue; // Skip same-file refs
+                result.callGraph.push({
+                  callerFile,
+                  callerName: '',
+                  calleeFile: file.path,
+                  calleeName: funcMatch[1],
+                  calleeLine: lineIdx + 1,
+                });
+              }
+            }
+          } catch {
+            // Non-fatal
+          }
+        }
+      }
     }
   }
 

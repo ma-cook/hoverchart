@@ -165,7 +165,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       setPendingInvites([]);
       setAccountTier('free');
     }
-  }, [user]);
+  }, [user, fetchUserSpaces]);
 
   const handleLogin = useCallback(async () => {
     const store = useAuthStore.getState();

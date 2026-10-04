@@ -500,6 +500,7 @@ const existingIdsRef = useRef(new Set());
     setIsLookingUpPublicSpace,
     currentSpaceOwner,
     publicSpaceReady,
+    onBackToLanding,
   ]);
   // Check for unauthorized access and redirect to volscape.com
   useEffect(() => {
@@ -525,6 +526,8 @@ const existingIdsRef = useRef(new Set());
     publicSpaceId,
     isAuthReady,
     isLookingUpPublicSpace,
+    trialMode,
+    onBackToLanding,
   ]);
 
   // Create stable key for loaded cells to prevent infinite subscription loop.
@@ -1141,7 +1144,6 @@ const existingIdsRef = useRef(new Set());
     if (loadedCellsKey > 0) {
       wakeSpatialPolling();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedCellsKey]);
 
   // Retroactively track existing objects when spatial manager becomes initialized

@@ -257,10 +257,13 @@ const AtlasTextSprite = ({
     const opacityValue = style.opacity !== undefined ? style.opacity : 1;
     const mat = getSharedMaterial(entryTexture, side, depthWriteValue, depthTestValue, opacityValue);
 
+    // Note: `style` is captured only by the console.warn diagnostic further up;
+    // every field that actually determines geometry/material is listed below.
     return {
       geometry: geo,
       material: mat,
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- whole `style` object would rebuild geometry/material every render
   }, [
     text,
     style.fontSize,
@@ -469,7 +472,7 @@ const DynamicBillboardMesh = React.memo(({
     const isHeader = (followTarget?.current && style.isHeaderText) || style.isContainerHeader;
     if (!isHeader) return;
     return registerHeaderBillboardMesh(meshRef);
-  }, [followTarget, style.isHeaderText, style.isContainerHeader]);
+  }, [meshRef, followTarget, style.isHeaderText, style.isContainerHeader]);
 
   // Billboard and positioning effect using useFrame
   // PERFORMANCE OPTIMIZED: Uses reusable THREE objects and smart throttling

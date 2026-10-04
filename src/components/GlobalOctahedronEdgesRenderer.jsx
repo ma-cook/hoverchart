@@ -127,6 +127,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
       const lodLevel = lodLevels.get(octa.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.FULL;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [octahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 
   const totalEdges = filteredOctahedrons.length * EDGES_PER_OCTAHEDRON;

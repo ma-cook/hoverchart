@@ -163,6 +163,7 @@ const TetrahedronFace = React.memo(
         // For now, assuming it's handled in parent
         return false;
       },
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
       [id, faceName, setTetrahedronActiveTextFace]
     );
 

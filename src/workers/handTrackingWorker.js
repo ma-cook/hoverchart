@@ -139,12 +139,10 @@ async function init(config) {
       });
 
       executionProvidersUsed = [provider];
-      // eslint-disable-next-line no-console
       console.info('[handTrackingWorker] ONNX sessions ready', { provider });
       return { executionProviders: executionProvidersUsed };
     } catch (err) {
       lastError = err;
-      // eslint-disable-next-line no-console
       console.warn(
         `[handTrackingWorker] EP "${provider}" failed, trying next:`,
         err?.message ?? err
@@ -392,7 +390,6 @@ async function detect(bitmap, vw, vh) {
     // branches are running.
     const now = performance.now();
     if (now - stats.lastReport >= 1000) {
-      // eslint-disable-next-line no-console
       console.info('[handTrackingWorker]', {
         frames: stats.frames,
         palmCallsPerSec: stats.palmCalls,

@@ -18,8 +18,15 @@ const CustomCamera = forwardRef(({ target = [5001, 5000, 5000] }, ref) => {
   const cameraRef = useRef();
   const controlsRef = useRef();
 
-  // Memoize the target array to prevent unnecessary OrbitControls updates
-  const memoizedTarget = useMemo(() => target, [target[0], target[1], target[2]]);
+  // Memoize the target array to prevent unnecessary OrbitControls updates.
+  // Destructuring first keeps the deps simple identifiers rather than member
+  // expressions, and keeps `target` itself out of the dependency list so a new
+  // array literal with identical values does not invalidate the memo.
+  const [targetX, targetY, targetZ] = target;
+  const memoizedTarget = useMemo(
+    () => [targetX, targetY, targetZ],
+    [targetX, targetY, targetZ]
+  );
 
   useImperativeHandle(ref, () => {
     const handle = {

@@ -10,7 +10,7 @@
  * Run: node scripts/test-scan-core.mjs
  */
 import { execFile } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -28,7 +28,7 @@ await new Promise((resolve, reject) => {
     process.execPath,
     [esbuildBin, scanCore, '--bundle', '--format=esm', '--platform=node', `--outfile=${bundlePath}`, '--log-level=warning'],
     { cwd: root },
-    (err, stdout, stderr) => (err ? reject(err) : resolve()),
+    (err, _stdout, _stderr) => (err ? reject(err) : resolve()),
   );
 });
 

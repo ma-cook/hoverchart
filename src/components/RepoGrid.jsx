@@ -7,6 +7,9 @@ import { TASK_STATUS } from '../services/pipelineTaskService';
 const BASE_COLOR = new THREE.Color('#4a9eff');
 const GRID_OPACITY = 0.35;
 const GRID_CELL_PADDING = 5;
+// Stable fallback so the `||` below does not hand a brand-new array to the
+// dependency lists of the memos on every render.
+const EMPTY_OBJECTS = [];
 
 /**
  * Renders a wireframe grid inside each repo container.
@@ -15,7 +18,7 @@ const GRID_CELL_PADDING = 5;
  * Visual style inspired by PerspectiveGrid (lineSegments + ShaderMaterial).
  */
 export default function RepoGrid() {
-  const objects = useObjectsStore((s) => s.objects) || [];
+  const objects = useObjectsStore((s) => s.objects) || EMPTY_OBJECTS;
 
   const containers = useMemo(
     () => objects.filter((o) => o.merfolkData?.isRepoContainer),

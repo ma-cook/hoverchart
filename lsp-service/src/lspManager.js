@@ -6,7 +6,6 @@
  */
 
 import { spawn } from 'child_process';
-import { createInterface } from 'readline';
 
 // ── Language server configurations ──────────────────────────────────────────
 
@@ -300,7 +299,9 @@ class LanguageServerSession {
       return Promise.reject(new Error(`${this.language} server is closed`));
     }
 
-    const id = ++this._requestIdCounter();
+    // _requestIdCounter() increments and returns the id itself; the extra `++`
+    // that used to wrap this call was a syntax error (assigning to an rvalue).
+    const id = this._requestIdCounter();
     const message = this._buildMessage(id, method, params);
 
     return new Promise((resolve, reject) => {

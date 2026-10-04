@@ -1,4 +1,3 @@
-import useCodeStore from '../../stores/codeStore';
 import useDiagramStore from '../../stores/diagramStore';
 import { REGISTRY } from './skillManager';
 
@@ -44,20 +43,6 @@ function hasCommunities() {
   try {
     const communities = useDiagramStore.getState().communities;
     return !!(communities && communities.length > 0);
-  } catch { return false; }
-}
-
-function hasContentIndex() {
-  try {
-    const ci = useCodeStore.getState().contentIndex;
-    return !!ci;
-  } catch { return false; }
-}
-
-function hasImportGraph() {
-  try {
-    const ig = useCodeStore.getState().importGraph;
-    return !!ig;
   } catch { return false; }
 }
 
@@ -317,11 +302,6 @@ export const SKILL_MANAGEMENT_TOOLS = [
     },
     required: ['skill_name'],
   }),
-];
-
-const ALL_TOOL_GROUPS = [
-  { group: 'always', tools: [...CONTROL_TOOLS, ...NAVIGATION_TOOLS, ...PLAN_TOOLS] },
-  { group: 'conditional', tools: [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL] },
 ];
 
 // Whitelist for EDIT mode: the model can only modify files, read for exact

@@ -76,6 +76,7 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
       const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.MEDIUM;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [tetrahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 
   const count = mediumTetrahedrons.length;

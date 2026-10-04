@@ -56,7 +56,7 @@ export class ModelRouter {
     this._profiles[name] = { ...DEFAULT_TASK_PROFILES[name], ...config };
   }
 
-  async route(taskType, { providerId, model, messages, availableProviders } = {}) {
+  async route(taskType, { providerId, model, availableProviders } = {}) {
     const profile = this._profiles[taskType];
     if (!profile) {
       return this._directRoute(providerId, model);
@@ -91,7 +91,7 @@ export class ModelRouter {
         const caps = PROVIDER_CAPABILITIES[p.id] || [];
         const capScore = profile.requiredCapabilities.filter(c => caps.includes(c)).length;
         const hasWindow = profile.minContextWindow || 0;
-        return { provider: p, capScore, hasWindow: true };
+        return { provider: p, capScore, hasWindow: !!hasWindow };
       })
       .filter(s => s.capScore >= profile.requiredCapabilities.length)
       .sort((a, b) => b.capScore - a.capScore);
@@ -140,7 +140,6 @@ export class ModelRouter {
   estimateTaskComplexity(messages) {
     const totalChars = messages.reduce((s, m) => s + (m.content || '').length, 0);
     const toolCount = messages.filter(m => m.tool_calls?.length > 0).length;
-    const roundCount = messages.filter(m => m.role === 'assistant').length;
 
     if (totalChars > 50000 || toolCount > 10) return 'complex';
     if (totalChars > 10000 || toolCount > 3) return 'moderate';

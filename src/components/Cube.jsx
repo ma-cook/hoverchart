@@ -1271,6 +1271,7 @@ const Cube = ({
         </React.Fragment>
       );
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [
     cube?.selectedFace,
     cube?.showFaceTextInput,

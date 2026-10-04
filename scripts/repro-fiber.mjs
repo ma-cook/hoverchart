@@ -80,7 +80,9 @@ const probe = () =>
               : undefined,
           });
         }
-      } catch {}
+      } catch {
+        // Optional property; absent on some fiber shapes.
+      }
       visit(fiber.child, depth + 1);
       visit(fiber.sibling, depth + 1);
       return;

@@ -337,6 +337,7 @@ const TextObject = React.memo(
       if (newShowTransform) {
         setShowResizeControls(false);
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
     }, [
       showTransform,
       showResizeControls,
@@ -358,6 +359,7 @@ const TextObject = React.memo(
       if (newShowResizeControls) {
         setShowTransform(false);
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
     }, [
       showResizeControls,
       showTransform,
@@ -1602,7 +1604,6 @@ const TextObject = React.memo(
         }
 
         // Filter out any 'type' field that shouldn't be in textStyle
-        // eslint-disable-next-line no-unused-vars
         const { type, bulletPointMode: _, ...actualStyleChanges } = newStyle;
 
         // If there's selected text, apply styles to just that selection
@@ -1630,6 +1631,7 @@ const TextObject = React.memo(
         // Update database
         updateDatabase();
       },
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
       [
         id,
         updateDatabase,

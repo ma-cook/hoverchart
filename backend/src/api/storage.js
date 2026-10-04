@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { Storage } from '@google-cloud/storage';
-import pool from '../db.js';
 
 export const router = Router();
 
@@ -25,7 +24,7 @@ router.get('/:path(*)', async (req, res) => {
 router.post('/upload', async (req, res) => {
   const userId = req.user.sub;
   if (!storage) return res.status(501).json({ error: 'Storage not configured' });
-  const { fileName, contentType } = req.body;
+  const { fileName } = req.body;
   if (!fileName) return res.status(400).json({ error: 'fileName is required' });
   const destPath = `uploads/${userId}/${Date.now()}_${fileName}`;
   res.json({ path: destPath });

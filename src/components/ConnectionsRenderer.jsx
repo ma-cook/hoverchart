@@ -543,19 +543,29 @@ const Connection = React.memo(
         endPosition,
       };
     }, [
-      connection?.start?.objectId, // More specific dependencies
+      // Leaf fields read off the connection endpoints.
+      connection?.start?.objectId,
       connection?.end?.objectId,
       connection?.start?.face,
       connection?.end?.face,
       connection?.start?.position,
       connection?.end?.position,
-      startObject?.position,
-      startObject?.scale,
-      startObject?.type,
-      endObject?.position,
-      endObject?.scale,
-      endObject?.type,
-      // Remove allObjectsForPathfinding from dependencies - only needed for face calculations
+      connection?.start?.faceCenter,
+      connection?.end?.faceCenter,
+      connection?.start?.facePosition,
+      connection?.end?.facePosition,
+      connection?.start?.worldPosition,
+      connection?.end?.worldPosition,
+      connection?.start?.type,
+      connection?.end?.type,
+      // Stable identities: useConnectionObjectPositions compares with
+      // objectPositionEqual, so these only change when position/scale/type do.
+      startObject,
+      endObject,
+      // Genuine dependency - it is handed to calculateFacePosition for
+      // face-to-face links, so a moved object can change the result. The other
+      // memos in this file already list it for the same reason.
+      allObjectsForPathfinding,
     ]);
 
     // Second hook: Filter relevant objects with stable dependencies
@@ -1437,6 +1447,7 @@ const ConnectionsRenderer = ({
     };
     
     return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [progressiveConnections, selectedConnection, highlightedFlowPathIds, objectPositions, pathfindingObjects, workerWarmVersion]);
 
   // WORKER: Fire-and-forget batch dispatch to the pathfinding Web Worker.

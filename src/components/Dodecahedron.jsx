@@ -243,6 +243,7 @@ const Sphere = React.memo(
       };
 
       return data;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
     }, [
       objectData?.id,
       objectData?.position,

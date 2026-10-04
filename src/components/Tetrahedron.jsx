@@ -317,6 +317,9 @@ const Tetrahedron = ({
   }));
 
   // Replace individual action selectors with a single actions object
+  // The action functions themselves are stable for the store's lifetime, so a
+  // shallow compare keeps this wrapper referentially stable and therefore safe
+  // to list in dependency arrays.
   const tetrahedronActions = useTetrahedronStore((state) => ({
     createTetrahedron: state.createTetrahedron,
     updateTetrahedron: state.updateTetrahedron,
@@ -335,7 +338,7 @@ const Tetrahedron = ({
     updateTetrahedronFaceColor: state.updateTetrahedronFaceColor,
     updateTetrahedronFaceText: state.updateTetrahedronFaceText,
     updateTetrahedronFaceTextStyle: state.updateTetrahedronFaceTextStyle,
-  }));
+  }), shallow);
 
   // Get hover state from indicators store
   const hoveredObjectId = useIndicatorsStore((state) => state.hoveredObjectId);
@@ -360,7 +363,7 @@ const Tetrahedron = ({
   }, [
     id,
     tetrahedronState.tetrahedron,
-    tetrahedronActions.createTetrahedron,
+    tetrahedronActions,
     position,
     scale,
     color,
@@ -381,8 +384,7 @@ const Tetrahedron = ({
   }, [
     selected,
     tetrahedronState.isSelected,
-    tetrahedronActions.selectTetrahedron,
-    tetrahedronActions.deselectTetrahedron,
+    tetrahedronActions,
     id,
   ]);
 
@@ -399,12 +401,8 @@ const Tetrahedron = ({
   }, [
     selected,
     id,
-    tetrahedronActions.setTetrahedronSelectedFace,
-    tetrahedronActions.setTetrahedronSelectedIndicator,
-    tetrahedronActions.setTetrahedronShowTransform,
+    tetrahedronActions,
     setActiveTextStyleUI,
-    tetrahedronActions.setTetrahedronShowHeaderTextStyleUI,
-    tetrahedronActions.setTetrahedronActiveTextFace,
   ]);
 
   // Check if a face is connected via a connection
@@ -555,9 +553,7 @@ const Tetrahedron = ({
     onClick,
     setActiveTextStyleUI,
     id,
-    tetrahedronActions.setTetrahedronShowObjectUI,
-    tetrahedronActions.setTetrahedronShowHeaderTextStyleUI,
-    tetrahedronActions.setTetrahedronActiveTextFace,
+    tetrahedronActions,
   ]);
 
   // Add useCallback for updating database
@@ -623,8 +619,7 @@ const Tetrahedron = ({
       id,
       onFaceClick,
       tetrahedronState.selectedFace,
-      tetrahedronActions.setTetrahedronSelectedFace,
-      tetrahedronActions.setTetrahedronShowObjectUI,
+      tetrahedronActions,
     ]
   );
 
@@ -678,6 +673,8 @@ const Tetrahedron = ({
       tetrahedronState,
       tetrahedronActions,
       setIndicatorActive,
+      position,
+      scale,
     ]
   );
 
@@ -690,8 +687,7 @@ const Tetrahedron = ({
   }, [
     tetrahedronState.showTransform,
     id,
-    tetrahedronActions.setTetrahedronShowTransform,
-    tetrahedronActions.setTetrahedronIsResizing,
+    tetrahedronActions,
   ]);
 
   const handleResizeToggle = useCallback(() => {
@@ -703,8 +699,7 @@ const Tetrahedron = ({
   }, [
     tetrahedronState.isResizing,
     id,
-    tetrahedronActions.setTetrahedronIsResizing,
-    tetrahedronActions.setTetrahedronShowTransform,
+    tetrahedronActions,
   ]);
 
   const handleHeaderToggle = useCallback(() => {
@@ -718,8 +713,7 @@ const Tetrahedron = ({
   }, [
     tetrahedronState.showHeader,
     id,
-    tetrahedronActions.setTetrahedronShowHeader,
-    tetrahedronActions.setTetrahedronShowObjectUI,
+    tetrahedronActions,
   ]);
 
   const handleHeaderSubmit = useCallback(
@@ -751,9 +745,7 @@ const Tetrahedron = ({
       faceTexts,
       faceTextStyles,
       textStyle,
-      tetrahedronActions.updateTetrahedron,
-      tetrahedronActions.setTetrahedronShowHeader,
-      tetrahedronActions.setTetrahedronShowObjectUI,
+      tetrahedronActions,
       position,
     ]
   );
@@ -785,7 +777,7 @@ const Tetrahedron = ({
       faceTexts,
       faceTextStyles,
       textStyle,
-      tetrahedronActions.updateTetrahedron,
+      tetrahedronActions,
       position,
     ]
   );
@@ -892,7 +884,7 @@ const Tetrahedron = ({
 
       tetrahedronActions.updateTetrahedron(id, { scale: newScale });
     },
-    [id, tetrahedronState.scale, scale, position, tetrahedronActions.updateTetrahedron]
+    [id, tetrahedronState.scale, scale, position, tetrahedronActions]
   );
 
   // Face text handling functions
@@ -926,11 +918,8 @@ const Tetrahedron = ({
     },
     [
       id,
-      tetrahedronActions.setTetrahedronActiveTextFace,
+      tetrahedronActions,
       setActiveTextStyleUI,
-      tetrahedronActions.setTetrahedronShowHeaderTextStyleUI,
-      tetrahedronActions.setTetrahedronSelectedFace,
-      tetrahedronActions.setTetrahedronShowObjectUI,
     ]
   );
 
@@ -983,7 +972,7 @@ const Tetrahedron = ({
       faceTexts,
       faceTextStyles,
       textStyle,
-      tetrahedronActions.updateTetrahedronFaceTextStyle,
+      tetrahedronActions,
       onUpdate,
     ]
   );
@@ -1079,6 +1068,7 @@ const Tetrahedron = ({
     });
   }, [
     tetrahedronState,
+    tetrahedronFaces,
     faceTexts,
     faceTextStyles,
     scale,

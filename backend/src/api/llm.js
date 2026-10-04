@@ -203,7 +203,7 @@ router.post('/chat', async (req, res) => {
             const chunk = decoder.decode(value, { stream: true });
             res.write(chunk);
           }
-        } catch (err) {
+        } catch {
           clearTimeout(pumpWatchdogId);
           if (!res.writableEnded) res.end();
         }

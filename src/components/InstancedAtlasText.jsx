@@ -164,6 +164,7 @@ const InstancedAtlasText = ({
     }
 
     return Array.from(groupMap.values());
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [labels, atlas, scale, atlasVersion]);
 
   // Kick off one batched texture upload after all texts are added

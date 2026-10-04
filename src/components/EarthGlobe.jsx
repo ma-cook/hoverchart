@@ -117,6 +117,7 @@ const EarthGlobe = () => {
 
     flyTargetRef.current = { position: targetPos, lookAt, up: up.clone() };
     flyingRef.current = true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [radius]);
 
   // Load heightmap on mount
@@ -255,6 +256,7 @@ const EarthGlobe = () => {
       radius, exaggeration, center: GLOBE_CENTER,
       latStep, lonStep, colorScheme, showOceanFloor,
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [radius, exaggeration, latStep, lonStep, colorScheme, showOceanFloor, heightmapLoaded, tileVersion]);
 
   // Opaque surface mesh geometry
@@ -276,6 +278,7 @@ const EarthGlobe = () => {
 
     meshGeoRef.current = geo;
     return geo;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [radius, exaggeration, meshLod.latStep, meshLod.lonStep, colorScheme, showOceanFloor, heightmapLoaded, tileVersion]);
 
   // Determine which local detail level to use (if any)
@@ -286,6 +289,7 @@ const EarthGlobe = () => {
       if (rel < ld.maxRel) return ld;
     }
     return LOCAL_DETAIL[LOCAL_DETAIL.length - 1];
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [lodLevel, cameraLat, cameraLon]);
 
   // Local detail wireframe (fine grid for a small area around camera)

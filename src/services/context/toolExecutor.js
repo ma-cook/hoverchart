@@ -958,19 +958,6 @@ export const CODE_GEN_TOOLS = [
   },
 ];
 
-const SUB_AGENT_TOOLS = [
-  { type: 'function', function: { name: 'read_file', description: 'Read file contents.', parameters: { type: 'object', properties: { path: { type: 'string' }, offset: { type: 'number' }, limit: { type: 'number' } }, required: ['path'] } } },
-  { type: 'function', function: { name: 'file_outline', description: 'Get structural outline of a file.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
-  { type: 'function', function: { name: 'list_files', description: 'List files in a directory.', parameters: { type: 'object', properties: { path: { type: 'string' } } } } },
-  { type: 'function', function: { name: 'search_code', description: 'Search for files matching a pattern.', parameters: { type: 'object', properties: { pattern: { type: 'string' } }, required: ['pattern'] } } },
-  { type: 'function', function: { name: 'get_node_info', description: 'Get details about a component.', parameters: { type: 'object', properties: { nodeId: { type: 'string' } }, required: ['nodeId'] } } },
-  { type: 'function', function: { name: 'get_dependencies', description: 'Find dependencies.', parameters: { type: 'object', properties: { nodeId: { type: 'string' }, direction: { type: 'string' } }, required: ['nodeId'] } } },
-  { type: 'function', function: { name: 'search_nodes', description: 'Search diagram nodes.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
-  { type: 'function', function: { name: 'get_lsp_definition', description: 'Resolve where an import goes via LSP.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
-  { type: 'function', function: { name: 'get_lsp_references', description: 'Find all references to a symbol via LSP.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
-  { type: 'function', function: { name: 'get_lsp_type_info', description: 'Get type signature for a symbol via LSP.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
-];
-
 const SUB_AGENT_SYSTEM_PROMPT = `You are a research sub-agent. Your job is to answer a specific question about a codebase by reading files and searching code.
 
 TOOLS: You can read files, list directories, search code, and query the component graph. You CANNOT modify any files.
@@ -1156,12 +1143,12 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
     case 'read_file': {
       const path = normalizePath(args.path);
       const startLine = Math.max(1, parseInt(args.offset, 10) || 1);
-      let requestedLines = parseInt(args.limit, 10) || DEFAULT_READ_LINES;
-      if (requestedLines > 0 && requestedLines < 200) {
-        requestedLines = Math.min(200, DEFAULT_READ_LINES);
-      }
-      const lineLimit = Math.min(requestedLines, MAX_READ_LINES);
-      const effectiveLimit = parseInt(args.limit, 10) || DEFAULT_READ_LINES;
+      // Honour an explicit `limit`. This used to rewrite any limit below 200 to a
+      // fixed 200 (via `Math.min(200, DEFAULT_READ_LINES)`, which collapses to
+      // 200 because the default is 8000), so the caller never got the window it
+      // asked for. Only the MAX_READ_LINES ceiling is enforced here.
+      const requestedLines = parseInt(args.limit, 10) || DEFAULT_READ_LINES;
+      const lineLimit = Math.min(Math.max(requestedLines, 1), MAX_READ_LINES);
       const storeId = `repo:${path}`;
       const altId = `github:${path}`;
 

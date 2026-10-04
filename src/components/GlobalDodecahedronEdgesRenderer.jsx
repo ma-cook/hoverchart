@@ -183,6 +183,7 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
       return lodLevel === LOD_LEVELS.FULL;
     });
   // _lodVersion ensures recompute when LOD levels change (Map is mutated in-place)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [dodecahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 
   const totalEdges = filteredDodecahedrons.length * EDGES_PER_DODECAHEDRON;

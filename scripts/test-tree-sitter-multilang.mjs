@@ -4,7 +4,6 @@
 // fixture sources for every registered language.
 import { build } from 'esbuild';
 import { writeFileSync } from 'fs';
-import { join } from 'path';
 import { pathToFileURL } from 'url';
 
 const shim = `

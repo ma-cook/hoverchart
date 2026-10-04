@@ -10,9 +10,9 @@ const md = fs.readFileSync('merfolk.md', 'utf8');
 // Mock the worker engine path: import LayoutEngine
 const { LayoutEngine } = await import('../src/services/markdownDiagram/LayoutEngine.js').catch(() => ({}));
 
-let engine;
 if (LayoutEngine) {
-  engine = new LayoutEngine();
+  // The LayoutEngine path is not exercised yet; the else branch below drives the
+  // pipeline through hierarchy/position/scale methods directly.
 } else {
   // Try direct service
   const proc = new MarkdownProcessor({ layout: { algorithm: 'none', enableAutoLayout: false } });

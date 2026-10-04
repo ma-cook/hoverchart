@@ -95,29 +95,6 @@ class SkillRegistry {
   }
 }
 
-function buildSceneContext() {
-  try {
-    const objects = useObjectsStore.getState().objects || [];
-    const lines = [];
-    let charCount = 0;
-    const BUDGET = 2000;
-    for (const obj of objects) {
-      if (!obj.merfolkData?.nodeId) continue;
-      const nodeId = obj.merfolkData.nodeId;
-      const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
-      const name = obj.headerText || nodeId;
-      const filePath = obj.merfolkData?.codeFilePath || obj.metadata?.codeFilePath || '';
-      const line = filePath ? `[${nodeId}] ${nodeType} — "${name}" → ${filePath}` : `[${nodeId}] ${nodeType} — "${name}"`;
-      if (charCount + line.length + 1 > BUDGET) continue;
-      lines.push(line);
-      charCount += line.length + 1;
-    }
-    return lines.length > 0 ? lines.join('\n') : '(no scene components)';
-  } catch {
-    return '(no scene components)';
-  }
-}
-
 function buildGraphSummarySection() {
   try {
     const diagramStore = useDiagramStore.getState();
@@ -228,7 +205,7 @@ export const SKILL_MANAGEMENT_TOOL_DEFS = [
   {
     name: 'list_skills',
     description: 'List all available skills. Each skill bundles context data and tools that can be loaded on demand. Activate a skill to access its instructions and tool set.',
-    execute: async (args) => {
+    execute: async () => {
       const descriptors = REGISTRY.getAvailableDescriptors();
       if (descriptors.length === 0) {
         return { success: true, content: 'No skills are currently available.' };

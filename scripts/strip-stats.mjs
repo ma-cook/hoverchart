@@ -7,7 +7,6 @@ for (const file of files) {
     .raw()
     .toBuffer({ resolveWithObject: true });
   let dark = 0;
-  let minRowDark = null;
   const rowCounts = [];
   for (let y = 0; y < info.height; y++) {
     let inRow = 0;

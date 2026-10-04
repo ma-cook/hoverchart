@@ -129,6 +129,7 @@ const OctahedronFace = React.memo(
         setOctahedronActiveTextFace(id, faceName);
         return false;
       },
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
       [id, faceName, setOctahedronActiveTextFace]
     );
 

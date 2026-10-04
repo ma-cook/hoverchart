@@ -8,8 +8,8 @@
 
 import { WebSocketServer } from 'ws';
 import { LspManager } from './lspManager.js';
-import { analyze, detectLanguages } from './analyzers/index.js';
-import { REQUEST_TYPES, RESPONSE_TYPES, detectLanguage } from './lib/protocol.js';
+import { analyze } from './analyzers/index.js';
+import { REQUEST_TYPES, RESPONSE_TYPES } from './lib/protocol.js';
 
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const MAX_FILES_PER_REQUEST = parseInt(process.env.MAX_FILES || '500', 10);

@@ -755,7 +755,7 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
  * pool and indexes them as repo: entries. No-op if the store already has repo
  * content. Safe to run in the background.
  */
-export async function ensureRepoContentIndexed({ owner, repo, branch, token, fileTree }) {
+export async function ensureRepoContentIndexed({ owner, repo, token, fileTree }) {
   try {
     const store = getContentStore();
     await waitForContentStoreHydration();
@@ -1282,8 +1282,6 @@ export function buildComponentIndex(objects) {
   return lines.length > 0 ? lines.join('\n') : '(no scene components)';
 }
 
-const SCENE_COMPONENT_BUDGET = 2000;
-
 export function buildContentIndexSection() {
   try {
     const contentIndex = useCodeStore.getState().contentIndex;
@@ -1386,29 +1384,6 @@ export function buildLspOverviewSection() {
   } catch {
     return '(no LSP data available)';
   }
-}
-
-function buildMinimalSceneContext(objects) {
-  if (!objects || objects.length === 0) return '(no scene components)';
-  const lines = [];
-  let charCount = 0;
-  let truncated = 0;
-
-  for (const obj of objects) {
-    if (!obj.merfolkData?.nodeId) continue;
-    const nodeId = obj.merfolkData.nodeId;
-    const nodeType = obj.merfolkData.nodeType || obj.type || 'unknown';
-    const name = obj.headerText || nodeId;
-    const filePath = obj.merfolkData?.codeFilePath || obj.metadata?.codeFilePath || '';
-    const line = filePath ? `[${nodeId}] ${nodeType} — "${name}" → ${filePath}` : `[${nodeId}] ${nodeType} — "${name}"`;
-
-    if (charCount + line.length + 1 > SCENE_COMPONENT_BUDGET) { truncated++; continue; }
-    lines.push(line);
-    charCount += line.length + 1;
-  }
-
-  if (truncated > 0) lines.push(`... and ${truncated} more components`);
-  return lines.length > 0 ? lines.join('\n') : '(no scene components)';
 }
 
 /**

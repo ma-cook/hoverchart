@@ -5,12 +5,35 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
-  { ignores: ['dist'] },
   {
-    files: ['**/*.{js,jsx}'],
+    // Build output, fetched dependencies and vendored source trees.
+    //
+    // `native/` is Zig-fetched third-party C/JS (tree-sitter grammars, dawn,
+    // freetype) and is gitignored. Its grammar.js files are written in the
+    // tree-sitter DSL, where `seq`, `choice`, `field`, `prec`, `alias`, etc.
+    // are ambient grammar-builder globals — linting them as browser JS
+    // produced ~7,900 bogus `no-undef` errors.
+    // `**/node_modules/` is needed because ESLint only auto-ignores the
+    // top-level one; lsp-service has its own.
+    ignores: [
+      'dist',
+      'dist-ssr',
+      '**/node_modules/',
+      'native/',
+      'src/wasm/target/',
+    ],
+  },
+  {
+    // Browser app: everything under src/ (JSX, Vite, workers).
+    files: ['src/**/*.{js,jsx}'],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: globals.browser,
+      globals: {
+        ...globals.browser,
+        // Web Workers / SharedWorker / ServiceWorker, used by the hand tracking
+        // and scanner workers under src/workers/.
+        ...globals.worker,
+      },
       parserOptions: {
         ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
@@ -40,16 +63,16 @@ export default [
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
         destructuredArrayIgnorePattern: '^_',
+        ignoreRestSiblings: true,
       }],
     },
   },
   {
-    files: ['functions/**/*.{js,jsx}'],
+    // Express API, Socket.IO handlers and worker services: plain Node ESM.
+    files: ['backend/**/*.{js,jsx}'],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: {
-        ...globals.node, // Enable Node.js globals like `process`
-      },
+      globals: globals.node,
       parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module',
@@ -57,16 +80,55 @@ export default [
     },
     rules: {
       ...js.configs.recommended.rules,
-      // Add any function-specific rules here if needed
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      }],
     },
   },
   {
-    files: ['backend/**/*.{js,jsx}'],
+    // Node tooling: one-off analysis/test scripts in scripts/ and the standalone
+    // language-server service in lsp-service/. Previously these fell through to
+    // the browser block above, so `process`, `require` and `__dirname` were
+    // reported as undefined.
+    files: ['scripts/**/*.{js,mjs,cjs}', 'lsp-service/**/*.{js,mjs,cjs}'],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: {
-        ...globals.node,
+      globals: globals.node,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
       },
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      }],
+    },
+  },
+  {
+    // Playwright repro harnesses. The files themselves are Node (they launch a
+    // browser through process.env.PW_PATH), but every `ctx.addInitScript()`
+    // callback is stringified and evaluated *inside the page*, so references to
+    // localStorage, window, document and HTMLCanvasElement are genuine there.
+    // They therefore need the browser globals on top of the Node set above.
+    files: ['scripts/repro-*.mjs'],
+    languageOptions: {
+      globals: { ...globals.browser },
+    },
+  },
+  {
+    // Build config itself.
+    files: ['*.config.js'],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.node,
       parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module',

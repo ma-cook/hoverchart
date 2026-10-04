@@ -40,10 +40,16 @@ export const ShareSpacePopup = React.memo(
     const [selectedMembers, setSelectedMembers] = useState(new Set());
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Filter out current user, only show other org members
-    const otherMembers = Array.isArray(organizationMembers)
-      ? organizationMembers.filter((m) => m.userId !== currentUserId)
-      : [];
+    // Filter out current user, only show other org members.
+    // Memoized so the identity is stable and `filteredMembers` below is not
+    // invalidated on every render.
+    const otherMembers = useMemo(
+      () =>
+        Array.isArray(organizationMembers)
+          ? organizationMembers.filter((m) => m.userId !== currentUserId)
+          : [],
+      [organizationMembers, currentUserId]
+    );
 
     // Only show the member list when there are other members in the org (>1 total including current user)
     const hasOrgMembers = otherMembers.length > 0;

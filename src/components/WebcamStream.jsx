@@ -33,7 +33,6 @@ const applyVideoTexture = (videoEl, mesh, cleanupLabel, textureRef) => {
   texture.magFilter = THREE.LinearFilter;
   texture.format = THREE.RGBAFormat;
   texture.colorSpace = THREE.SRGBColorSpace;
-  // eslint-disable-next-line no-param-reassign
   textureRef.current = texture;
 
   if (mesh) {

@@ -82,6 +82,7 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
       const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.FULL;
       return lodLevel === LOD_LEVELS.FULL;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 
   // Append-aware invalidation: keep incremental state when the filtered

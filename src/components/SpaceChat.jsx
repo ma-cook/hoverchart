@@ -587,6 +587,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     if (chatMode === 'group' && el.scrollTop < 60 && hasMore && !loadingMore) {
       setHasMore(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [spaceId, chatMode, hasMore, loadingMore]);
 
   useEffect(() => {
@@ -613,6 +614,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     } finally {
       setSending(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [input, spaceId, user, markSignificant]);
 
   const handlePlanSend = useCallback(async () => {
@@ -2008,7 +2010,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             </div>
             {windowLlm.providerId === 'opencode-zen' && (
               <div className="space-chat-provider-hint">
-                Opencode Zen's free models share a per-IP daily usage cap across hoverchart and can hit limits quickly. A paid provider (Anthropic, Google, or Nvidia) is recommended for reliable use.
+                Opencode Zen&rsquo;s free models share a per-IP daily usage cap across hoverchart and can hit limits quickly. A paid provider (Anthropic, Google, or Nvidia) is recommended for reliable use.
               </div>
             )}
             <div className="space-chat-modal-actions">

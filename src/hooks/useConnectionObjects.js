@@ -25,17 +25,21 @@ const objectPositionEqual = (a, b) => {
 export const useConnectionObjects = (connection) => {
   const objects = useObjectsStore((state) => state.objects, shallow);
 
+  // Hoist the leaf values the memo actually derives from, so the `connection`
+  // object itself never needs to be a dependency (it is usually a fresh
+  // reference on most renders).
+  const hasConnection = Boolean(connection);
+  const startObjectId = connection?.start?.objectId?.toString();
+  const endObjectId = connection?.end?.objectId?.toString();
+
   return useMemo(() => {
-    if (!connection || !objects || objects.length === 0) {
+    if (!hasConnection || !objects || objects.length === 0) {
       return {
         startObject: null,
         endObject: null,
         allObjects: [],
       };
     }
-
-    const startObjectId = connection.start?.objectId?.toString();
-    const endObjectId = connection.end?.objectId?.toString();
 
     const startObject = startObjectId
       ? objects.find((obj) => obj.id.toString() === startObjectId)
@@ -60,7 +64,7 @@ export const useConnectionObjects = (connection) => {
       endObject,
       allObjects,
     };
-  }, [connection?.start?.objectId, connection?.end?.objectId, objects]);
+  }, [hasConnection, startObjectId, endObjectId, objects]);
 };
 
 /**

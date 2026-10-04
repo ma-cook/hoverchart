@@ -2,7 +2,7 @@ import { sendToZen, getProviderRateLimitState } from '../zenService';
 import { stripRetrievalMarkers } from './retrievalProtocol';
 import { executeTool, resetEditTracker, refreshRepoWorkingCopies, getAppliedEditRecords } from './toolExecutor';
 import { fetchFileContent } from '../githubRepoService';
-import { computeTools, computeSubAgentTools } from './toolProvider';
+import { computeTools } from './toolProvider';
 import { initializeDefaultSkills, REGISTRY } from './skillManager';
 import { getContentStore } from './contentStore';
 import { getBase64Store } from './base64Store';
@@ -928,7 +928,6 @@ export async function sendWithRetrieval({
     REGISTRY.activate(skillName);
   }
 
-  const userMessages = messages.filter(m => m.role === 'user');
   const taskType = globalRouter.classifyTaskType(messages, computeTools());
   console.log(`[sendWithRetrieval] Classified task type: ${taskType}`);
 
@@ -973,7 +972,8 @@ export async function sendWithRetrieval({
     }
   }
 
-  const mainInvocation = globalMonitor.startInvocation({
+  // startInvocation() tracks state internally; endInvocation() takes no handle.
+  globalMonitor.startInvocation({
     agentName: 'sendWithRetrieval',
     inputs: { messageCount: messages.length, fileTreeSize: fileTree?.length },
   });
@@ -1158,7 +1158,7 @@ export async function sendWithRetrieval({
       }
     }
 
-    const roundInvocation = globalMonitor.startInvocation({
+    globalMonitor.startInvocation({
       agentName: `round-${rounds + 1}`,
       inputs: { messageCount: currentMessages.length, charSize: estimateMessagesSize(currentMessages) },
       iteration: rounds,
@@ -1298,7 +1298,7 @@ export async function sendWithRetrieval({
       dupCounts.set(key, (dupCounts.get(key) || 0) + 1);
     }
     let doomLoopDetected = false;
-    for (const [key, count] of dupCounts) {
+    for (const count of dupCounts.values()) {
       if (count >= 4) {
         console.warn(`[ToolRound] Doom loop detected: tool called ${count} times with identical args in one round`);
         doomLoopDetected = true;
@@ -1338,7 +1338,7 @@ export async function sendWithRetrieval({
       subAgentPrompts.add(promptKey);
       subAgentSpawnCount.value++;
 
-      const subInvocation = globalMonitor.startInvocation({
+      globalMonitor.startInvocation({
         agentName: 'sub-agent',
         inputs: { prompt: prompt.slice(0, 200), depth: subDepth },
       });

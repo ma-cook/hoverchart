@@ -2,13 +2,9 @@
 // runtime). Bundles the worker logic with esbuild so it runs against a real
 // WASM grammar without touching Vite.
 import { build } from 'esbuild';
-import { mkdtempSync, writeFileSync, readFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
-import { createRequire } from 'module';
-
-const require_ = createRequire(import.meta.url);
 
 // ── 1. Inline a Node-shim version of the worker that imports
 //      web-tree-sitter directly (no `?url` / `?worker`). ─────────────────

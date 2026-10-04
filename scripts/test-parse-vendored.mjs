@@ -1,7 +1,7 @@
 // Test vendored Merfolk parser at src/lib/3d-ast/ using esbuild on-the-fly.
 // Compares parse output against merfolk.md baseline.
 import { build } from 'esbuild';
-import { readFileSync, writeFileSync, mkdtempSync } from 'fs';
+import { readFileSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
