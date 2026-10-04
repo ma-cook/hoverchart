@@ -135,6 +135,26 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     initializeAuth();
   }, [initializeAuth]);
 
+  // NOTE: must stay declared ABOVE the effect that lists it as a dependency.
+  // Dependency arrays are evaluated inline during render, so a `const` declared
+  // further down this component body would still be in its temporal dead zone
+  // and throw "Cannot access 'fetchUserSpaces' before initialization". (Calling
+  // it from an effect *body* is fine - bodies run after the component finishes.)
+  const fetchUserSpaces = useCallback(async () => {
+    if (!user) return;
+    setSpacesLoading(true);
+    try {
+      const spaces = await api.get('/api/spaces');
+      const owned = (spaces || []).filter((s) => s.owner_id === user.sub).map(s => ({ ...s, isOwner: true }));
+      const shared = (spaces || []).filter((s) => s.owner_id !== user.sub).map(s => ({ ...s, isOwner: false }));
+      setUserSpaces({ owned, shared });
+    } catch (error) {
+      console.error('Error fetching user spaces:', error);
+    } finally {
+      setSpacesLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (user) {
       setSpacesLoading(true);
@@ -191,21 +211,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     },
     [user, onOpenSpace]
   );
-
-  const fetchUserSpaces = useCallback(async () => {
-    if (!user) return;
-    setSpacesLoading(true);
-    try {
-      const spaces = await api.get('/api/spaces');
-      const owned = (spaces || []).filter((s) => s.owner_id === user.sub).map(s => ({ ...s, isOwner: true }));
-      const shared = (spaces || []).filter((s) => s.owner_id !== user.sub).map(s => ({ ...s, isOwner: false }));
-      setUserSpaces({ owned, shared });
-    } catch (error) {
-      console.error('Error fetching user spaces:', error);
-    } finally {
-      setSpacesLoading(false);
-    }
-  }, [user]);
 
   const createNewSpace = useCallback(
     async (spaceName, email, spaceType = 'diagram') => {
