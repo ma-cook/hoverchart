@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
 
 // 2D triangle geometry to represent tetrahedrons at LOW LOD
 // Larger than full-detail to remain visible at extreme distance
@@ -24,12 +25,8 @@ const _buildTriangleGeometry = () => {
 
 const SHARED_TRIANGLE_GEOMETRY = _buildTriangleGeometry();
 
-const SHARED_MATERIAL = new THREE.MeshBasicMaterial({
-  transparent: true,
-  opacity: 0.5,
-  side: THREE.DoubleSide,
-  depthWrite: true,
-});
+// Billboarded in the vertex shader so distant tetrahedrons stay flat-on to the camera
+const SHARED_MATERIAL = createBillboardLowLodMaterial();
 
 // Reusable objects to avoid GC pressure in useFrame
 const tempMatrix = new THREE.Matrix4();

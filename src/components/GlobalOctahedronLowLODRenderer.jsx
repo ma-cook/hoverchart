@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { octahedronTransformMap } from './GlobalOctahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
 
 const _buildOctagonGeometry = () => {
   const S = 10;
@@ -30,12 +31,8 @@ const _buildOctagonGeometry = () => {
 
 const SHARED_OCTAGON_GEOMETRY = _buildOctagonGeometry();
 
-const SHARED_MATERIAL = new THREE.MeshBasicMaterial({
-  transparent: true,
-  opacity: 0.5,
-  side: THREE.DoubleSide,
-  depthWrite: true,
-});
+// Billboarded in the vertex shader so distant octahedrons stay flat-on to the camera
+const SHARED_MATERIAL = createBillboardLowLodMaterial();
 
 const tempMatrix = new THREE.Matrix4();
 const tempColor = new THREE.Color();

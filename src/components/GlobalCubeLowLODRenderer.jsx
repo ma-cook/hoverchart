@@ -4,17 +4,14 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
 
 // 2D square geometry to represent cubes at LOW LOD
 // Sized larger than full-detail to remain visible at extreme distance
 const SHARED_SQUARE_GEOMETRY = new THREE.PlaneGeometry(20, 20);
 
-const SHARED_MATERIAL = new THREE.MeshBasicMaterial({
-  transparent: true,
-  opacity: 0.5,
-  side: THREE.DoubleSide,
-  depthWrite: true,
-});
+// Billboarded in the vertex shader so distant cubes stay square-on to the camera
+const SHARED_MATERIAL = createBillboardLowLodMaterial();
 
 // Reusable objects to avoid GC pressure in useFrame
 const tempMatrix = new THREE.Matrix4();

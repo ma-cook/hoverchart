@@ -9,8 +9,8 @@ const LineShaderMaterial = new ShaderMaterial({
     linewidth: { value: 1 },
     resolution: { value: { x: window.innerWidth, y: window.innerHeight } },
     opacity: { value: 1.0 },
-    glowWidth: { value: 4.0 },      // Quad expansion factor (1 = no glow, 4 = nice soft glow)
-    glowIntensity: { value: 0.6 }, // Peak glow alpha at the core edge
+    glowWidth: { value: 5.0 },      // Quad expansion factor (1 = no glow, higher = wider halo)
+    glowIntensity: { value: 0.85 }, // Peak glow alpha where the halo meets the core
   },
   transparent: true,
   depthTest: true,
