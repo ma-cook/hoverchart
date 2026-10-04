@@ -3,6 +3,7 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { createWSServer } from './ws/index.js';
 import { authenticate } from './auth/middleware.js';
+import { requireAdmin } from './auth/admin.js';
 import pool from './db.js';
 import { runMigrations } from './migrate.js';
 
@@ -24,6 +25,14 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// Application admin access is an env allowlist (ADMIN_EMAILS). Warn loudly at
+// boot rather than silently serving a dashboard nobody can open.
+if (!process.env.ADMIN_EMAILS) {
+  console.warn(
+    '[admin] ADMIN_EMAILS is not set — no application admins will be able to access /api/admin'
+  );
+}
+
 // Auth routes (no auth middleware)
 import { router as authRouter } from './auth/handlers.js';
 app.use('/api/auth', authRouter);
@@ -41,6 +50,7 @@ import { router as usersRouter } from './api/users.js';
 import { router as plansRouter } from './api/plans.js';
 import { router as githubRouter } from './api/github.js';
 import { router as scanJobsRouter } from './api/scanJobs.js';
+import { router as adminRouter } from './api/admin.js';
 
 app.use('/api/users', authenticate, usersRouter);
 app.use('/api/spaces', authenticate, spacesRouter);
@@ -55,11 +65,17 @@ app.use('/api/plans', authenticate, plansRouter);
 app.use('/api/github', authenticate, githubRouter);
 app.use('/api/scan-jobs', authenticate, scanJobsRouter);
 
+// Platform-wide admin surface. Separate from organization admin
+// (`org_members.role`), which is enforced per-organization inside
+// api/organizations.js. `requireAdmin` rejects guests and non-allowlisted
+// users with 403.
+app.use('/api/admin', authenticate, requireAdmin, adminRouter);
+
 // LLM proxy (no app auth needed — provider API key passed by client)
 import { llmRouter } from './api/llm.js';
 app.use('/api/llm', llmRouter);
 
-// Admin routes
+// Puppeteer scan worker
 import { router as zenRouter } from './workers/runtimeScan.js';
 app.use('/api/zen', authenticate, zenRouter);
 

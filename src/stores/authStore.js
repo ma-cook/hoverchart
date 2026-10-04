@@ -44,6 +44,12 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
     isLoading: true,
     user: null,
     isAuthReady: false,
+    // Admin scopes, resolved from GET /api/auth/verify. These are separate
+    // booleans on purpose: `isAdmin` is platform-wide (all users) and
+    // `isOrgAdmin` means the user administers at least one organization and so
+    // can see just that organization's members.
+    isAdmin: false,
+    isOrgAdmin: false,
   },
 
   setAuthState: (updates) => {
@@ -69,13 +75,40 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
               photoURL: payload.picture,
               isGuest: payload.isGuest === true,
             },
+            // The token itself carries no admin claim, so start pessimistic and
+            // let the verify call below upgrade it. Guest tokens can never be
+            // admins.
+            isAdmin: false,
+            isOrgAdmin: false,
             isAuthReady: true,
           },
         });
+        get().refreshAdminScopes();
         return;
       } catch { /* fall through */ }
     }
-    set({ authState: { isAuthenticated: false, isLoading: false, user: null, isAuthReady: true } });
+    set({ authState: { isAuthenticated: false, isLoading: false, user: null, isAdmin: false, isOrgAdmin: false, isAuthReady: true } });
+  },
+
+  // Ask the server which admin scopes the current session holds. Kept
+  // non-blocking so it never delays first paint, and intentionally separate
+  // from the auth decision itself: if it fails the user is still signed in,
+  // they just don't see the admin entry point.
+  refreshAdminScopes: async () => {
+    try {
+      const data = await api.get('/api/auth/verify');
+      set((s) => ({
+        authState: {
+          ...s.authState,
+          isAdmin: data?.isAdmin === true,
+          isOrgAdmin: data?.isOrgAdmin === true,
+        },
+      }));
+      return { isAdmin: data?.isAdmin === true, isOrgAdmin: data?.isOrgAdmin === true };
+    } catch {
+      set((s) => ({ authState: { ...s.authState, isAdmin: false, isOrgAdmin: false } }));
+      return { isAdmin: false, isOrgAdmin: false };
+    }
   },
 
   signInWithGoogle: async () => {
@@ -89,9 +122,12 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
           isAuthenticated: true,
           isLoading: false,
           user: { ...data.user, sub: data.user.id, uid: data.user.id, displayName: data.user.display_name, photoURL: data.user.photo_url },
+          isAdmin: false,
+          isOrgAdmin: false,
           isAuthReady: true,
         },
       });
+      await get().refreshAdminScopes();
       connectSocket();
     } catch (err) {
       set((s) => ({ authState: { ...s.authState, isLoading: false } }));
@@ -109,6 +145,8 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
           isAuthenticated: true,
           isLoading: false,
           user: { sub: data.userId, uid: data.userId, name: 'Guest', displayName: 'Guest', photoURL: null, isGuest: true },
+          isAdmin: false,
+          isOrgAdmin: false,
           isAuthReady: true,
         },
       });
@@ -123,7 +161,14 @@ const useAuthStore = createWithEqualityFn((set, get) => ({
     clearTokens();
     disconnectSocket();
     set({
-      authState: { isAuthenticated: false, isLoading: false, user: null, isAuthReady: true },
+      authState: {
+        isAuthenticated: false,
+        isLoading: false,
+        user: null,
+        isAdmin: false,
+        isOrgAdmin: false,
+        isAuthReady: true,
+      },
     });
   },
 

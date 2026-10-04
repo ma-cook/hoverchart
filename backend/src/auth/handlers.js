@@ -3,6 +3,8 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
 import pool from '../db.js';
 import { authenticate, optionalAuth } from './middleware.js';
+import { isAppAdminEmail } from './admin.js';
+import { isAnyOrgAdmin } from './orgAdmin.js';
 import { encryptSecret, decryptSecret } from '../security/crypto.js';
 
 export const router = Router();
@@ -99,15 +101,25 @@ router.post('/refresh', async (req, res) => {
 });
 
 // GET /api/auth/verify
+//
+// Also reports which admin *types* the caller holds, so the client can decide
+// what to render without ever hardcoding an admin address in the bundle.
+// `isAdmin` is application-level (ADMIN_EMAILS allowlist); `isOrgAdmin` means
+// the caller administers at least one organization. They are independent.
 router.get('/verify', async (req, res) => {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing token' });
   }
 
+  let decoded;
   try {
-    const token = header.slice(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    decoded = jwt.verify(header.slice(7), process.env.JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+
+  try {
     const result = await pool.query(
       'SELECT id, email, display_name, photo_url, created_at FROM users WHERE id = $1',
       [decoded.sub]
@@ -115,9 +127,25 @@ router.get('/verify', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'User not found' });
     }
-    res.json({ user: result.rows[0] });
-  } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+
+    // Admin flags are advisory here — this endpoint's job is to confirm the
+    // session. A failure to compute them must not invalidate a valid session,
+    // so fall back to "not an admin" rather than failing the request.
+    let isOrgAdmin = false;
+    try {
+      isOrgAdmin = await isAnyOrgAdmin(decoded.sub);
+    } catch (err) {
+      console.error('Verify: org admin lookup failed:', err);
+    }
+
+    res.json({
+      user: result.rows[0],
+      isAdmin: isAppAdminEmail(result.rows[0].email),
+      isOrgAdmin,
+    });
+  } catch (err) {
+    console.error('Verify error:', err);
+    return res.status(500).json({ error: 'Failed to verify token' });
   }
 });
 

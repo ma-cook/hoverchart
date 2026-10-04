@@ -382,6 +382,9 @@ body .top-bar + .menu-button-container {
   text-overflow: ellipsis;
 }
 
+/* Shared base for non-destructive dropdown entries (e.g. Admin).
+   `.avatar-dropdown-logout` extends this and keeps its own danger hover. */
+.avatar-dropdown-item,
 .avatar-dropdown-logout {
   width: 100%;
   background: rgba(255, 255, 255, 0.06);
@@ -394,6 +397,11 @@ body .top-bar + .menu-button-container {
   text-align: left;
   font-family: inherit;
   transition: background 120ms ease, border-color 120ms ease;
+}
+
+.avatar-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .avatar-dropdown-logout:hover {

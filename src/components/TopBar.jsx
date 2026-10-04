@@ -64,8 +64,11 @@ const Avatar = ({ user }) => {
  * - Space only: action buttons (`actions` slot) and presence/coordinates
  *   (`presence` slot).
  * - Right (any logged-in user): organization name (first org, clickable to
- *   open the Organization Manager), username, then the avatar with a logout
- *   dropdown.
+ *   open the Organization Manager), username, then the avatar with a dropdown.
+ *
+ * The Admin entry appears only when the caller passes BOTH `isAdmin` and
+ * `onOpenAdmin`, which only the landing view does — so the entry point is
+ * scoped to the landing page topbar and absent from the space view.
  */
 const TopBar = ({
   view = 'landing',
@@ -73,6 +76,8 @@ const TopBar = ({
   onMenuToggle,
   onLogout,
   onOpenOrgManager,
+  onOpenAdmin,
+  isAdmin,
   pendingInviteCount,
   actions,
   presence,
@@ -129,6 +134,11 @@ const TopBar = ({
   }, [dropdownOpen]);
 
   const isSpace = view === 'space';
+
+  // Guests are never admins, and the entry needs somewhere to go. Both
+  // conditions are supplied by the caller so this stays a pure presentational
+  // decision — the server is the actual authority.
+  const showAdminEntry = Boolean(isAdmin) && !user?.isGuest && typeof onOpenAdmin === 'function';
 
   return (
     <div className="top-bar" onClick={(e) => e.stopPropagation()}>
@@ -193,6 +203,17 @@ const TopBar = ({
                 <div className="avatar-dropdown-user">
                   {user.displayName || user.email || '(logged in)'}
                 </div>
+                {showAdminEntry && (
+                  <button
+                    className="avatar-dropdown-item"
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      onOpenAdmin?.();
+                    }}
+                  >
+                    Admin
+                  </button>
+                )}
                 <button
                   className="avatar-dropdown-logout"
                   onClick={() => {

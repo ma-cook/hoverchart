@@ -17,6 +17,7 @@ import { SpacesTable } from './components/SpacesTable';
 import TopBar from '../components/TopBar';
 import { WelcomeOverlay } from './components/WelcomeOverlay';
 import { OrganizationManager } from './components/OrganizationManager';
+import { AdminDashboard } from './components/AdminDashboard';
 import { UpgradePrompt, TIER_LIMITS } from './components/UpgradePrompt';
 import {
   getUserOrganizations,
@@ -55,6 +56,11 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const authState = useAuthStore((s) => s.authState);
   const user = authState.user;
   const isAuthReady = authState.isAuthReady;
+  // Two independent admin scopes, both resolved server-side via
+  // GET /api/auth/verify. isAdmin = platform-wide (all users);
+  // isOrgAdmin = administers at least one org (that org's users only).
+  const isAppAdmin = authState.isAdmin === true;
+  const isOrgAdmin = authState.isOrgAdmin === true;
   const initializeAuth = useAuthStore((s) => s.initializeAuth);
   const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
   const signOut = useAuthStore((s) => s.signOut);
@@ -121,6 +127,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [userOrganizations, setUserOrganizations] = useState([]);
   const [activeOrgMembers, setActiveOrgMembers] = useState([]);
   const [showOrgManager, setShowOrgManager] = useState(false);
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pendingInvites, setPendingInvites] = useState([]);
 
@@ -455,6 +462,13 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         show={showOrgManager}
         onClose={() => setShowOrgManager(false)}
       />
+      <AdminDashboard
+        show={showAdminDashboard}
+        onClose={() => setShowAdminDashboard(false)}
+        isAdmin={isAppAdmin}
+        isOrgAdmin={isOrgAdmin}
+        currentUserId={user?.uid || user?.sub || null}
+      />
 
       <TopBar
         view="landing"
@@ -462,6 +476,8 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         onMenuToggle={() => setMenuOpen((prev) => !prev)}
         onLogout={handleLogout}
         onOpenOrgManager={() => setShowOrgManager(true)}
+        onOpenAdmin={() => setShowAdminDashboard(true)}
+        isAdmin={isAppAdmin || isOrgAdmin}
         pendingInviteCount={pendingInvites.length}
       />
 
