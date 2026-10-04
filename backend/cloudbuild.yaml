@@ -26,7 +26,7 @@ steps:
       - '--add-cloudsql-instances=$PROJECT_ID:us-central1:volscape'
       # Application admin allowlist (comma-separated). Plain env var, not a
       # secret: change here to grant/revoke platform-wide admin on next deploy.
-      - '--set-env-vars=ADMIN_EMAILS=mithcdc@gmail.com'
+      - '--set-env-vars=ADMIN_EMAILS=mitchcdc@gmail.com'
       - '--set-secrets=DATABASE_URL=DATABASE_URL:latest'
       - '--set-secrets=JWT_SECRET=JWT_SECRET:latest'
       - '--set-secrets=JWT_REFRESH_SECRET=JWT_REFRESH_SECRET:latest'

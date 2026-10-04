@@ -16,15 +16,47 @@
 //     application admin does not implicitly grant admin over any org.
 //   - Organization `owner_id` counts as an org admin.
 
+// Zero-width and formatting characters are invisible in virtually every font,
+// yet `String.prototype.trim()` does not remove them -- of this set only U+FEFF
+// counts as whitespace under the ES spec. A pasted or hand-edited allowlist is
+// the realistic source, and a single one character breaks every comparison
+// silently: no error, no warning, just an admin who can never get in.
+const INVISIBLE_CHARS = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060\uFEFF]/g;
+
+const normalizeEmail = (value) =>
+  String(value ?? '')
+    .replace(INVISIBLE_CHARS, '')
+    .trim()
+    .toLowerCase();
+
 const getAdminEmails = () =>
   String(process.env.ADMIN_EMAILS || '')
     .split(',')
-    .map((email) => email.trim().toLowerCase())
+    .map(normalizeEmail)
     .filter(Boolean);
 
 export const isAppAdminEmail = (email) => {
   if (!email) return false;
-  return getAdminEmails().includes(String(email).trim().toLowerCase());
+  return getAdminEmails().includes(normalizeEmail(email));
+};
+
+// Boot-time summary of the allowlist, for `index.js` to report.
+//
+// Deliberately reports per-entry *lengths* instead of the addresses. A
+// truncated or mistyped address is by far the most likely misconfiguration, and
+// a length that disagrees with the operator's expectation is enough to catch it
+// without writing admin email addresses into log storage.
+export const getAdminEmailDiagnostics = () => {
+  const raw = String(process.env.ADMIN_EMAILS ?? '');
+  const entries = getAdminEmails();
+  return {
+    configured: raw.trim().length > 0,
+    count: entries.length,
+    entryLengths: entries.map((entry) => entry.length),
+    // Outside printable ASCII means invisible or ambiguous characters crept in
+    // from a copy/paste (smart quotes, zero-width joiners, non-breaking space).
+    hasNonPrintableAscii: /[^\x20-\x7E]/.test(raw),
+  };
 };
 
 export const isAppAdmin = (user) => isAppAdminEmail(user?.email);

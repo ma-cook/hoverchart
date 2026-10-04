@@ -3,7 +3,7 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { createWSServer } from './ws/index.js';
 import { authenticate } from './auth/middleware.js';
-import { requireAdmin } from './auth/admin.js';
+import { requireAdmin, getAdminEmailDiagnostics } from './auth/admin.js';
 import pool from './db.js';
 import { runMigrations } from './migrate.js';
 
@@ -25,11 +25,30 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Application admin access is an env allowlist (ADMIN_EMAILS). Warn loudly at
-// boot rather than silently serving a dashboard nobody can open.
-if (!process.env.ADMIN_EMAILS) {
+// Application admin access is an env allowlist (ADMIN_EMAILS). Report its state
+// at boot rather than silently serving a dashboard nobody can open.
+//
+// A mistyped or invisible-character address raises no error anywhere -- the
+// allowlist simply never matches, so the admin quietly gets 403 on every route
+// while both the env var and the code look correct. That failure has to be
+// surfaced here or not at all.
+const adminConfig = getAdminEmailDiagnostics();
+if (!adminConfig.configured) {
   console.warn(
     '[admin] ADMIN_EMAILS is not set — no application admins will be able to access /api/admin'
+  );
+} else if (adminConfig.count === 0) {
+  console.warn(
+    '[admin] ADMIN_EMAILS is set but contained no usable addresses (all entries were empty or whitespace)'
+  );
+} else {
+  if (adminConfig.hasNonPrintableAscii) {
+    console.warn(
+      '[admin] ADMIN_EMAILS contains non-ASCII characters; invisible characters are ignored when matching'
+    );
+  }
+  console.log(
+    `[admin] ${adminConfig.count} application admin(s) configured (entry lengths: ${adminConfig.entryLengths.join(', ')})`
   );
 }
 
