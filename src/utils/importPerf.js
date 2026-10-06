@@ -11,6 +11,16 @@ const marks = new Map(); // label -> { total, count, max, start }
 let lastReportAt = 0;
 const REPORT_INTERVAL_MS = 5000;
 
+// Ring buffer of recent events (label + wall time).  Lets the longtask
+// observer ATTRIBUTE a main-thread block to the last event that ran before
+// it started — "the freeze began right after <label>".
+const eventLog = [];
+const EVENT_LOG_MAX = 64;
+const _logEvent = (label) => {
+  eventLog.push({ t: performance.now(), label });
+  if (eventLog.length > EVENT_LOG_MAX) eventLog.shift();
+};
+
 const report = () => {
   const rows = [...marks.entries()]
     .map(([label, m]) => ({ label, total: m.total, count: m.count, max: m.max }))
@@ -22,6 +32,7 @@ const api = {
   enabled,
   begin(label) {
     if (!enabled) return;
+    _logEvent(`begin:${label}`);
     if (!marks.has(label)) {
       marks.set(label, { total: 0, count: 0, max: 0 });
     }
@@ -36,6 +47,7 @@ const api = {
     m.total += dt;
     m.count += 1;
     if (dt > m.max) m.max = dt;
+    _logEvent(`end:${label} (${Math.round(dt)}ms)`);
     const now = performance.now();
     if (now - lastReportAt > REPORT_INTERVAL_MS) {
       lastReportAt = now;
@@ -46,6 +58,7 @@ const api = {
   // the console goes silent" identifies the blocking phase).
   mark(label) {
     if (!enabled) return;
+    _logEvent(label);
     console.log(`[perf][t+${((performance.now()) / 1000).toFixed(1)}s] ${label}`);
   },
   report,
@@ -65,7 +78,14 @@ if (enabled && typeof window !== 'undefined') {
   try {
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
-        console.log(`[perf][longtask] ${Math.round(entry.duration)}ms ended t=${(entry.startTime / 1000).toFixed(1)}s`);
+        // labels the START time as "ended" (legacy wording); keep it so earlier
+        // transcripts stay consistent, but now ATTRIBUTE the block via the
+        // event ring buffer.
+        const lastEvent = eventLog[eventLog.length - 1];
+        const attribution = lastEvent
+          ? ` — last event before start: ${lastEvent.label}`
+          : '';
+        console.log(`[perf][longtask] ${Math.round(entry.duration)}ms ended t=${(entry.startTime / 1000).toFixed(1)}s${attribution}`);
       }
     }).observe({ entryTypes: ['longtask'] });
   } catch { /* unsupported browser */ }

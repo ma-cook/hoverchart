@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import importPerf from '../utils/importPerf';
 
 /**
  * LOD (Level of Detail) Store
@@ -114,6 +115,7 @@ const useLODStore = create((set, get) => ({
    * PERFORMANCE: Mutates Map in-place, bumps version once per batch.
    */
   batchSetFaceTextVisible: (updates) => {
+    importPerf.begin('ST-faceTextSet');
     const state = get();
     let changed = false;
     for (const [objectId, visible] of updates) {
@@ -125,6 +127,7 @@ const useLODStore = create((set, get) => ({
     if (changed) {
       set({ _faceTextVersion: state._faceTextVersion + 1 });
     }
+    importPerf.end('ST-faceTextSet');
   },
   
   /**
@@ -143,6 +146,7 @@ const useLODStore = create((set, get) => ({
    * PERFORMANCE: Mutates the Map in-place and bumps _lodVersion once per batch.
    */
   batchSetLODLevels: (updates) => {
+    importPerf.begin('ST-lodLevelsSet');
     const state = get();
     let changed = false;
     for (const [objectId, level] of updates) {
@@ -154,6 +158,7 @@ const useLODStore = create((set, get) => ({
     if (changed) {
       set({ _lodVersion: state._lodVersion + 1 });
     }
+    importPerf.end('ST-lodLevelsSet');
   },
   
   /**

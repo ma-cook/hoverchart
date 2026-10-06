@@ -5,6 +5,7 @@ import { useCubeStore } from '../stores';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import importPerf from '../utils/importPerf';
 
 // Mobile detection (same as CubeFace.jsx)
 const isMobile =
@@ -134,6 +135,7 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
     // Defer full O(N) rebuilds during camera motion.
     if (needsInitialSetup && isPickingSuppressed()) return;
 
+    importPerf.begin('FR-cubeFace');
     hasPendingAppendsRef.current = false;
     const cubeStoreState = useCubeStore.getState();
     let idx = 0;
@@ -189,6 +191,7 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
     needsFullUpdateRef.current = false;
+    importPerf.end('FR-cubeFace');
   });
 
   if (capacity === 0) return null;

@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import importPerf from '../utils/importPerf';
 import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
 
 // 2D square geometry to represent cubes at LOW LOD
@@ -109,6 +110,7 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
     // Defer full O(N) rebuilds during camera motion.
     if (needsInitialSetup && isPickingSuppressed()) return;
 
+    importPerf.begin('FR-cubeLow');
     hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;
     const idMap = [];
@@ -162,6 +164,7 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
       mesh.boundingSphere = null;
       needsFullUpdateRef.current = false;
     }
+    importPerf.end('FR-cubeLow');
   });
 
   const handleClick = useCallback(
