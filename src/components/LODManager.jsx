@@ -6,6 +6,7 @@ import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
 import { getSmoothedFrameTime } from '../utils/renderWorkScheduler';
+import { enqueueLodTransitions, takeDowngradeBatch } from '../utils/lodTransitionQueue';
 import importPerf from '../utils/importPerf';
 
 // Reusable vectors to avoid GC pressure
@@ -17,13 +18,22 @@ const LOD_UPDATE_INTERVAL = 100; // ms between LOD updates
 const CAMERA_MOVE_THRESHOLD = 10; // Only recalculate if camera moved more than this
 const CAMERA_MOVE_THRESHOLD_SQ = CAMERA_MOVE_THRESHOLD * CAMERA_MOVE_THRESHOLD;
 
-// Transition queue settings — budget how many LOD *upgrades* apply per frame
-// to prevent frame-rate spikes when many objects cross thresholds simultaneously.
-// Downgrades (FULL→MEDIUM, MEDIUM→LOW) are always applied immediately since
-// they reduce rendering cost.
+// Transition queue settings — both directions are queued and drained at a
+// budgeted rate per frame so a mass threshold crossing never becomes one
+// huge React commit (ObjectRenderer returns null at MEDIUM/LOW, so an
+// unbounded downgrade batch unmounted thousands of <Cube> subtrees at once).
+//
+// Downgrades (FULL->MEDIUM, MEDIUM->LOW) are NOT distance-sorted: insertion
+// order is fine and sorting a large queue every frame is itself O(Q log Q).
+// Upgrades (-> more detail) are sorted closest-first for best visuals.
+// A transition still lands the same frame it is enqueued when it fits the
+// budget, because the drain hook is registered after the enqueue hook.
 const LOD_UPGRADE_BUDGET_PER_FRAME = 1000;
 
-// Frame-time threshold (ms) above which upgrade budget is halved.
+// Downgrades reduce render cost, so they get the larger budget.
+const LOD_DOWNGRADE_BUDGET_PER_FRAME = 4000;
+
+// Frame-time threshold (ms) above which both budgets are halved.
 // Prevents piling on detail when frames are already slow.
 const FRAME_TIME_THROTTLE_MS = 24; // ~42fps
 
@@ -54,6 +64,10 @@ const posMapCacheRef = useRef({ objects: null, map: null });
   // Transition queue: Map<objectId, { level, distanceSq }>.
   // Holds pending LOD upgrades that will be drained at a budgeted rate per frame.
   const upgradeQueueRef = useRef(new Map());
+
+  // Pending LOD downgrades: Map<objectId, level>. Latest level wins.
+  // Drained at a budgeted rate per frame — see LOD_DOWNGRADE_BUDGET_PER_FRAME.
+  const downgradeQueueRef = useRef(new Map());
   
   // Get objects from store — shallow equality avoids re-renders on
   // individual object property changes (position moves, text edits, etc.)
@@ -300,31 +314,18 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     const currentChildParentMap = useLODStore.getState().childParentMap;
 
     // --- Enqueue LOD updates with cascading transition support ---
-    // Downgrades are applied immediately (they reduce render cost).
-    // Upgrades are queued and drained at a budgeted rate per frame.
+    // Both directions are queued; the drain useFrame below applies them at a
+    // budgeted rate per frame so a mass transition never becomes one huge
+    // React commit. An object's latest requested level always wins.
+    // Routing rules live in utils/lodTransitionQueue.js (unit tested).
     const enqueueLODUpdates = (updates) => {
-      if (!updates || updates.length === 0) return;
-
-      const immediateDowngrades = [];
-      const queue = upgradeQueueRef.current;
-
-      for (const [objectId, newLevel] of updates) {
-        const currentLevel = currentLodLevels.get(objectId) ?? LOD_LEVELS.FULL;
-        if (newLevel === currentLevel) continue;
-
-        if (newLevel > currentLevel) {
-          // Downgrade (higher number = less detail) — apply immediately
-          immediateDowngrades.push([objectId, newLevel]);
-          queue.delete(objectId); // Remove any stale pending upgrade
-        } else {
-          // Upgrade (lower number = more detail) — queue for budgeted drain
-          queue.set(objectId, { level: newLevel });
-        }
-      }
-
-      if (immediateDowngrades.length > 0) {
-        batchSetLODLevels(immediateDowngrades);
-      }
+      enqueueLodTransitions({
+        upgradeQueue: upgradeQueueRef.current,
+        downgradeQueue: downgradeQueueRef.current,
+        updates,
+        currentLevels: currentLodLevels,
+        fullLevel: LOD_LEVELS.FULL,
+      });
     };
 
     // --- Try worker path (fire-and-forget, off main thread) ---
@@ -421,70 +422,94 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     }
   });
 
-  // --- Drain upgrade queue at a budgeted rate per frame ---
-  // Runs every frame (no throttle) so queued upgrades cascade smoothly.
-  // Upgrades closest objects first for best visual experience.
+  // --- Drain LOD transition queues at a budgeted rate per frame ---
+  // Runs every frame (no throttle) so queued transitions cascade smoothly.
+  // Downgrades apply first (they reduce render cost) in insertion order and
+  // are budgeted so a mass FULL->MEDIUM/LOW transition never lands as one
+  // React commit that unmounts thousands of <Cube> subtrees at once.
+  // Upgrades are sorted closest-first for best visual experience.
+  // Both directions are flushed through ONE batchSetLODLevels call so
+  // _lodVersion bumps once per frame, not once per queue.
+  // This hook is registered after the enqueue useFrame above, so the first
+  // chunk of a transition still lands in the same frame it was enqueued.
   useFrame(() => {
-    const queue = upgradeQueueRef.current;
-    if (queue.size === 0) return;
+    const downgradeQueue = downgradeQueueRef.current;
+    const upgradeQueue = upgradeQueueRef.current;
+    if (downgradeQueue.size === 0 && upgradeQueue.size === 0) return;
 
     // Allow upgrades during camera movement so objects don't stay
     // invisible during panning. The per-frame budget keeps GPU impact minimal.
+    const slowFrame = getSmoothedFrameTime() > FRAME_TIME_THROTTLE_MS;
+    const updates = [];
 
-    // Build sortable array with distance to current camera position
-    _cameraPos.setFromMatrixPosition(camera.matrixWorld);
-
-    // Position lookup cached per objects-array identity. Rebuilding this Map
-    // over ~100k objects every frame while the upgrade queue is non-empty
-    // was O(N) per frame during navigation.
-    if (posMapCacheRef.current.objects !== objects || !posMapCacheRef.current.map) {
-      const map = new Map();
-      for (const obj of objects) {
-        if (obj.position) map.set(obj.id, obj.position);
+    if (downgradeQueue.size > 0) {
+      const downgradeBudget = slowFrame
+        ? Math.max(1, Math.floor(LOD_DOWNGRADE_BUDGET_PER_FRAME / 2))
+        : LOD_DOWNGRADE_BUDGET_PER_FRAME;
+      const batch = takeDowngradeBatch(downgradeQueue, downgradeBudget);
+      for (let i = 0; i < batch.length; i++) {
+        updates.push(batch[i]);
       }
-      posMapCacheRef.current = { objects, map };
     }
-    const posMap = posMapCacheRef.current.map;
 
-    const entries = [];
-    for (const [objectId, data] of queue) {
-      let distSq = 0;
-      const pos = posMap.get(objectId);
-      if (pos) {
-        if (Array.isArray(pos)) {
-          _objectPos.set(pos[0] || 0, pos[1] || 0, pos[2] || 0);
-        } else if (pos.x !== undefined) {
-          _objectPos.set(pos.x, pos.y, pos.z);
+    if (upgradeQueue.size > 0) {
+      // Build sortable array with distance to current camera position
+      _cameraPos.setFromMatrixPosition(camera.matrixWorld);
+
+      // Position lookup cached per objects-array identity. Rebuilding this Map
+      // over ~100k objects every frame while the upgrade queue is non-empty
+      // was O(N) per frame during navigation.
+      if (posMapCacheRef.current.objects !== objects || !posMapCacheRef.current.map) {
+        const map = new Map();
+        for (const obj of objects) {
+          if (obj.position) map.set(obj.id, obj.position);
         }
-        distSq = _cameraPos.distanceToSquared(_objectPos);
+        posMapCacheRef.current = { objects, map };
       }
-      entries.push({ objectId, level: data.level, distSq });
+      const posMap = posMapCacheRef.current.map;
+
+      const entries = [];
+      for (const [objectId, data] of upgradeQueue) {
+        let distSq = 0;
+        const pos = posMap.get(objectId);
+        if (pos) {
+          if (Array.isArray(pos)) {
+            _objectPos.set(pos[0] || 0, pos[1] || 0, pos[2] || 0);
+          } else if (pos.x !== undefined) {
+            _objectPos.set(pos.x, pos.y, pos.z);
+          }
+          distSq = _cameraPos.distanceToSquared(_objectPos);
+        }
+        entries.push({ objectId, level: data.level, distSq });
+      }
+
+      // Sort: closest objects upgrade first
+      entries.sort((a, b) => a.distSq - b.distSq);
+
+      // Apply up to the budget (adaptive: halve budget when frames are slow)
+      const upgradeBudget = slowFrame
+        ? Math.max(1, Math.floor(LOD_UPGRADE_BUDGET_PER_FRAME / 2))
+        : LOD_UPGRADE_BUDGET_PER_FRAME;
+      const limit = Math.min(entries.length, upgradeBudget);
+      for (let i = 0; i < limit; i++) {
+        const { objectId, level } = entries[i];
+        updates.push([objectId, level]);
+        upgradeQueue.delete(objectId);
+      }
     }
 
-    // Sort: closest objects upgrade first
-    entries.sort((a, b) => a.distSq - b.distSq);
-
-    // Apply up to the budget (adaptive: halve budget when frames are slow)
-    const batch = [];
-    const frameTime = getSmoothedFrameTime();
-    const effectiveBudget = frameTime > FRAME_TIME_THROTTLE_MS
-      ? Math.max(1, Math.floor(LOD_UPGRADE_BUDGET_PER_FRAME / 2))
-      : LOD_UPGRADE_BUDGET_PER_FRAME;
-    const limit = Math.min(entries.length, effectiveBudget);
-    for (let i = 0; i < limit; i++) {
-      const { objectId, level } = entries[i];
-      batch.push([objectId, level]);
-      queue.delete(objectId);
-    }
-
-    if (batch.length > 0) {
-      batchSetLODLevels(batch);
+    if (updates.length > 0) {
+      batchSetLODLevels(updates);
     }
   });
   
   // Cleanup on unmount
   useEffect(() => {
+    const upgradeQueue = upgradeQueueRef.current;
+    const downgradeQueue = downgradeQueueRef.current;
     return () => {
+      upgradeQueue.clear();
+      downgradeQueue.clear();
       clearLODData();
     };
   }, [clearLODData]);
