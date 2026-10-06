@@ -20,6 +20,7 @@ import {
   hasPrecomputedPathCache,
 } from '../utils/pathfindingUtils';
 import { bulkImportState } from '../utils/bulkImportState';
+import importPerf from '../utils/importPerf';
 import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
 import { saveConnection } from '../services/connectionsService';
@@ -1233,6 +1234,9 @@ const ConnectionsRenderer = ({
   const prevPathfindingObjectsRef = useRef(null);
   const lastCategorizationRef = useRef({ batchedConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
   const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null, highlightedFlowPathIds: null });
+  // PROBE: throttle logging of the pathfinding-suppression fast path so it
+  // doesn't drown the ?perf console during a streaming import.
+  const lastSuppressedMarkRef = useRef(0);
 
   // NOTE: pathfindingHash was removed - it had 0.5-unit resolution which meant object moves
   // smaller than 0.5 units would never trigger cache invalidation. Since pathfindingObjects
@@ -1283,6 +1287,15 @@ const ConnectionsRenderer = ({
       const highlightedSet = highlightedFlowPathIds;
       const highlighted = [];
       const deferred = [];
+      // PROBE: confirm the gate is actually suppressing pathfinding during the
+      // streaming import (throttled — the memo re-runs per mount batch).
+      if (importPerf.enabled) {
+        const _nowMark = performance.now();
+        if (_nowMark - lastSuppressedMarkRef.current > 1000) {
+          lastSuppressedMarkRef.current = _nowMark;
+          importPerf.mark(`MK-pathCat suppressed (${(progressiveConnections || []).length} conns)`);
+        }
+      }
       for (const conn of (progressiveConnections || [])) {
         if (
           conn.id === selectedConnection ||
@@ -1347,6 +1360,8 @@ const ConnectionsRenderer = ({
     const withText = [];
     const curved = [];
     const individual = [];
+
+    importPerf.begin('RM-pathCat');
 
     // Build objectsById for face position resolution in categorization
     const catObjectsById = new Map();
@@ -1428,6 +1443,7 @@ const ConnectionsRenderer = ({
         batched.push(conn);
       }
     });
+    importPerf.end('RM-pathCat');
     
     const result = { 
       batchedConnections: batched, 
@@ -1481,12 +1497,14 @@ const ConnectionsRenderer = ({
 
       if (requests.length === 0) return;
 
+      importPerf.begin('RM-workerSerialize');
       const serializedObjects = pathfindingObjects.map(obj => ({
         id: obj.id,
         type: obj.type,
         position: obj.position,
         scale: obj.scale,
       }));
+      importPerf.end('RM-workerSerialize');
 
       // Serializing the whole object layout (above) is O(N) on the main thread
       // and results would be stale against a still-growing layout, so this path
@@ -1539,13 +1557,16 @@ const ConnectionsRenderer = ({
   // Computed once for all connections and applied to both textLabels and
   // individualConnections rendering paths.
   const faceOverrides = useMemo(() => {
+    importPerf.begin('RM-faceOverrides');
     const objectsById = new Map();
     if (objects?.length) {
       for (const obj of objects) {
         if (obj?.id) objectsById.set(obj.id.toString(), obj);
       }
     }
-    return redistributeFaces(progressiveConnections, objectsById);
+    const result = redistributeFaces(progressiveConnections, objectsById);
+    importPerf.end('RM-faceOverrides');
+    return result;
   }, [progressiveConnections, objects]);
 
   // PERFORMANCE: Pre-calculate text positions for connections with text
@@ -1557,6 +1578,7 @@ const ConnectionsRenderer = ({
   //      per-connection hash to pick a unique position along the line.
   const textLabels = useMemo(() => {
     // Build an objectId → object lookup for inline face position calculation
+    importPerf.begin('RM-textLabels');
     const objectsById = new Map();
     if (objects?.length) {
       for (const obj of objects) {
@@ -1564,7 +1586,7 @@ const ConnectionsRenderer = ({
       }
     }
 
-    return textConnections.map(conn => {
+    const textItems = textConnections.map(conn => {
       // Apply face overrides if this connection was reassigned
       const overrides = faceOverrides.get(conn.id);
       const startData = overrides?.startFace !== undefined
@@ -1605,6 +1627,8 @@ const ConnectionsRenderer = ({
         textStyle: conn.textStyle,
       };
     }).filter(Boolean);
+    importPerf.end('RM-textLabels');
+    return textItems;
   }, [textConnections, objects, faceOverrides]);
 
   // Handle connection click from batched renderer

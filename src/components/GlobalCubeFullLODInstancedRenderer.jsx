@@ -5,6 +5,7 @@ import { useCubeStore } from '../stores';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import importPerf from '../utils/importPerf';
 
 const CUBE_SIZE = 5;
 
@@ -209,9 +210,10 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     // Defer full O(N) rebuilds during camera motion.
     if (needsInitialSetup && isPickingSuppressed()) return;
 
-      hasPendingAppendsRef.current = false;
-      let needsUpdate = needsInitialSetup;
-      const idMap = [];
+    importPerf.begin('FR-cubeFullSetup');
+    hasPendingAppendsRef.current = false;
+    let needsUpdate = needsInitialSetup;
+    const idMap = [];
 
       for (let i = 0; i < instancedCubes.length; i++) {
         const cube = instancedCubes[i];
@@ -258,6 +260,7 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
         mesh.instanceMatrix.needsUpdate = true;
         needsFullUpdateRef.current = false;
       }
+      importPerf.end('FR-cubeFullSetup');
     });
 
     // Click handler — maps instanceId back to cube ID

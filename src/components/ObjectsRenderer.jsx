@@ -229,6 +229,7 @@ const ObjectsRenderer = React.memo(({
   // updates usually mutate in place, so this is rare) and patches the
   // mounted collections' slots in place.
   useEffect(() => {
+    importPerf.begin('ET-mountSync');
     const prevIds = allIdsSetRef.current;
     const nextMap = new Map();
     const nextIds = new Set(prevIds);
@@ -299,6 +300,7 @@ const ObjectsRenderer = React.memo(({
       if (!structureChanged) structureChanged = true;
     }
     if (structureChanged) setMountedVersion((v) => v + 1);
+    importPerf.end('ET-mountSync');
 
     // NOTE: previously this component synced objectsRef in a separate tiny
     // effect; merged here so there is exactly one owner of store-array
@@ -366,11 +368,13 @@ const ObjectsRenderer = React.memo(({
           if (Date.now() - lastSafetyScanRef.current > 1000) {
             lastSafetyScanRef.current = Date.now();
             const unmounted = [];
+            importPerf.begin('ET-safetyScan');
             for (const obj of objectsRef.current) {
               if (!mountedIdsRef.current.has(obj.id)) {
                 unmounted.push(obj.id);
               }
             }
+            importPerf.end('ET-safetyScan');
             if (unmounted.length > 0) {
               pendingRef.current = unmounted;
               pendingHeadRef.current = 0;
@@ -508,11 +512,13 @@ const ObjectsRenderer = React.memo(({
     //    cost), so mounting everything is safe.
     const pendingSet = pendingSetRef.current;
     const toAdd = [];
+    importPerf.begin('ET-mountScan');
     for (const obj of objectsRef.current) {
       if (!currentMounted.has(obj.id) && !pendingSet.has(obj.id)) {
         toAdd.push(obj.id);
       }
     }
+    importPerf.end('ET-mountScan');
 
     // Nothing new to add — skip.  Before bailing, reconcile the progress
     // toast: if every mountable object is already mounted, push the final

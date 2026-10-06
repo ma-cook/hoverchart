@@ -4,6 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
 import useTextAtlasStore from '../stores/textAtlasStore';
+import importPerf from '../utils/importPerf';
 
 // =============================================================================
 // Reusable THREE objects — avoids GC pressure in the per-frame loop
@@ -103,6 +104,7 @@ const InstancedAtlasText = ({
   // -----------------------------------------------------------------------
   const pageGroups = useMemo(() => {
     if (!atlas || !labels || labels.length === 0) return [];
+    importPerf.begin('RM-atlasLabels');
 
     // Phase 1 — add all texts (triggers any needed resizes)
     const atlasEntries = [];
@@ -163,6 +165,7 @@ const InstancedAtlasText = ({
       });
     }
 
+importPerf.end('RM-atlasLabels');
     return Array.from(groupMap.values());
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [labels, atlas, scale, atlasVersion]);
@@ -340,6 +343,7 @@ const PageInstancedMesh = React.memo(
       }
 
       // ----- Billboard + distance hide -----
+      importPerf.begin('FR-atlasText');
       for (let i = 0; i < items.length; i++) {
         const { label, displayWidth, displayHeight } = items[i];
         const pos = label.position;
@@ -366,6 +370,7 @@ const PageInstancedMesh = React.memo(
       }
 
       meshRef.current.instanceMatrix.needsUpdate = true;
+      importPerf.end('FR-atlasText');
     });
 
     // ----- click handler (uses Three.js instanceId) -----

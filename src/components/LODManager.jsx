@@ -499,6 +499,7 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     }
 
     if (updates.length > 0) {
+      importPerf.mark(`MK-lodCommit ${updates.length} levels`);
       batchSetLODLevels(updates);
     }
   });

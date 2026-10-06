@@ -6,6 +6,7 @@ import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 import { bulkImportState } from '../utils/bulkImportState';
 import { isPickingSuppressed } from './PickGate';
+import importPerf from '../utils/importPerf';
 
 extend({ LineShaderMaterial });
 
@@ -401,6 +402,8 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       }
     }
 
+    importPerf.begin('FR-edgesPass');
+
     const instanceStart = geometry.getAttribute('instanceStart');
     const instanceEnd = geometry.getAttribute('instanceEnd');
     const instanceColor = geometry.getAttribute('instanceColor');
@@ -553,6 +556,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       needsFullUpdateRef.current = false;
     }
     hasPendingAppendsRef.current = false;
+    importPerf.end('FR-edgesPass');
   });
 
   if (!geometry || capacity === 0) {
