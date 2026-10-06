@@ -37,6 +37,7 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
  * @param {Array} cubes - Array of ALL cube objects (filtering done internally)
  */
 const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick }) => {
+  importPerf.begin('RX-cubeMedium');
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map()); // Track last known data to detect changes
@@ -216,9 +217,12 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
     [onInstanceClick]
   );
 
-  if (capacity === 0) return null;
+  if (capacity === 0) {
+    importPerf.abort('RX-cubeMedium');
+    return null;
+  }
 
-  return (
+  const jsx = (
     <instancedMesh
       key={capacity}
       ref={meshRef}
@@ -227,6 +231,8 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
       onClick={handleClick}
     />
   );
+  importPerf.end('RX-cubeMedium');
+  return jsx;
 });
 
 GlobalCubeMediumLODRenderer.displayName = 'GlobalCubeMediumLODRenderer';

@@ -83,6 +83,7 @@ export function isCubeUnmodified(cubeId, cubesMap, objectHeaderText, objectData)
  */
 const GlobalCubeFullLODInstancedRenderer = React.memo(
   ({ cubes = [], onInstanceClick }) => {
+    importPerf.begin('RX-cubeFull');
     const meshRef = useRef();
     const needsFullUpdateRef = useRef(true);
     const lastDataRef = useRef(new Map());
@@ -277,9 +278,12 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
       [onInstanceClick]
     );
 
-    if (capacity === 0) return null;
+    if (capacity === 0) {
+      importPerf.abort('RX-cubeFull');
+      return null;
+    }
 
-    return (
+    const jsx = (
       <instancedMesh
         key={capacity}
         ref={meshRef}
@@ -288,6 +292,8 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
         onClick={handleClick}
       />
     );
+    importPerf.end('RX-cubeFull');
+    return jsx;
   }
 );
 

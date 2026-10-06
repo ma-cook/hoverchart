@@ -136,6 +136,7 @@ export const cubeTransformMap = new Map(); // Map<cubeId, { position: [x,y,z], s
  * @param {number} cullingThreshold - Override threshold for enabling frustum culling (default: 50)
  */
 const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, cullingThreshold = FRUSTUM_CULLING_THRESHOLD }) => {
+  importPerf.begin('RX-cubeEdges');
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastPositionsRef = useRef(new Map()); // Track last known positions to detect changes
@@ -560,10 +561,11 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   });
 
   if (!geometry || capacity === 0) {
+    importPerf.abort('RX-cubeEdges');
     return null;
   }
 
-  return (
+  const jsx = (
     <instancedMesh
       key={capacity} // Only remount when capacity grows (power-of-2, ~log₂(N) times)
       ref={meshRef}
@@ -572,6 +574,8 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       renderOrder={10}
     />
   );
+  importPerf.end('RX-cubeEdges');
+  return jsx;
 });
 
 GlobalCubeEdgesRenderer.displayName = 'GlobalCubeEdgesRenderer';

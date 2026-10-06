@@ -62,6 +62,7 @@ const tempColor = new THREE.Color();
  * Performance: replaces N individual colored-face draw calls with 1 instanced draw call.
  */
 const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
+  importPerf.begin('RX-cubeFace');
   const meshRef = useRef();
   const lastCapacityRef = useRef(0);
   const needsFullUpdateRef = useRef(true);
@@ -194,15 +195,20 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
     importPerf.end('FR-cubeFace');
   });
 
-  if (capacity === 0) return null;
+  if (capacity === 0) {
+    importPerf.abort('RX-cubeFace');
+    return null;
+  }
 
-  return (
+  const jsx = (
     <instancedMesh
       ref={meshRef}
       args={[SHARED_FACE_GEOMETRY, FACE_MATERIAL, capacity]}
       frustumCulled={false}
     />
   );
+  importPerf.end('RX-cubeFace');
+  return jsx;
 });
 
 GlobalCubeFaceRenderer.displayName = 'GlobalCubeFaceRenderer';

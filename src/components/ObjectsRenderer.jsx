@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import ObjectRenderer from './ObjectRenderer';
 import GlobalCubeEdgesRenderer from './GlobalCubeEdgesRenderer';
@@ -122,7 +122,7 @@ const ObjectsRenderer = React.memo(({
   // every mounted React element on each batch, which is O(N²) cumulative
   // and froze imports around ~9k of 92k objects.
   const mountedIdsRef = useRef(new Set());
-  const [mountedVersion, setMountedVersion] = useState(0);
+const [mountedVersion, setMountedVersion] = useState(0);
   const pendingRef = useRef([]);
   // Mirror of pendingRef contents for O(1) duplicate checks (the queue can
   // hold tens of thousands of ids while an import streams in).
@@ -312,6 +312,18 @@ const ObjectsRenderer = React.memo(({
     visibleObjectIdsRef.current = visibleObjectIds;
   }, [visibleObjectIds]);
 
+  // Commit-latency beacon: the pump marks `pump vN` when it queues a render
+  // for version N; this layout effect logs the instant React commits it.  The
+  // console wall-time gap between the two marks IS the per-batch render+commit
+  // duration — compare it to the freeze's longtask to name the culprit.
+  const lastCommitRef = useRef(0);
+  useLayoutEffect(() => {
+    if (mountedVersion !== lastCommitRef.current) {
+      lastCommitRef.current = mountedVersion;
+      importPerf.mark(`commit v${mountedVersion} mounted=${mountedIdsRef.current.size}`);
+    }
+  });
+
   // All store objects are mounted.  The earlier cap that only mounted objects
   // whose cell was already loaded (and the mirror store cap in objectMethods.js)
   // left the services/utils/hooks/etc. groups invisible after a scan — the OOM
@@ -461,6 +473,7 @@ const ObjectsRenderer = React.memo(({
           }
           lastMountActivityRef.current = Date.now();
           setMountedVersion((v) => v + 1);
+          importPerf.mark(`pump v${mountedVersion + 1}`);
           // Report progress to the store (throttled)
           const now = Date.now();
           const total = getMountableTotal();

@@ -34,14 +34,19 @@ const api = {
     if (!enabled) return;
     _logEvent(`begin:${label}`);
     if (!marks.has(label)) {
-      marks.set(label, { total: 0, count: 0, max: 0 });
+      marks.set(label, { total: 0, count: 0, max: 0, stack: 0 });
     }
-    marks.get(label)._start = performance.now();
+    const m = marks.get(label);
+    if (m._start === undefined) m._start = performance.now();
+    m.stack += 1;
   },
   end(label) {
     if (!enabled) return;
     const m = marks.get(label);
-    if (!m || m._start === undefined) return;
+    if (!m || m.stack <= 0) return;
+    m.stack -= 1;
+    if (m.stack > 0) return;
+    if (m._start === undefined) return;
     const dt = performance.now() - m._start;
     m._start = undefined;
     m.total += dt;
@@ -53,6 +58,14 @@ const api = {
       lastReportAt = now;
       report();
     }
+  },
+  // Cancel an in-flight begin (component body probe hit an early return).
+  abort(label) {
+    if (!enabled) return;
+    const m = marks.get(label);
+    if (!m) return;
+    m.stack = 0;
+    m._start = undefined;
   },
   // One-line timestamped marker — for localizing freezes ("last line before
   // the console goes silent" identifies the blocking phase).

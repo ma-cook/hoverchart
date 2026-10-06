@@ -20,6 +20,7 @@ const tempColor = new THREE.Color();
 const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
 
 const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) => {
+  importPerf.begin('RX-cubeLow');
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map());
@@ -180,9 +181,12 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
     [onInstanceClick]
   );
 
-  if (capacity === 0) return null;
+  if (capacity === 0) {
+    importPerf.abort('RX-cubeLow');
+    return null;
+  }
 
-  return (
+  const jsx = (
     <instancedMesh
       key={capacity}
       ref={meshRef}
@@ -191,6 +195,8 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
       onClick={handleClick}
     />
   );
+  importPerf.end('RX-cubeLow');
+  return jsx;
 });
 
 GlobalCubeLowLODRenderer.displayName = 'GlobalCubeLowLODRenderer';
