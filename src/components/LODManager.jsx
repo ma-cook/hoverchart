@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ } from '../stores/lodStore';
+import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ, LOD_THRESHOLDS_SQ } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
 import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
@@ -58,6 +58,8 @@ const lastUpdateTimeRef = useRef(0);
 const lastCameraPositionRef = useRef(new THREE.Vector3());
 const initializedRef = useRef(false);
 const needsImmediateUpdateRef = useRef(false);
+// DIAG (?perf): throttle for the periodic LOD level histogram.
+const lodDiagRef = useRef({ lastAt: -1e9 });
 const prevObjectCountRef = useRef(0);
 const posMapCacheRef = useRef({ objects: null, map: null });
 
@@ -288,6 +290,38 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     
     // Get current camera position
     _cameraPos.setFromMatrixPosition(camera.matrixWorld);
+
+    // DIAG (?perf): periodic LOD histogram.  The "objects no longer render"
+    // report can only be settled by knowing how many objects are actually at
+    // FULL detail — FULL is the only level the edge/face/instanced renderers
+    // draw, so a scene whose levels are almost all MEDIUM/LOW looks empty.
+    if (importPerf.enabled) {
+      const diag = lodDiagRef.current;
+      if (now - diag.lastAt > 1000) {
+        diag.lastAt = now;
+        const st = useLODStore.getState();
+        const counts = [0, 0, 0];
+        for (const l of st.lodLevels.values()) counts[l] = (counts[l] || 0) + 1;
+        // Independent ground truth: how many objects are physically inside the
+        // FULL-detail radius right now.  If this is ~0 the empty view is a
+        // threshold/scale issue (nothing is close enough to earn FULL detail);
+        // if it is large while FULL=0 the stamped levels themselves are wrong.
+        const fullSq = LOD_THRESHOLDS_SQ.FULL_DETAIL;
+        let withinFullRadius = 0;
+        const objs = objectsRef.current;
+        for (let i = 0; i < objs.length; i++) {
+          const p = objs[i].position;
+          if (!p) continue;
+          const dx = (p[0] || 0) - _cameraPos.x;
+          const dy = (p[1] || 0) - _cameraPos.y;
+          const dz = (p[2] || 0) - _cameraPos.z;
+          if (dx * dx + dy * dy + dz * dz < fullSq) withinFullRadius++;
+        }
+        importPerf.mark(
+          `lod objs=${objs.length} stamped=${st.lodLevels.size} FULL=${counts[0]} MEDIUM=${counts[1]} LOW=${counts[2]} withinFullRadius=${withinFullRadius} parents=${st.parentIds.size} childRels=${st.childParentMap.size} camDist=${_cameraPos.length().toFixed(0)} upQ=${upgradeQueueRef.current.size} downQ=${downgradeQueueRef.current.size}`
+        );
+      }
+    }
 
     // Force immediate LOD pass when initialization completes or new objects arrive,
     // bypassing throttle and camera-movement gates so objects don't render at
