@@ -200,27 +200,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
   const mountObjectInternal = (obj) => {
     mountedIdsRef.current.add(obj.id);
     mountedObjectsRef.current.push(obj);
-    // Seed the object's initial LOD level from current camera distance so the
-    // Global renderers filter it into the correct detail immediately.  Without
-    // this, lodLevels starts empty -> every object mounts FULL -> the first
-    // LOD pass stamps ~2000 as MEDIUM -> one _lodVersion bump re-filters ALL
-    // renderers at once (the mass-downgrade moment).  Containers are excluded
-    // from the LOD system (always FULL).  Parent thresholds are unknown until
-    // the containment pass resolves, so child thresholds are used here; the
-    // post-containment LOD pass corrects the handful of true parents.
-    if (!obj.merfolkData?.isContainer && !obj.merfolkData?.isRepoContainer) {
-      const p = obj.position;
-      const px = Array.isArray(p) ? p[0] : p.x;
-      const py = Array.isArray(p) ? p[1] : p.y;
-      const pz = Array.isArray(p) ? p[2] : p.z;
-      const dx = px - camera.position.x;
-      const dy = py - camera.position.y;
-      const dz = pz - camera.position.z;
-      lodSeedBatchRef.current.push([
-        obj.id,
-        calculateLODLevel(dx * dx + dy * dy + dz * dz),
-      ]);
-    }
     switch (obj.type) {
       case 'cube':
         cubeArrRef.current.push(obj);
@@ -285,6 +264,37 @@ const [mountedVersion, setMountedVersion] = useState(0);
         nextIds.add(obj.id);
       }
     }
+    // LOD seeding: LODManager's first pass covers ALL objects in the store
+    // (not just mounted ones), so stamping levels only as objects mount left
+    // ~2300 unmounted objects as default-FULL -> the first pass still applied
+    // one giant 2000+… level downgrade in a single _lodVersion commit (the
+    // mass-downgrade moment that correlates with the mid-import freeze).
+    // Seed every NEW object here (child thresholds; parents are corrected by
+    // LODManager after containment resolves) so the first pass finds ~zero
+    // diffs and no mass re-filter ever happens.  Containers stay unset
+    // (always FULL).  Runs once per objects-array change, so it only pays
+    // O(new) distance math.
+    const lodLevelsNow = useLODStore.getState().lodLevels;
+    const camPos = camera.position;
+    for (const obj of objects) {
+      if (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer) {
+        continue;
+      }
+      if (lodLevelsNow.has(obj.id)) continue;
+      const p = obj.position;
+      if (!p) continue;
+      const px = Array.isArray(p) ? p[0] : p.x;
+      const py = Array.isArray(p) ? p[1] : p.y;
+      const pz = Array.isArray(p) ? p[2] : p.z;
+      const dx = px - camPos.x;
+      const dy = py - camPos.y;
+      const dz = pz - camPos.z;
+      lodSeedBatchRef.current.push([
+        obj.id,
+        calculateLODLevel(dx * dx + dy * dy + dz * dz),
+      ]);
+    }
+    flushLodSeeds();
     // Batched removal purge: collect ALL vanished ids first, then filter each
     // mounted collection once — per-id filtering would be O(removed × mounted).
     const removedNow = [];
@@ -348,7 +358,10 @@ const [mountedVersion, setMountedVersion] = useState(0);
 
     // NOTE: previously this component synced objectsRef in a separate tiny
     // effect; merged here so there is exactly one owner of store-array
-    // synchronization.
+    // synchronization.  Must NOT re-run on camera.position changes (it would
+    // re-sync/reseed on every camera move); the seed is a best-effort initial
+    // stamp at arrival time only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [objects]);
 
   // Keep refs in sync
@@ -516,7 +529,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
             settleTimerRef.current = null;
           }
           lastMountActivityRef.current = Date.now();
-          flushLodSeeds();
           setMountedVersion((v) => v + 1);
           importPerf.mark(`pump v${mountedVersion + 1}`);
           // Report progress to the store (throttled)
@@ -639,7 +651,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
         const obj = objectById.get(id);
         if (obj) mountObjectInternal(obj);
       }
-      flushLodSeeds();
       setMountedVersion((v) => v + 1);
       // Clear any in-progress render progress (all mounted instantly)
       useDiagramStore.getState().setRenderProgress(
@@ -663,7 +674,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
         const obj = objectById.get(id);
         if (obj) mountObjectInternal(obj);
       }
-      flushLodSeeds();
       setMountedVersion((v) => v + 1);
       // Immediately report that progressive mounting has started
       useDiagramStore.getState().setRenderProgress(
