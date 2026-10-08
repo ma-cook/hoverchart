@@ -137,6 +137,11 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     const objects = objectsRef.current;
     if (!objects || objects.length === 0) return;
 
+    // Defer worker sync until after initial mount/containment has started
+    // to avoid a 6+ second structured clone blocking first paint.
+    if (!initializedRef.current && deferredPassTick < 2) return;
+    if (deferredPassTick === 0 && !workerSyncedRef.current) return;
+
     importPerf.mark(`lodDeferred: serializing ${objects.length} objects for worker`);
     const t0 = performance.now();
 

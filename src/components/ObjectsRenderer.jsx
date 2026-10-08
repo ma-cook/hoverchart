@@ -265,36 +265,29 @@ const [mountedVersion, setMountedVersion] = useState(0);
       }
     }
     // LOD seeding: LODManager's first pass covers ALL objects in the store
-    // (not just mounted ones), so stamping levels only as objects mount left
-    // ~2300 unmounted objects as default-FULL -> the first pass still applied
-    // one giant 2000+… level downgrade in a single _lodVersion commit (the
-    // mass-downgrade moment that correlates with the mid-import freeze).
-    // Seed every NEW object here (child thresholds; parents are corrected by
-    // LODManager after containment resolves) so the first pass finds ~zero
-    // diffs and no mass re-filter ever happens.  Containers stay unset
-    // (always FULL).  Runs once per objects-array change, so it only pays
-    // O(new) distance math.
-    const lodLevelsNow = useLODStore.getState().lodLevels;
-    const camPos = camera.position;
-    for (const obj of objects) {
-      if (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer) {
-        continue;
+    // (not just mounted ones). Do a single bulk seed pass before any mounts
+    // to avoid re-scanning the full array on every incremental store flush.
+    if (mountedIdsRef.current.size === 0) {
+      const lodLevelsNow = useLODStore.getState().lodLevels;
+      const camPos = camera.position;
+      for (const obj of objects) {
+        if (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer) {
+          continue;
+        }
+        if (lodLevelsNow.has(obj.id)) continue;
+        const p = obj.position;
+        if (!p) continue;
+        const px = Array.isArray(p) ? p[0] : p.x;
+        const py = Array.isArray(p) ? p[1] : p.y;
+        const pz = Array.isArray(p) ? p[2] : p.z;
+        const dx = px - camPos.x;
+        const dy = py - camPos.y;
+        const dz = pz - camPos.z;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        lodSeedBatchRef.current.push([obj.id, calculateLODLevel(d2)]);
       }
-      if (lodLevelsNow.has(obj.id)) continue;
-      const p = obj.position;
-      if (!p) continue;
-      const px = Array.isArray(p) ? p[0] : p.x;
-      const py = Array.isArray(p) ? p[1] : p.y;
-      const pz = Array.isArray(p) ? p[2] : p.z;
-      const dx = px - camPos.x;
-      const dy = py - camPos.y;
-      const dz = pz - camPos.z;
-      lodSeedBatchRef.current.push([
-        obj.id,
-        calculateLODLevel(dx * dx + dy * dy + dz * dz),
-      ]);
+      flushLodSeeds();
     }
-    flushLodSeeds();
     // Batched removal purge: collect ALL vanished ids first, then filter each
     // mounted collection once — per-id filtering would be O(removed × mounted).
     const removedNow = [];
