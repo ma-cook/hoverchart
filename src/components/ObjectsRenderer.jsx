@@ -24,7 +24,7 @@ import importPerf from '../utils/importPerf';
 import { beginBulkImport, endBulkImportIfIdle } from '../utils/bulkImportState';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
-import useLODStore, { calculateLODLevel, LOD_LEVELS } from '../stores/lodStore';
+import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 
 /**
  * PROGRESSIVE MOUNT BUDGET (Adaptive)
@@ -110,16 +110,7 @@ const ObjectsRenderer = React.memo(({
 }) => {
   const { camera } = useThree();
 
-  // LOD seeding: levels are stamped at mount time (based on current camera
-  // distance) so every renderer filters objects into the correct detail from
-  // the first frame — instead of the empty-map default FULL where all N
-  // objects mount full-detail and then get mass-downgraded on the first LOD
-  // pass (one _lodVersion bump re-filtering every Global renderer at once).
-  const batchSetLODLevels = useLODStore((s) => s.batchSetLODLevels);
   const lodVersion = useLODStore((s) => s._lodVersion);
-  // Collects [id, level] seeds per mount batch; flushed with a single
-  // batchSetLODLevels call before each setMountedVersion.
-  const lodSeedBatchRef = useRef([]);
 
   // ─── Progressive mounting ───────────────────────────────────────────
   // Instead of mounting every newly-visible object in one frame (which
@@ -234,17 +225,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
     }
   };
 
-  // Flush the collected LOD seeds with ONE batchSetLODLevels call (single
-  // _lodVersion bump) so renderers re-filter exactly once per mount commit,
-  // and see correct levels already populated when they do.
-  const flushLodSeeds = () => {
-    const seeds = lodSeedBatchRef.current;
-    if (seeds.length > 0) {
-      batchSetLODLevels(seeds);
-      lodSeedBatchRef.current = [];
-    }
-  };
-
   // ─── Store-array sync effect ────────────────────────────────────────
   // Keeps allIdsSetRef/idToObjectRef in step with the objects array using
   // ONE pass per flush (not one pass per mount batch).  Also detects
@@ -264,30 +244,14 @@ const [mountedVersion, setMountedVersion] = useState(0);
         nextIds.add(obj.id);
       }
     }
-    // LOD seeding: LODManager's first pass covers ALL objects in the store
-    // (not just mounted ones). Do a single bulk seed pass before any mounts
-    // to avoid re-scanning the full array on every incremental store flush.
-    if (mountedIdsRef.current.size === 0) {
-      const lodLevelsNow = useLODStore.getState().lodLevels;
-      const camPos = camera.position;
-      for (const obj of objects) {
-        if (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer) {
-          continue;
-        }
-        if (lodLevelsNow.has(obj.id)) continue;
-        const p = obj.position;
-        if (!p) continue;
-        const px = Array.isArray(p) ? p[0] : p.x;
-        const py = Array.isArray(p) ? p[1] : p.y;
-        const pz = Array.isArray(p) ? p[2] : p.z;
-        const dx = px - camPos.x;
-        const dy = py - camPos.y;
-        const dz = pz - camPos.z;
-        const d2 = dx * dx + dy * dy + dz * dz;
-        lodSeedBatchRef.current.push([obj.id, calculateLODLevel(d2)]);
-      }
-      flushLodSeeds();
-    }
+    // LOD seeding removed: levels must come from LODManager's real
+    // distance pass.  Stamping them here made a best-effort seed
+    // authoritative — if containment never completes, lodLevels never gets
+    // corrected, and every FULL-only renderer (GlobalCubeEdges /
+    // GlobalCubeFace / GlobalCubeFullLODInstanced) culls the seeded
+    // non-FULL objects forever, leaving the scene empty.  With an empty
+    // lodLevels map those renderers default to `?? LOD_LEVELS.FULL` and
+    // draw everything until a genuine pass runs.
     // Batched removal purge: collect ALL vanished ids first, then filter each
     // mounted collection once — per-id filtering would be O(removed × mounted).
     const removedNow = [];
@@ -351,10 +315,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
 
     // NOTE: previously this component synced objectsRef in a separate tiny
     // effect; merged here so there is exactly one owner of store-array
-    // synchronization.  Must NOT re-run on camera.position changes (it would
-    // re-sync/reseed on every camera move); the seed is a best-effort initial
-    // stamp at arrival time only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // synchronization.
   }, [objects]);
 
   // Keep refs in sync

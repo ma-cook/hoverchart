@@ -3,7 +3,7 @@ import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useChatArchiveStore from '../stores/chatArchiveStore';
-import { useRef, useCallback, useEffect, useState, useMemo } from 'react';
+import { useRef, useCallback, useEffect, useState, useMemo, memo } from 'react';
 import {
   uploadModelToStorage,
   uploadMarkdownToStorage,
@@ -245,6 +245,74 @@ const EarthSidebarSections = () => {
     </>
   );
 };
+
+/**
+ * Unified progress toast — bottom-right, handles scan, render, and data
+ * loading.
+ *
+ * Isolated behind React.memo with its own store subscriptions on purpose:
+ * `diagramStore.renderProgress` is replaced with a fresh object on every
+ * progressive-mount progress write, so subscribing to it from the main
+ * UIOverlay component re-rendered the entire 2500-line overlay (chat windows,
+ * code workspace, top bar) every ~500ms while objects were mounting — the
+ * multi-second block that followed each `pump vN` mark.  Here only this small
+ * subtree re-renders, and only when one of its own selectors actually changes.
+ */
+const ProgressToast = memo(({ scanProgress }) => {
+  const renderProgress = useDiagramStore((state) => state.renderProgress);
+  const isInitialLoading = useObjectsStore((state) => state.isInitialLoading);
+  const objectCount = useObjectsStore((state) => state.objects?.length ?? 0);
+  const isCellsLoading = useSpatialManagerStore((state) => state.loadingCells.size > 0);
+
+  if (
+    !scanProgress.isScanning &&
+    !renderProgress &&
+    !((isInitialLoading || isCellsLoading) && objectCount > 0)
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="progress-toast">
+      {((isInitialLoading || isCellsLoading) && objectCount > 0) && (
+        <div className="progress-toast-row">
+          <div className="progress-toast-label">
+            {isInitialLoading
+              ? objectCount > 0
+                ? `Loading ${objectCount.toLocaleString()} object${objectCount !== 1 ? 's' : ''}…`
+                : 'Loading objects…'
+              : 'Loading objects…'}
+          </div>
+          <div className="progress-toast-track">
+            <div className="progress-toast-fill progress-toast-fill--data progress-toast-fill--indeterminate" />
+          </div>
+        </div>
+      )}
+      {scanProgress.isScanning && (
+        <div className={`progress-toast-row${isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
+          <div className="progress-toast-label">{scanProgress.stage || 'Scanning…'}</div>
+          <div className="progress-toast-track">
+            <div className="progress-toast-fill progress-toast-fill--scan" style={{ width: `${scanProgress.progress}%` }} />
+          </div>
+          <div className="progress-toast-pct">{Math.round(scanProgress.progress)}%</div>
+        </div>
+      )}
+      {renderProgress && (
+        <div className={`progress-toast-row${scanProgress.isScanning || isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
+          <div className="progress-toast-label">
+            Rendering {renderProgress.total.toLocaleString()} objects
+            <span className="progress-toast-count"> ({renderProgress.mounted.toLocaleString()} / {renderProgress.total.toLocaleString()})</span>
+          </div>
+          <div className="progress-toast-track">
+            <div className="progress-toast-fill progress-toast-fill--render" style={{ width: `${Math.round((renderProgress.mounted / renderProgress.total) * 100)}%` }} />
+          </div>
+          <div className="progress-toast-pct">{Math.round((renderProgress.mounted / renderProgress.total) * 100)}%</div>
+        </div>
+      )}
+    </div>
+  );
+});
+ProgressToast.displayName = 'ProgressToast';
 
 const UIOverlay = ({
   onCreateObject,
@@ -859,10 +927,13 @@ const UIOverlay = ({
   const viewMode = useUIOverlayStore((state) => state.viewMode);
   const setViewMode = useUIOverlayStore((state) => state.setViewMode);
   const is2DReady = useDiagramStore((state) => state.is2DReady);
-  const renderProgress = useDiagramStore((state) => state.renderProgress);
-  const isInitialLoading = useObjectsStore((state) => state.isInitialLoading);
-  const objectCount = useObjectsStore((state) => state.objects?.length ?? 0);
-  const isCellsLoading = useSpatialManagerStore((state) => state.loadingCells.size > 0);
+  // NOTE: renderProgress / isInitialLoading / objectCount / isCellsLoading are
+  // NOT subscribed here — they live in <ProgressToast>, which is memoized.
+  // `renderProgress` gets a fresh object identity on every progressive-mount
+  // progress write (~every 500ms while objects mount), so subscribing to it
+  // from this 2500-line component re-rendered the entire overlay (all chat
+  // windows, code workspace, top bar) on every tick — measured as a multi-
+  // second main-thread block right after the mount pump's `pump vN` mark.
 
   // Save a diagram digest whenever the diagram graph becomes available.
   // This covers the Space Chat scan path, which may not persist a storageUrl
@@ -2684,47 +2755,10 @@ const UIOverlay = ({
         />
       ))}
 
-      
-      {/* Unified progress toast — bottom-right, handles scan, render, and data loading */}
-      {(scanProgress.isScanning || renderProgress || ((isInitialLoading || isCellsLoading) && objectCount > 0)) && (
-        <div className="progress-toast">
-          {((isInitialLoading || isCellsLoading) && objectCount > 0) && (
-            <div className="progress-toast-row">
-              <div className="progress-toast-label">
-                {isInitialLoading
-                  ? objectCount > 0
-                    ? `Loading ${objectCount.toLocaleString()} object${objectCount !== 1 ? 's' : ''}…`
-                    : 'Loading objects…'
-                  : 'Loading objects…'}
-              </div>
-              <div className="progress-toast-track">
-                <div className="progress-toast-fill progress-toast-fill--data progress-toast-fill--indeterminate" />
-              </div>
-            </div>
-          )}
-          {scanProgress.isScanning && (
-            <div className={`progress-toast-row${isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
-              <div className="progress-toast-label">{scanProgress.stage || 'Scanning…'}</div>
-              <div className="progress-toast-track">
-                <div className="progress-toast-fill progress-toast-fill--scan" style={{ width: `${scanProgress.progress}%` }} />
-              </div>
-              <div className="progress-toast-pct">{Math.round(scanProgress.progress)}%</div>
-            </div>
-          )}
-          {renderProgress && (
-            <div className={`progress-toast-row${scanProgress.isScanning || isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
-              <div className="progress-toast-label">
-                Rendering {renderProgress.total.toLocaleString()} objects
-                <span className="progress-toast-count"> ({renderProgress.mounted.toLocaleString()} / {renderProgress.total.toLocaleString()})</span>
-              </div>
-              <div className="progress-toast-track">
-                <div className="progress-toast-fill progress-toast-fill--render" style={{ width: `${Math.round((renderProgress.mounted / renderProgress.total) * 100)}%` }} />
-              </div>
-              <div className="progress-toast-pct">{Math.round((renderProgress.mounted / renderProgress.total) * 100)}%</div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Unified progress toast — bottom-right, handles scan, render, and data
+          loading.  Isolated in a memoized child so progressive-mount progress
+          writes don't re-render the whole overlay. */}
+      <ProgressToast scanProgress={scanProgress} />
 
       {/* Notification popup */}
       {notification.show && (
