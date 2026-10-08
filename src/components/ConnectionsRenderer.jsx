@@ -62,11 +62,13 @@ const DistanceFilteredConnectionText = React.memo(({
     // FREEZE FIX: Skip visibility checks when main thread is lagging
     if (isFrameBudgetExhausted()) return;
     lastCheckRef.current = now;
+    importPerf.begin('FR-connText');
     
     if (!groupRef.current) return;
     
     if (!position) {
       groupRef.current.visible = false;
+      importPerf.abort('FR-connText');
       return;
     }
     
@@ -76,6 +78,7 @@ const DistanceFilteredConnectionText = React.memo(({
     const distanceSquared = dx * dx + dy * dy + dz * dz;
     
     groupRef.current.visible = distanceSquared <= maxDistanceSquared;
+    importPerf.end('FR-connText');
   });
   
   return <group ref={groupRef}>{children}</group>;

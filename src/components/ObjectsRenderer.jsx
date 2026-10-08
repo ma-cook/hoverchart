@@ -24,6 +24,7 @@ import importPerf from '../utils/importPerf';
 import { beginBulkImport, endBulkImportIfIdle } from '../utils/bulkImportState';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
+import useLODStore, { calculateLODLevel, LOD_LEVELS } from '../stores/lodStore';
 
 /**
  * PROGRESSIVE MOUNT BUDGET (Adaptive)
@@ -109,6 +110,17 @@ const ObjectsRenderer = React.memo(({
 }) => {
   const { camera } = useThree();
 
+  // LOD seeding: levels are stamped at mount time (based on current camera
+  // distance) so every renderer filters objects into the correct detail from
+  // the first frame — instead of the empty-map default FULL where all N
+  // objects mount full-detail and then get mass-downgraded on the first LOD
+  // pass (one _lodVersion bump re-filtering every Global renderer at once).
+  const batchSetLODLevels = useLODStore((s) => s.batchSetLODLevels);
+  const lodVersion = useLODStore((s) => s._lodVersion);
+  // Collects [id, level] seeds per mount batch; flushed with a single
+  // batchSetLODLevels call before each setMountedVersion.
+  const lodSeedBatchRef = useRef([]);
+
   // ─── Progressive mounting ───────────────────────────────────────────
   // Instead of mounting every newly-visible object in one frame (which
   // causes freezes), we spread the work across multiple animation frames.
@@ -188,6 +200,27 @@ const [mountedVersion, setMountedVersion] = useState(0);
   const mountObjectInternal = (obj) => {
     mountedIdsRef.current.add(obj.id);
     mountedObjectsRef.current.push(obj);
+    // Seed the object's initial LOD level from current camera distance so the
+    // Global renderers filter it into the correct detail immediately.  Without
+    // this, lodLevels starts empty -> every object mounts FULL -> the first
+    // LOD pass stamps ~2000 as MEDIUM -> one _lodVersion bump re-filters ALL
+    // renderers at once (the mass-downgrade moment).  Containers are excluded
+    // from the LOD system (always FULL).  Parent thresholds are unknown until
+    // the containment pass resolves, so child thresholds are used here; the
+    // post-containment LOD pass corrects the handful of true parents.
+    if (!obj.merfolkData?.isContainer && !obj.merfolkData?.isRepoContainer) {
+      const p = obj.position;
+      const px = Array.isArray(p) ? p[0] : p.x;
+      const py = Array.isArray(p) ? p[1] : p.y;
+      const pz = Array.isArray(p) ? p[2] : p.z;
+      const dx = px - camera.position.x;
+      const dy = py - camera.position.y;
+      const dz = pz - camera.position.z;
+      lodSeedBatchRef.current.push([
+        obj.id,
+        calculateLODLevel(dx * dx + dy * dy + dz * dz),
+      ]);
+    }
     switch (obj.type) {
       case 'cube':
         cubeArrRef.current.push(obj);
@@ -219,6 +252,17 @@ const [mountedVersion, setMountedVersion] = useState(0);
         break;
       default:
         break;
+    }
+  };
+
+  // Flush the collected LOD seeds with ONE batchSetLODLevels call (single
+  // _lodVersion bump) so renderers re-filter exactly once per mount commit,
+  // and see correct levels already populated when they do.
+  const flushLodSeeds = () => {
+    const seeds = lodSeedBatchRef.current;
+    if (seeds.length > 0) {
+      batchSetLODLevels(seeds);
+      lodSeedBatchRef.current = [];
     }
   };
 
@@ -472,6 +516,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
             settleTimerRef.current = null;
           }
           lastMountActivityRef.current = Date.now();
+          flushLodSeeds();
           setMountedVersion((v) => v + 1);
           importPerf.mark(`pump v${mountedVersion + 1}`);
           // Report progress to the store (throttled)
@@ -594,6 +639,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
         const obj = objectById.get(id);
         if (obj) mountObjectInternal(obj);
       }
+      flushLodSeeds();
       setMountedVersion((v) => v + 1);
       // Clear any in-progress render progress (all mounted instantly)
       useDiagramStore.getState().setRenderProgress(
@@ -617,6 +663,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
         const obj = objectById.get(id);
         if (obj) mountObjectInternal(obj);
       }
+      flushLodSeeds();
       setMountedVersion((v) => v + 1);
       // Immediately report that progressive mounting has started
       useDiagramStore.getState().setRenderProgress(
@@ -854,10 +901,17 @@ const [mountedVersion, setMountedVersion] = useState(0);
   // its mounted <Cube> renders its own interactive label instead.
   const namedCubeLabels = useMemo(() => {
     void mountedVersion; // invalidation: cubeArrRef content changes bump it
+    void lodVersion; // invalidation: LOD transitions add/remove labels
+    const lodLevels = useLODStore.getState().lodLevels;
     const out = [];
     for (const obj of cubeArrRef.current) {
       if (!obj.headerText) continue;
       if (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer) continue;
+      // LOD-aware: only FULL cubes get instanced name labels.  Non-FULL cubes
+      // are distance-culled by InstancedAtlasText anyway, so labels for them
+      // are wasted atlas rasterization work during import (the leak that made
+      // ~2000 far cubes render full detail before the mass downgrade).
+      if ((lodLevels.get(obj.id) ?? LOD_LEVELS.FULL) !== LOD_LEVELS.FULL) continue;
       if (!unmodifiedCubeIds.has(obj.id)) continue;
       if (selectedId === obj.id) continue;
       const halfHeight = (obj.scale?.[1] || 1) * 5;
@@ -873,7 +927,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
       });
     }
     return out;
-  }, [mountedVersion, unmodifiedCubeIds, selectedId]);
+  }, [mountedVersion, lodVersion, unmodifiedCubeIds, selectedId]);
 
   // Click handler for the instanced full-LOD renderer — selects the cube,
   // which promotes it to a full <Cube> component on next render.

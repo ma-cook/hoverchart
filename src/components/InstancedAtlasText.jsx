@@ -318,6 +318,7 @@ const PageInstancedMesh = React.memo(
       // toggling don't need 60 fps updates for static labels.
       if (now - lastUpdateRef.current < 100) return;
       lastUpdateRef.current = now;
+      importPerf.begin('FR-atlasText');
 
       // ----- Atlas resize UV fixup -----
       const currentVersion = atlas.version;
@@ -343,7 +344,6 @@ const PageInstancedMesh = React.memo(
       }
 
       // ----- Billboard + distance hide -----
-      importPerf.begin('FR-atlasText');
       for (let i = 0; i < items.length; i++) {
         const { label, displayWidth, displayHeight } = items[i];
         const pos = label.position;
