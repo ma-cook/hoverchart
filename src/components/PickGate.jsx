@@ -41,6 +41,15 @@ function PickGate() {
     }
   });
 
+  useFrame(() => { window.__perfFrameStart = performance.now(); }, 9999);
+  useFrame(() => {
+    const start = window.__perfFrameStart || 0;
+    if (start) {
+      const dt = performance.now() - start;
+      if (dt > 100) console.log(`[perf][frame] span ${Math.round(dt)}ms`);
+    }
+  }, -9999);
+
   return null;
 }
 

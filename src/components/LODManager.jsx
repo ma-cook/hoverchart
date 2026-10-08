@@ -304,6 +304,7 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     }
 
     needsImmediateUpdateRef.current = false;
+    importPerf.begin('FR-lodEnqueue');
     
     // Update last camera position
     lastCameraPositionRef.current.copy(_cameraPos);
@@ -370,6 +371,7 @@ const posMapCacheRef = useRef({ objects: null, map: null });
         batchSetFaceTextVisible(faceTextUpdates);
       }
 
+      importPerf.abort('FR-lodEnqueue');
       return; // Don't also run the sync path this frame
     }
     
@@ -420,6 +422,7 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     if (faceTextUpdates.length > 0) {
       batchSetFaceTextVisible(faceTextUpdates);
     }
+    importPerf.end('FR-lodEnqueue');
   });
 
   // --- Drain LOD transition queues at a budgeted rate per frame ---
@@ -436,6 +439,7 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     const downgradeQueue = downgradeQueueRef.current;
     const upgradeQueue = upgradeQueueRef.current;
     if (downgradeQueue.size === 0 && upgradeQueue.size === 0) return;
+    importPerf.begin('FR-lodDrain');
 
     // Allow upgrades during camera movement so objects don't stay
     // invisible during panning. The per-frame budget keeps GPU impact minimal.
@@ -502,6 +506,7 @@ const posMapCacheRef = useRef({ objects: null, map: null });
       importPerf.mark(`MK-lodCommit ${updates.length} levels`);
       batchSetLODLevels(updates);
     }
+    importPerf.end('FR-lodDrain');
   });
   
   // Cleanup on unmount

@@ -195,6 +195,7 @@ const useLODStore = create((set, get) => ({
    * Batch register parent-child relationships
    */
   batchRegisterParentChild: (relationships) => {
+    importPerf.begin('ST-contained');
     set((state) => {
       const newParentChildMap = new Map(state.parentChildMap);
       const newChildParentMap = new Map(state.childParentMap);
@@ -215,6 +216,7 @@ const useLODStore = create((set, get) => ({
         parentIds: newParentIds,
       };
     });
+    importPerf.end('ST-contained');
   },
   
   /**
@@ -232,6 +234,7 @@ const useLODStore = create((set, get) => ({
    * Batch register parent IDs
    */
   batchRegisterParents: (parentIdList) => {
+    importPerf.begin('ST-contained');
     set((state) => {
       const newParentIds = new Set(state.parentIds);
       for (const id of parentIdList) {
@@ -239,6 +242,7 @@ const useLODStore = create((set, get) => ({
       }
       return { parentIds: newParentIds };
     });
+    importPerf.end('ST-contained');
   },
   
   /**
