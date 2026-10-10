@@ -2,7 +2,8 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
-import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useLODStore from '../stores/lodStore';
+import { isFullDetailVisible } from '../utils/lodVisibility';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 import { bulkImportState } from '../utils/bulkImportState';
 import { isPickingSuppressed } from './PickGate';
@@ -172,19 +173,11 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
         return false;
       }
       
-      const isParent = parentIds.has(cube.id);
-      const isChild = childParentMap.has(cube.id);
-      
-      // If cube is neither parent nor child, always render (no LOD applied)
-      if (!isParent && !isChild) {
-        return true;
-      }
-      
-      // Both parents and children use LOD levels, just with different distance thresholds
-      // LODManager calculates the appropriate level based on object type
-      const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.MEDIUM;
-      return lodLevel === LOD_LEVELS.FULL;
-    });
+      // Gated internal member (function/class/variable/hook inside a component):
+      // hidden entirely unless its immediate parent component is at FULL detail.
+      // Sub-components (which are also parents) and free objects are NOT gated —
+      // they fall through to their own distance-based level below.
+      return isFullDetailVisible(cube.id, lodLevels, childParentMap, parentIds);    });
   // _lodVersion ensures recompute when LOD levels change (Map is mutated in-place)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);

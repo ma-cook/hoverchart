@@ -547,8 +547,22 @@ export const addObjectToCell = async (userId, spaceId, objectData) => {
     const cellCoords = getCellCoordinates(objectData.position);
     const cellId = getCellId(cellCoords.x, cellCoords.y, cellCoords.z);
 
+    // The backend stores only known columns plus the `metadata` JSONB blob, so
+    // frontend-only fields (merfolkData, face styles, etc.) must be packed into
+    // metadata to survive a round-trip. Without this the LOD hierarchy
+    // (merfolkData.parentNodeId / isParent) is silently dropped on every save.
+    const METADATA_KEYS = [
+      'merfolkData', 'faceColors', 'faceTexts', 'faceTextStyles', 'textStyle',
+      'headerStyle', 'size', 'lineColor', 'lineThickness', 'borderColor', 'borderStyle',
+    ];
+    const metadata = { ...(objectData.metadata || {}) };
+    for (const key of METADATA_KEYS) {
+      if (objectData[key] !== undefined) metadata[key] = objectData[key];
+    }
+
     const objectToAdd = {
       ...objectData,
+      metadata,
       lastUpdated: new Date(),
       cellId: cellId,
       updatedAt: new Date(),

@@ -313,13 +313,35 @@ const wasImportActiveRef = useRef(false);
     }
 
     if (containers.length === 0) {
+      // No container objects — derive the hierarchy purely from the persisted
+      // merfolk linkage (component -> internal function/class/variable/hook).
+      // `parentNodeId` is a stable markdown node id, so resolve it to the
+      // containing component's object id via a nodeId -> objectId map.
+      const nodeIdToObjectId = new Map();
       for (const obj of objects) {
-        if (obj.merfolkData?.isParent || obj.merfolkData?.hasChildren) {
+        if (obj.merfolkData?.nodeId) {
+          nodeIdToObjectId.set(obj.merfolkData.nodeId, obj.id);
+        }
+      }
+      for (const obj of objects) {
+        const md = obj.merfolkData;
+        if (!md) continue;
+        if (md.isParent || md.hasChildren) {
           parentIdList.push(obj.id);
+        }
+        let parentObjectId = md.parentId;
+        if (!parentObjectId && md.parentNodeId) {
+          parentObjectId = nodeIdToObjectId.get(md.parentNodeId);
+        }
+        if (parentObjectId && parentObjectId !== obj.id) {
+          relationships.push({ parentId: parentObjectId, childId: obj.id });
         }
       }
       if (parentIdList.length > 0) {
         batchRegisterParents(parentIdList);
+      }
+      if (relationships.length > 0) {
+        batchRegisterParentChild(relationships);
       }
       initializedRef.current = true;
       return;

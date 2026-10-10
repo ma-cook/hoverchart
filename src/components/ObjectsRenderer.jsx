@@ -24,7 +24,8 @@ import importPerf from '../utils/importPerf';
 import { beginBulkImport, endBulkImportIfIdle, bulkImportState } from '../utils/bulkImportState';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
-import useLODStore, { LOD_LEVELS, calculateLODLevel } from '../stores/lodStore';
+import useLODStore, { calculateLODLevel } from '../stores/lodStore';
+import { isFullDetailVisible } from '../utils/lodVisibility';
 
 /**
  * PROGRESSIVE MOUNT BUDGET (Adaptive)
@@ -295,14 +296,62 @@ const [mountedVersion, setMountedVersion] = useState(0);
   // active" bug and the all-full-detail work that dominates the import freeze.
   //
   // We reconstruct the same metadata-derived relationships here (a strict
-  // subset of what LODManager registers on settle — `merfolkData.parentId` /
-  // `isParent` / `hasChildren`, exactly its sync-fallback inputs), so the LOD
+  // subset of what LODManager registers on settle — `merfolkData.parentNodeId`
+  // / `isParent` / `hasChildren`, exactly its sync-fallback inputs), so the LOD
   // branch is live from the first mount.  Idempotent: LODManager's later pass
   // only adds relationships, never contradicts these.
+  // Register parent-child LOD relationships from the persisted merfolk hierarchy
+  // (node-id keyed), resolved to object ids via nodeToObjectIdMap.  This is the
+  // hierarchy source for spaces created BEFORE parentNodeId was persisted, and a
+  // second source for everything else.  Idempotent.
+  const registerPersistedHierarchy = (hierarchy, nodeMap) => {
+    if (!hierarchy?.parentChildMap || !nodeMap) return;
+    const st = useLODStore.getState();
+    const existing = st.childParentMap;
+    const rels = [];
+    const batchParents = [];
+    for (const [parentNodeId, childNodes] of hierarchy.parentChildMap) {
+      const parentObjectId = nodeMap.get(parentNodeId);
+      if (!parentObjectId) continue;
+      if (!st.parentIds.has(parentObjectId)) batchParents.push(parentObjectId);
+      for (const childNodeId of childNodes) {
+        const childObjectId = nodeMap.get(childNodeId);
+        if (!childObjectId || childObjectId === parentObjectId) continue;
+        if (existing.get(childObjectId) === parentObjectId) continue;
+        rels.push({ parentId: parentObjectId, childId: childObjectId });
+      }
+    }
+    // Sub-components (internal components) must keep rendering on their own LOD,
+    // so register them as parents to exempt them from parent-gating.  They are
+    // octahedrons, never reached by the cube renderers, but this also keeps their
+    // connection arrowheads visible.
+    const internalChildren = hierarchy.internalComponentChildren;
+    if (internalChildren) {
+      for (const childNodeId of internalChildren) {
+        const childObjectId = nodeMap.get(childNodeId);
+        if (childObjectId && !st.parentIds.has(childObjectId)) {
+          batchParents.push(childObjectId);
+        }
+      }
+    }
+    if (batchParents.length > 0) st.batchRegisterParents(batchParents);
+    if (rels.length > 0) st.batchRegisterParentChild(rels);
+  };
+
   const seedParentChildRelationships = (objs) => {
     const st = useLODStore.getState();
     const existingParentIds = st.parentIds;
     const existingChildParent = st.childParentMap;
+
+    // Pass 1 — map merfolk node id -> object id so the persisted
+    // `parentNodeId` (a stable markdown node id) can be resolved to the
+    // concrete object id of the containing component.
+    const nodeIdToObjectId = new Map();
+    for (let i = 0; i < objs.length; i++) {
+      const md = objs[i].merfolkData;
+      if (md?.nodeId) nodeIdToObjectId.set(md.nodeId, objs[i].id);
+    }
+
     const parentIdList = [];
     const relationships = [];
     for (let i = 0; i < objs.length; i++) {
@@ -315,13 +364,27 @@ const [mountedVersion, setMountedVersion] = useState(0);
       ) {
         parentIdList.push(obj.id);
       }
-      const parentId = md.parentId;
-      if (parentId && existingChildParent.get(obj.id) !== parentId) {
-        relationships.push({ parentId, childId: obj.id });
+      // Prefer the persisted node id; fall back to a direct object id for
+      // older data written before parentNodeId existed.
+      let parentObjectId = md.parentId;
+      if (!parentObjectId && md.parentNodeId) {
+        parentObjectId = nodeIdToObjectId.get(md.parentNodeId);
+      }
+      if (
+        parentObjectId &&
+        parentObjectId !== obj.id &&
+        existingChildParent.get(obj.id) !== parentObjectId
+      ) {
+        relationships.push({ parentId: parentObjectId, childId: obj.id });
       }
     }
+
     if (parentIdList.length > 0) st.batchRegisterParents(parentIdList);
     if (relationships.length > 0) st.batchRegisterParentChild(relationships);
+
+    // Augment with the persisted merfolk hierarchy (see above).
+    const diagram = useDiagramStore.getState();
+    registerPersistedHierarchy(diagram.hierarchy, diagram.nodeToObjectIdMap);
   };
 
   // Shared guard/ref for the synchronous LOD + hierarchy seed.  Set right
@@ -334,6 +397,19 @@ const [mountedVersion, setMountedVersion] = useState(0);
     seedParentChildRelationships(objs);
     seedLodLevels(objs);
   };
+
+  // ─── Persisted-hierarchy backfill ────────────────────────────────────
+  // Old spaces were saved before parentNodeId was persisted, so their objects
+  // carry no direct parent link.  Their merfolk hierarchy is rebuilt from the
+  // stored markdown into diagramStore (hydrateStoreFromMarkdown) shortly after
+  // load; register it here whenever it lands so gating is active for those
+  // spaces too.  For spaces created/rescanned with the current code the
+  // parentNodeId path in seedParentChildRelationships already covers them.
+  const diagramHierarchy = useDiagramStore((s) => s.hierarchy);
+  const diagramNodeMap = useDiagramStore((s) => s.nodeToObjectIdMap);
+  useEffect(() => {
+    registerPersistedHierarchy(diagramHierarchy, diagramNodeMap);
+  }, [diagramHierarchy, diagramNodeMap]);
 
   // ─── Store-array sync effect ────────────────────────────────────────
   // Keeps allIdsSetRef/idToObjectRef in step with the objects array using
@@ -1017,22 +1093,20 @@ const [mountedVersion, setMountedVersion] = useState(0);
     void mountedVersion; // invalidation: cubeArrRef content changes bump it
     void lodVersion; // invalidation: LOD transitions add/remove labels
     const lodLevels = useLODStore.getState().lodLevels;
+    const childParentMap = useLODStore.getState().childParentMap;
+    const parentIds = useLODStore.getState().parentIds;
     const lodOn = useLODStore.getState().lodEnabled;
     const out = [];
     for (const obj of cubeArrRef.current) {
       if (!obj.headerText) continue;
       if (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer) continue;
-      // LOD-aware: only FULL cubes get instanced name labels.  Non-FULL cubes
-      // are distance-culled by InstancedAtlasText anyway, so labels for them
-      // are wasted atlas rasterization work during import (the leak that made
-      // ~2000 far cubes render full detail before the mass downgrade).
-      // Unstamped (undefined) counts as NOT FULL while LOD is on, so a label
-      // never appears for an object whose level hasn't landed yet; with LOD
-      // off every label shows (levels map is empty by design).
-      if (lodOn) {
-        const level = lodLevels.get(obj.id);
-        if (level !== LOD_LEVELS.FULL) continue;
-      }
+      // LOD-aware: only cubes actually drawn at full detail get instanced name
+      // labels — that includes internal members whose parent component is FULL.
+      // Non-FULL cubes are distance-culled by InstancedAtlasText anyway, so
+      // labels for them are wasted atlas rasterization work during import (the
+      // leak that made ~2000 far cubes render full detail before the mass
+      // downgrade).  With LOD off every label shows (levels map is empty).
+      if (lodOn && !isFullDetailVisible(obj.id, lodLevels, childParentMap, parentIds)) continue;
       if (!unmodifiedCubeIds.has(obj.id)) continue;
       if (selectedId === obj.id) continue;
       const halfHeight = (obj.scale?.[1] || 1) * 5;

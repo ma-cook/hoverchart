@@ -396,9 +396,24 @@ const workerApi = {
     const parentIdList = [];
     const relationships = [];
 
+    // nodeId -> object id so the persisted `parentNodeId` (a stable markdown
+    // node id) can be resolved to the containing component's object id.
+    const nodeIdToObjectId = new Map();
     for (const [id, meta] of objectMerfolkData) {
+      if (meta && meta.nodeId) nodeIdToObjectId.set(meta.nodeId, id);
+    }
+
+    for (const [id, meta] of objectMerfolkData) {
+      if (!meta) continue;
       if (meta.isParent || meta.hasChildren) {
         parentIdList.push(id);
+      }
+      let parentObjectId = meta.parentId;
+      if (!parentObjectId && meta.parentNodeId) {
+        parentObjectId = nodeIdToObjectId.get(meta.parentNodeId);
+      }
+      if (parentObjectId && parentObjectId !== id) {
+        relationships.push({ parentId: parentObjectId, childId: id });
       }
     }
 

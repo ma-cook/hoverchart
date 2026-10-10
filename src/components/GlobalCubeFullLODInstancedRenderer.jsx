@@ -2,7 +2,8 @@ import React, { useRef, useMemo, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useCubeStore } from '../stores';
-import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useLODStore from '../stores/lodStore';
+import { isFullDetailVisible } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { bulkImportState } from '../utils/bulkImportState';
@@ -114,14 +115,10 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
         // Containers are handled separately
         if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return false;
 
-        // LOD check: only FULL LOD cubes
+        // LOD check: only FULL LOD cubes (internal members only when their
+        // parent component is FULL).
         if (lodEnabled) {
-          const isParent = parentIds.has(cube.id);
-          const isChild = childParentMap.has(cube.id);
-          if (isParent || isChild) {
-            const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.MEDIUM;
-            if (lodLevel !== LOD_LEVELS.FULL) return false;
-          }
+          if (!isFullDetailVisible(cube.id, lodLevels, childParentMap, parentIds)) return false;
         }
 
         // Only unmodified cubes (named-but-unedited cubes stay instanced;

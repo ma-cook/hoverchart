@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import useLODStore from '../stores/lodStore';
-import { LOD_LEVELS } from '../stores/lodStore';
+import { isFullDetailVisible } from '../utils/lodVisibility';
 import { calculateFacePosition } from '../utils/facePositionUtils';
 import importPerf from '../utils/importPerf';
 
@@ -79,6 +79,8 @@ function ConnectionArrowheads({ connections, objects }) {
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const lodVersion = useLODStore((s) => s._lodVersion);
   const lodLevels = useLODStore((s) => s.lodLevels);
+  const childParentMap = useLODStore((s) => s.childParentMap);
+  const parentIds = useLODStore((s) => s.parentIds);
 
   // Build the raw arrowhead request list (stable per connections/objects input).
   const arrows = useMemo(() => {
@@ -144,14 +146,15 @@ function ConnectionArrowheads({ connections, objects }) {
     if (!lodEnabled) return arrows;
 
     return arrows.filter((a) => {
-      const sLod = lodLevels.get(a.startId) ?? LOD_LEVELS.MEDIUM;
-      const eLod = lodLevels.get(a.endId) ?? LOD_LEVELS.MEDIUM;
-      return sLod === LOD_LEVELS.FULL && eLod === LOD_LEVELS.FULL;
+      return (
+        isFullDetailVisible(a.startId, lodLevels, childParentMap, parentIds) &&
+        isFullDetailVisible(a.endId, lodLevels, childParentMap, parentIds)
+      );
     });
     // lodVersion is an intentional mutation trigger — the LOD store bumps it
     // when the lodLevels Map is updated in-place.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [arrows, lodEnabled, lodVersion, lodLevels]);
+  }, [arrows, lodEnabled, lodVersion, lodLevels, childParentMap, parentIds]);
 
   // Don't intercept raycasts — line clicks are handled by the line renderers.
   useEffect(() => {

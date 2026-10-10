@@ -2,7 +2,8 @@ import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useCubeStore } from '../stores';
-import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useLODStore from '../stores/lodStore';
+import { isFullDetailVisible } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { bulkImportState } from '../utils/bulkImportState';
@@ -84,11 +85,7 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
     if (!lodEnabled) return cubes;
     return cubes.filter(cube => {
       if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return true;
-      const isParent = parentIds.has(cube.id);
-      const isChild = childParentMap.has(cube.id);
-      if (!isParent && !isChild) return true;
-      const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.MEDIUM;
-      return lodLevel === LOD_LEVELS.FULL;
+      return isFullDetailVisible(cube.id, lodLevels, childParentMap, parentIds);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);

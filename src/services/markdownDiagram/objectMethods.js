@@ -215,6 +215,13 @@ export const objectMethods = {
 
           const headerStyle = calculateHeaderStyle(scale, objectType, nodeId);
 
+          // Persist the merfolk hierarchy so the LOD system can classify this
+          // object after a reload. `parentNodeId` links an internal member
+          // (function/class/variable/hook) to its containing component;
+          // `isParent`/`hasChildren` mark components that contain members.
+          const nodeHasChildren = parentChildMap.has(nodeId) && parentChildMap.get(nodeId).size > 0;
+          const parentNodeId = childParentMap.get(nodeId) || undefined;
+
           return {
             nodeId,
             type: objectType,
@@ -227,6 +234,10 @@ export const objectMethods = {
               opacity: node.visual?.opacity,
               ...(node.properties || {}),
               ...(node.metadata || {}),
+              merfolkData: {
+                ...(nodeHasChildren && { isParent: true, hasChildren: true }),
+                ...(parentNodeId && { parentNodeId }),
+              },
             },
           };
         })
@@ -251,20 +262,29 @@ export const objectMethods = {
             // a node whose object was created before that association existed.
             // Attach it so re-scanning a codebase wires new code to existing
             // objects instead of leaving them with an empty codeFilePath.
+            // The hierarchy fields (parentNodeId / isParent / hasChildren) are
+            // always backfilled so pre-existing objects gain the merfolk
+            // linkage the LOD system needs.
+            const hierarchy = data.extraData?.merfolkData || {};
+            const patch = {
+              ...(hierarchy.isParent && { isParent: true, hasChildren: true }),
+              ...(hierarchy.parentNodeId && { parentNodeId: hierarchy.parentNodeId }),
+            };
             if (data.extraData?.codeFilePath) {
-              merfolkDataUpdates.set(existingId, {
-                codeFilePath: data.extraData.codeFilePath,
-                startLine: data.extraData.startLine != null
-                  ? Number(data.extraData.startLine)
-                  : undefined,
-                endLine: data.extraData.endLine != null
-                  ? Number(data.extraData.endLine)
-                  : undefined,
-                exports: data.extraData.exports || '',
-                htmlElements: data.extraData.htmlElements || '',
-                cssClasses: data.extraData.cssClasses || '',
-                jsxRefs: data.extraData.jsxRefs || '',
-              });
+              patch.codeFilePath = data.extraData.codeFilePath;
+              patch.startLine = data.extraData.startLine != null
+                ? Number(data.extraData.startLine)
+                : undefined;
+              patch.endLine = data.extraData.endLine != null
+                ? Number(data.extraData.endLine)
+                : undefined;
+              patch.exports = data.extraData.exports || '';
+              patch.htmlElements = data.extraData.htmlElements || '';
+              patch.cssClasses = data.extraData.cssClasses || '';
+              patch.jsxRefs = data.extraData.jsxRefs || '';
+            }
+            if (Object.keys(patch).length > 0) {
+              merfolkDataUpdates.set(existingId, patch);
             }
 
             continue;
