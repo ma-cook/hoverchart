@@ -1,7 +1,8 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { installRaycasterGate, suppressPicking } from '../utils/raycasterGate';
+import { bulkImportState } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 
 // Camera-motion detector for the global picking gate.
@@ -32,6 +33,34 @@ function PickGate({ canvasQuality }) {
 
   const gl = useThree((s) => s.gl);
   const internal = useThree((s) => s.internal);
+  const scene = useThree((s) => s.scene);
+  const camera = useThree((s) => s.camera);
+
+  // FIX 3b: One-shot GPU warmup — precompile every material once the bulk
+  // import settles, so the first sizeable draw after mounting doesn't stall
+  // the frame loop on shader compilation (a multi-second hard block on low-end
+  // iGPUs).  compile() is idempotent and reuses already-compiled programs, and
+  // only runs once per session.
+  const compiledRef = useRef(false);
+  const sawImportRef = useRef(false);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (bulkImportState.active) {
+        sawImportRef.current = true;
+        return;
+      }
+      if (!sawImportRef.current || compiledRef.current) {
+        if (compiledRef.current) clearInterval(id);
+        return;
+      }
+      compiledRef.current = true;
+      clearInterval(id);
+      try {
+        gl.compile(scene, camera);
+      } catch { /* diagnostics only */ }
+    }, 500);
+    return () => clearInterval(id);
+  }, [gl, scene, camera]);
 
   useFrame(({ camera }) => {
     const rotated = 1 - Math.abs(_prevQuat.dot(camera.quaternion));

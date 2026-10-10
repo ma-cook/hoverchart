@@ -63,6 +63,10 @@ const needsImmediateUpdateRef = useRef(false);
 const lodDiagRef = useRef({ lastAt: -1e9 });
 const prevObjectCountRef = useRef(0);
 const posMapCacheRef = useRef({ objects: null, map: null });
+// FRAME edge of the bulk-import gate: bulkImportState is a plain mutable
+// object (not a store), so the active→inactive edge is observed by polling it
+// in useFrame instead of subscribing.
+const wasImportActiveRef = useRef(false);
 
   // Transition queue: Map<objectId, { level, distanceSq }>.
   // Holds pending LOD upgrades that will be drained at a budgeted rate per frame.
@@ -408,6 +412,21 @@ const posMapCacheRef = useRef({ objects: null, map: null });
         );
       }
     }
+
+    // FIX 1b: Freeze LOD assignments while a bulk import / progressive mount
+    // is streaming.  ObjectsRenderer seeds the entire population with
+    // calculateLODLevel before the first mount (seedLodLevels), and re-running
+    // this pass on every store flush was revising levels for already-mounted
+    // objects — re-filtering every Global* renderer (full-buffer rebuild
+    // storms) and producing the "renders at every LOD level, then snaps to the
+    // camera-correct level" flash during the mount window.  When the gate
+    // drops (mounting has fully settled), force one final correction pass.
+    const importActive = bulkImportState.active;
+    if (wasImportActiveRef.current && !importActive) {
+      needsImmediateUpdateRef.current = true;
+    }
+    wasImportActiveRef.current = importActive;
+    if (importActive) return;
 
     // Force immediate LOD pass when initialization completes or new objects arrive,
     // bypassing throttle and camera-movement gates so objects don't render at

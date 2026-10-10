@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { getCellBounds, getCellCoordinates, CELL_NEIGHBOR_RADIUS } from '../services/spatialPartitioning';
+import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import LineShaderMaterial from './LineShaderMaterial';
 
 /**
@@ -111,6 +112,10 @@ const CellBoundaryRenderer = ({ visible = true }) => {
   // Periodically recompute visible cells based on camera position
   useFrame(() => {
     if (!visible) return;
+    // FIX 4: the cell recompute + geometry rebuild below allocates a new
+    // InstancedBufferGeometry — skip it while the main thread is already
+    // lagging so it can't deepen an in-progress freeze.
+    if (isFrameBudgetExhausted()) return;
 
     const now = Date.now();
     if (now - lastCheckRef.current < UPDATE_INTERVAL) return;

@@ -364,6 +364,30 @@ const [mountedVersion, setMountedVersion] = useState(0);
     // synchronization.
   }, [objects]);
 
+  // FIX 1a: Seed LOD levels for the ENTIRE object population before the mount
+  // pump consumes it.  The Global* renderers derive their instance lists from
+  // each object's stamped LOD level and default unstamped objects to FULL, so
+  // a stamp that lagged the progressive mounts made early batches render at
+  // their tombstone (FULL) level and then "pop" to their real level as
+  // LODManager revised levels mid-import — the all-LOD-levels-then-correct
+  // flash.  One pass over the same camera the renderers use
+  // (calculateLODLevel) means the very first frame already draws every mounted
+  // object at its real detail level.  Re-runs only when the object count
+  // GROWS (streaming installs change the array reference every flush, but an
+  // O(N) distance pass per flush would be wasteful); batchSetLODLevels is a
+  // no-op when values match, so a static camera causes no re-filter.  Heavy
+  // per-frame LOD revision is separately frozen during import (see LODManager
+  // FIX 1b).  Containers are skipped (they always render FULL).
+  const lastSeedCountRef = useRef(0);
+  useEffect(() => {
+    if (objects.length === 0) return;
+    if (!useLODStore.getState().lodEnabled) return;
+    if (!cameraRef.current) return;
+    if (objects.length === lastSeedCountRef.current) return;
+    lastSeedCountRef.current = objects.length;
+    seedLodLevels(objectsRef.current);
+  }, [objects.length]);
+
   // Keep refs in sync
   useEffect(() => {
     visibleObjectIdsRef.current = visibleObjectIds;
@@ -663,6 +687,11 @@ const [mountedVersion, setMountedVersion] = useState(0);
       }
       seedLodLevels(mountedNow);
       setMountedVersion((v) => v + 1);
+      // FIX (gate settle): the instant-mount path has no progressive pump to
+      // release the bulk-import gate, so release it here explicitly.  With
+      // nothing left to mount, deferred subsystems (frustum sweeps, connection
+      // pathfinding) and LOD's import-freeze must not stay deferred forever.
+      endBulkImportIfIdle(0);
       // Clear any in-progress render progress (all mounted instantly)
       useDiagramStore.getState().setRenderProgress(
         getMountableTotal(),
@@ -738,6 +767,11 @@ const [mountedVersion, setMountedVersion] = useState(0);
         clearTimeout(settleTimerRef.current);
         settleTimerRef.current = null;
       }
+      // FIX (gate settle): with no mount pump left to release the bulk-import
+      // gate, clear it here so LOD's import-freeze (LODManager FIX 1b) and the
+      // other deferred subsystems can't stay suspended after this renderer
+      // unmounts.
+      endBulkImportIfIdle(0);
     };
   }, []);
 
