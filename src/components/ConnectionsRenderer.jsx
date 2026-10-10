@@ -1149,6 +1149,16 @@ const ConnectionsRenderer = ({
         return;
       }
 
+      // OBJECT MOUNT PRIORITY: while a bulk import is streaming, yield the
+      // shared per-frame budget entirely to object mounting. Connection
+      // mounts don't need to land mid-import (their expensive pathfinding
+      // categorization is already deferred by the gate) and they catch up
+      // once mounting settles and the gate drops.
+      if (bulkImportState.active) {
+        connRafIdRef.current = requestAnimationFrame(mountNextBatch);
+        return;
+      }
+
       // Use the shared render budget — coordinate with ObjectsRenderer
       // PERF: Use a reduced budget during camera movement instead of blocking
       // completely — the old full-block caused connections to never mount in

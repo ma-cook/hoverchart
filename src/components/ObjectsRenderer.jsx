@@ -21,7 +21,7 @@ import { useCubeStore, useSpatialManagerStore } from '../stores';
 import { acquireBudget, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 import { getCellCoordinates } from '../services/spatialPartitioning';
 import importPerf from '../utils/importPerf';
-import { beginBulkImport, endBulkImportIfIdle } from '../utils/bulkImportState';
+import { beginBulkImport, endBulkImportIfIdle, bulkImportState } from '../utils/bulkImportState';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
 import useLODStore, { LOD_LEVELS, calculateLODLevel } from '../stores/lodStore';
@@ -36,6 +36,15 @@ import useLODStore, { LOD_LEVELS, calculateLODLevel } from '../stores/lodStore';
  * or other systems have already consumed part of this frame's budget.
  */
 function getProgressiveBudget() {
+  // AGGRESSIVE IMPORT: while a bulk import is streaming, drain the pending
+  // queue as fast as the machine allows and ignore smoothed frame time.
+  // Safe because the bulk-import gate already defers the expensive per-frame
+  // passes (frustum culling, connection pathfinding) and the Global* renderers
+  // coalesce their per-batch GPU instance uploads during import.  Letting the
+  // frame-time throttle dominate here only prolongs the mount window (the
+  // perceived "freeze") without protecting anything.
+  if (bulkImportState.active) return 24;
+
   const ft = getSmoothedFrameTime();
   if (ft < 20) return 24;  // Very smooth: mount aggressively
   if (ft < 30) return 16;  // Smooth: mount faster
@@ -523,7 +532,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
         const objectById = idToObjectRef.current;
         let added = 0;
         let head = pendingHeadRef.current;
-        const mountedNow = [];
         importPerf.begin('mountBatch');
         while (head < pending.length && added < budget) {
           const id = pending[head];
@@ -536,7 +544,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
           const obj = objectById.get(id);
           if (obj) {
             mountObjectInternal(obj);
-            mountedNow.push(obj);
             added++;
           }
         }
@@ -555,10 +562,11 @@ const [mountedVersion, setMountedVersion] = useState(0);
             settleTimerRef.current = null;
           }
           lastMountActivityRef.current = Date.now();
-          // Seed distance-correct LOD levels for the new batch BEFORE the
-          // version bump so the render triggered by this commit already shows
-          // each object at its real detail level (see seedLodLevels).
-          seedLodLevels(mountedNow);
+          // LOD seeding is owned by the full-population seed effect (Fix 1a)
+          // below — it stamps the entire store population on every growth, so
+          // the commit triggered by this version bump already paints every
+          // mounted object at its real detail level.  Per-batch re-seeding
+          // here would be redundant and could spur a second _lodVersion render.
           setMountedVersion((v) => v + 1);
           importPerf.mark(`pump v${mountedVersion + 1}`);
           // Report progress to the store (throttled)
@@ -677,15 +685,13 @@ const [mountedVersion, setMountedVersion] = useState(0);
       objectsRef.current.length <= PROGRESSIVE_THRESHOLD
     ) {
       const objectById = idToObjectRef.current;
-      const mountedNow = [];
       for (const id of toAdd) {
         const obj = objectById.get(id);
         if (obj) {
           mountObjectInternal(obj);
-          mountedNow.push(obj);
         }
       }
-      seedLodLevels(mountedNow);
+      // LOD levels are stamped by the full-population seed effect (Fix 1a).
       setMountedVersion((v) => v + 1);
       // FIX (gate settle): the instant-mount path has no progressive pump to
       // release the bulk-import gate, so release it here explicitly.  With
@@ -710,15 +716,12 @@ const [mountedVersion, setMountedVersion] = useState(0);
       const firstBatch = pendingRef.current.splice(0, getProgressiveBudget());
       for (const id of firstBatch) pendingSet.delete(id);
       const objectById = idToObjectRef.current;
-      const mountedNow = [];
       for (const id of firstBatch) {
         const obj = objectById.get(id);
         if (obj) {
           mountObjectInternal(obj);
-          mountedNow.push(obj);
         }
       }
-      seedLodLevels(mountedNow);
       setMountedVersion((v) => v + 1);
       // Immediately report that progressive mounting has started
       useDiagramStore.getState().setRenderProgress(

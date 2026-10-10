@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { bulkImportState } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 
 const CUBE_SIZE = 5;
@@ -24,6 +25,12 @@ const tempMatrix = new THREE.Matrix4();
 const tempColor = new THREE.Color();
 const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
 
+// During a bulk import, instanceMatrix/instanceColor have NO per-frame update
+// requirement — the camera is static and culling is suspended — so the full
+// capacity-sized GPU buffer re-upload (three.js has no partial matrix upload)
+// is coalesced to ~4Hz instead of once per mount batch.
+const INSTANCE_UPLOAD_COALESCE_MS = 250;
+
 /**
  * GlobalCubeMediumLODRenderer — Renders all MEDIUM-LOD cubes in a single
  * instanced draw call, replacing the per-cube <mesh> that Cube.jsx used to
@@ -42,6 +49,7 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map()); // Track last known data to detect changes
   const indexToCubeIdRef = useRef([]);
+  const lastInstanceUploadRef = useRef(0);
 
   // Get LOD data from store
   const lodLevels = useLODStore((s) => s.lodLevels);
@@ -190,9 +198,19 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
 
   
     if (needsUpdate) {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) {
-        mesh.instanceColor.needsUpdate = true;
+      // Coalesce the full-capacity GPU instance upload while a bulk import is
+      // streaming (static camera, appends only) — flush at most every ~250ms.
+      // Real-time drag transforms bypass coalescing so edits stay live.
+      if (
+        !bulkImportState.active ||
+        hasActiveTransforms ||
+        performance.now() - lastInstanceUploadRef.current >= INSTANCE_UPLOAD_COALESCE_MS
+      ) {
+        lastInstanceUploadRef.current = performance.now();
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) {
+          mesh.instanceColor.needsUpdate = true;
+        }
       }
       // Invalidate cached bounding sphere so Three.js recomputes it from
       // current instance data on the next raycast. Without this, a stale

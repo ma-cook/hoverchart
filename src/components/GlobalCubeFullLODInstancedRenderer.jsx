@@ -5,6 +5,7 @@ import { useCubeStore } from '../stores';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { bulkImportState } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 
 const CUBE_SIZE = 5;
@@ -29,6 +30,10 @@ const TRANSPARENT_MATERIAL = new THREE.MeshBasicMaterial({
 // Reusable temp objects (avoid GC pressure)
 const tempMatrix = new THREE.Matrix4();
 const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
+
+// During a bulk import the camera is static and culling is suspended, so the
+// full capacity-sized instanceMatrix re-upload is coalesced to ~4Hz.
+const INSTANCE_UPLOAD_COALESCE_MS = 250;
 
 /**
  * Determines whether a cube is "unmodified" — i.e. has no user customisation
@@ -89,6 +94,7 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     const lastDataRef = useRef(new Map());
     // Map from instance index → cube ID (rebuilt each time filtered set changes)
     const indexToCubeIdRef = useRef([]);
+    const lastInstanceUploadRef = useRef(0);
 
     const lodLevels = useLODStore((s) => s.lodLevels);
     const childParentMap = useLODStore((s) => s.childParentMap);
@@ -258,7 +264,17 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
 
 
       if (needsUpdate) {
-        mesh.instanceMatrix.needsUpdate = true;
+        // Coalesce the capacity-sized instance matrix upload during a bulk
+        // import (static camera, append-only writes) to ~4Hz.  Live drag
+        // transforms always flush immediately.
+        if (
+          !bulkImportState.active ||
+          hasActiveTransforms ||
+          performance.now() - lastInstanceUploadRef.current >= INSTANCE_UPLOAD_COALESCE_MS
+        ) {
+          lastInstanceUploadRef.current = performance.now();
+          mesh.instanceMatrix.needsUpdate = true;
+        }
         needsFullUpdateRef.current = false;
       }
       importPerf.end('FR-cubeFullSetup');

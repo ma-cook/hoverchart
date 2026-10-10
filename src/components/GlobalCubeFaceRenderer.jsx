@@ -5,6 +5,7 @@ import { useCubeStore } from '../stores';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { bulkImportState } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 
 // Mobile detection (same as CubeFace.jsx)
@@ -17,6 +18,10 @@ const FACE_SIZE = isMobile ? 15.6 : 9.8;
 const SHARED_FACE_GEOMETRY = new THREE.BoxGeometry(FACE_SIZE, FACE_SIZE, 0.05);
 const CUBE_SIZE = 5;
 const NORMAL_OFFSET = 0.02; // Prevent z-fighting (matches CubeFace offsetMultiplier)
+
+// During a bulk import the camera is static and culling is suspended, so the
+// full capacity-sized instanceMatrix/instanceColor re-upload is coalesced.
+const INSTANCE_UPLOAD_COALESCE_MS = 250;
 
 // Material matching CubeFace colored material properties
 const FACE_MATERIAL = new THREE.MeshBasicMaterial({
@@ -66,6 +71,7 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
   const meshRef = useRef();
   const lastCapacityRef = useRef(0);
   const needsFullUpdateRef = useRef(true);
+  const lastInstanceUploadRef = useRef(0);
 
   const lodLevels = useLODStore((s) => s.lodLevels);
   const childParentMap = useLODStore((s) => s.childParentMap);
@@ -188,8 +194,17 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
 
     mesh.count = idx;
     if (idx > 0) {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      // Coalesce the capacity-sized GPU instance upload during a bulk import
+      // (static camera, append-only writes) to ~4Hz; live drags flush always.
+      if (
+        !bulkImportState.active ||
+        hasActiveTransforms ||
+        performance.now() - lastInstanceUploadRef.current >= INSTANCE_UPLOAD_COALESCE_MS
+      ) {
+        lastInstanceUploadRef.current = performance.now();
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
     }
     needsFullUpdateRef.current = false;
     importPerf.end('FR-cubeFace');

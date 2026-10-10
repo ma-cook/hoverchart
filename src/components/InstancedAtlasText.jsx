@@ -5,6 +5,7 @@ import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
 import useTextAtlasStore from '../stores/textAtlasStore';
 import importPerf from '../utils/importPerf';
+import { bulkImportState } from '../utils/bulkImportState';
 
 // =============================================================================
 // Reusable THREE objects — avoids GC pressure in the per-frame loop
@@ -13,6 +14,38 @@ const _tempPosition = new THREE.Vector3();
 const _tempQuaternion = new THREE.Quaternion();
 const _tempScale = new THREE.Vector3();
 const _tempMatrix = new THREE.Matrix4();
+
+// During a bulk import, defer the full-canvas atlas upload a few hundred ms so
+// intermediate mount batches collapse into (at most) a ~4Hz set of uploads.
+const ATLAS_UPLOAD_DEBOUNCE_MS = 250;
+
+// Cheap O(N) equality fingerprint of a label list whose value changes ONLY when
+// label content actually changes.  The labels prop array has fresh identity on
+// every progressive-mount render batch even when nothing changed; without this,
+// pageGroups would re-run the O(N) atlas.addText pass and rebuild groups on
+// every batch for the whole import window.
+function labelListFingerprint(labels) {
+  let f = '';
+  for (let i = 0; i < labels.length; i++) {
+    const l = labels[i] || {};
+    const ts = l.textStyle || {};
+    f += l.id;
+    f += ':';
+    f += l.text;
+    f += ':';
+    f += ts.fontSize || 1.5;
+    f += ':';
+    f += ts.color || '';
+    f += ':';
+    f += ts.bold ? 'b' : '';
+    f += ts.underline ? 'u' : '';
+    f += ts.italic ? 'i' : '';
+    f += ':';
+    f += ts.fontFamily || '';
+    f += ';';
+  }
+  return f;
+}
 
 // =============================================================================
 // Custom shaders for instanced atlas text
@@ -98,6 +131,12 @@ const InstancedAtlasText = ({
     }
   }, [gl]);
 
+  // Content-equality fingerprint: lets pageGroups stay stable across
+  // progressive-mount re-renders whose `labels` array identity changed but
+  // whose content did not (skips the O(N) atlas.addText + group rebuild +
+  // full-canvas re-upload on every mount batch).
+  const labelFingerprint = useMemo(() => labelListFingerprint(labels), [labels]);
+
   // -----------------------------------------------------------------------
   // Phase 1: Add every label to the atlas (may trigger page resizes).
   // Phase 2: Read post-resize UVs and group items by atlas page texture.
@@ -168,14 +207,21 @@ const InstancedAtlasText = ({
 importPerf.end('RM-atlasLabels');
     return Array.from(groupMap.values());
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
-  }, [labels, atlas, scale, atlasVersion]);
+  }, [labelFingerprint, atlas, scale, atlasVersion]);
 
   // Kick off one batched texture upload after all texts are added
+  // IMPORT FIX: while a bulk import is streaming, debounce the upload a few
+  // hundred ms so intermediate mount batches (which produce a stable atlas
+  // contents once the label population settles) collapse into a single
+  // full-canvas GPU upload instead of one per batch.
   useEffect(() => {
-    if (pageGroups.length > 0) {
-      const frameId = requestAnimationFrame(() => atlas.updateTexture());
-      return () => cancelAnimationFrame(frameId);
+    if (pageGroups.length === 0) return;
+    if (bulkImportState.active) {
+      const t = setTimeout(() => atlas.updateTexture(), ATLAS_UPLOAD_DEBOUNCE_MS);
+      return () => clearTimeout(t);
     }
+    const frameId = requestAnimationFrame(() => atlas.updateTexture());
+    return () => cancelAnimationFrame(frameId);
   }, [atlas, pageGroups]);
 
   if (pageGroups.length === 0) return null;

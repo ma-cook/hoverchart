@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { bulkImportState } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
 
@@ -19,12 +20,17 @@ const tempMatrix = new THREE.Matrix4();
 const tempColor = new THREE.Color();
 const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
 
+// During a bulk import the camera is static and culling is suspended, so the
+// full capacity-sized instanceMatrix/instanceColor re-upload is coalesced.
+const INSTANCE_UPLOAD_COALESCE_MS = 250;
+
 const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) => {
   importPerf.begin('RX-cubeLow');
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map());
   const indexToCubeIdRef = useRef([]);
+  const lastInstanceUploadRef = useRef(0);
 
   const lodLevels = useLODStore((s) => s.lodLevels);
   const childParentMap = useLODStore((s) => s.childParentMap);
@@ -155,9 +161,18 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
 
 
     if (needsUpdate) {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) {
-        mesh.instanceColor.needsUpdate = true;
+      // Coalesce the capacity-sized GPU instanced upload during a bulk import
+      // (static camera, append-only writes) to ~4Hz; live drags flush always.
+      if (
+        !bulkImportState.active ||
+        hasActiveTransforms ||
+        performance.now() - lastInstanceUploadRef.current >= INSTANCE_UPLOAD_COALESCE_MS
+      ) {
+        lastInstanceUploadRef.current = performance.now();
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) {
+          mesh.instanceColor.needsUpdate = true;
+        }
       }
       // Invalidate cached bounding sphere so Three.js recomputes it from
       // current instance data on the next raycast. Without this, a stale
