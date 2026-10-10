@@ -117,7 +117,7 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
   // Power-of-2 grow-only capacity (6 faces per cube max)
   const maxPossible = filteredCubes.length * 6;
   if (maxPossible > lastCapacityRef.current) {
-    lastCapacityRef.current = Math.max(32768, 2 ** Math.ceil(Math.log2(Math.max(1, maxPossible))));
+    lastCapacityRef.current = Math.max(64, 2 ** Math.ceil(Math.log2(Math.max(1, maxPossible))));
   }
   const capacity = lastCapacityRef.current;
 

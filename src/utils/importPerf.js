@@ -74,6 +74,20 @@ const api = {
     _logEvent(label);
     console.log(`[perf][t+${((performance.now()) / 1000).toFixed(1)}s] ${label}`);
   },
+  // List every marker whose begin() is still open.  Called by the frame-span
+  // probe after a suspiciously long frame gap: if the freeze happened inside
+  // an instrumented block, that block's label is still mid-begin when the
+  // main thread unblocks, so this names it instead of relying on which
+  // [perf] line appeared last.
+  dumpOpenMarks() {
+    if (!enabled) return;
+    const open = [...marks.entries()]
+      .filter(([, m]) => m._start !== undefined)
+      .map(([label]) => label);
+    console.log(
+      `[perf][open-marks] ${open.length ? open.join(', ') : '(none)'}`
+    );
+  },
   report,
 };
 

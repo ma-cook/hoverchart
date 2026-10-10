@@ -24,7 +24,7 @@ import importPerf from '../utils/importPerf';
 import { beginBulkImport, endBulkImportIfIdle } from '../utils/bulkImportState';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
-import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useLODStore, { LOD_LEVELS, calculateLODLevel } from '../stores/lodStore';
 
 /**
  * PROGRESSIVE MOUNT BUDGET (Adaptive)
@@ -109,6 +109,11 @@ const ObjectsRenderer = React.memo(({
   onCodeToggle,
 }) => {
   const { camera } = useThree();
+  // The progressive-mount pump's stable closure is captured on FIRST render,
+  // so it must read the current camera through a ref (R3F can swap the
+  // camera instance later, e.g. custom-camera / quality re-init).
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
 
   const lodVersion = useLODStore((s) => s._lodVersion);
 
@@ -222,6 +227,47 @@ const [mountedVersion, setMountedVersion] = useState(0);
         break;
       default:
         break;
+    }
+  };
+
+  // ─── Mount-time LOD seeding ────────────────────────────────────────
+  // The FIRST paint of a batch must already carry distance-correct LOD
+  // levels.  With an empty lodLevels map every renderer falls back to
+  // `?? LOD_LEVELS.FULL` (see lodStore), so the whole space paints at full
+  // detail — edges, faces, hitboxes, atlas name labels and heavy <Cube>
+  // components — and LODManager's first pass downgrades them all one frame
+  // later.  That flash is both a visual bug (objects start with every LOD
+  // level active) and the source of a mount/unmount storm: thousands of
+  // <Cube> subtrees get created and immediately torn down, plus a full
+  // atlas-label rasterization for cubes that will never stay FULL.
+  //
+  // Seeding calls calculateLODLevel — the same function LODManager's sync
+  // pass uses — so a genuine pass over the same camera produces identical
+  // values; the seed is only ever confirmed or corrected, never
+  // contradicted.  Containers are skipped (lodStore renders them at full
+  // detail always and LODManager never stamps them either).
+  const seedLodLevels = (objs) => {
+    const cam = cameraRef.current;
+    if (objs.length === 0 || !cam) return;
+    const cx = cam.position.x;
+    const cy = cam.position.y;
+    const cz = cam.position.z;
+    const updates = [];
+    for (let i = 0; i < objs.length; i++) {
+      const obj = objs[i];
+      if (obj.merfolkData?.isContainer === true) continue;
+      const p = obj.position;
+      if (!p) continue;
+      const px = Array.isArray(p) ? (p[0] || 0) : (p.x || 0);
+      const py = Array.isArray(p) ? (p[1] || 0) : (p.y || 0);
+      const pz = Array.isArray(p) ? (p[2] || 0) : (p.z || 0);
+      const dx = px - cx;
+      const dy = py - cy;
+      const dz = pz - cz;
+      updates.push([obj.id, calculateLODLevel(dx * dx + dy * dy + dz * dz)]);
+    }
+    if (updates.length > 0) {
+      useLODStore.getState().batchSetLODLevels(updates);
     }
   };
 
@@ -453,6 +499,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
         const objectById = idToObjectRef.current;
         let added = 0;
         let head = pendingHeadRef.current;
+        const mountedNow = [];
         importPerf.begin('mountBatch');
         while (head < pending.length && added < budget) {
           const id = pending[head];
@@ -465,6 +512,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
           const obj = objectById.get(id);
           if (obj) {
             mountObjectInternal(obj);
+            mountedNow.push(obj);
             added++;
           }
         }
@@ -483,6 +531,10 @@ const [mountedVersion, setMountedVersion] = useState(0);
             settleTimerRef.current = null;
           }
           lastMountActivityRef.current = Date.now();
+          // Seed distance-correct LOD levels for the new batch BEFORE the
+          // version bump so the render triggered by this commit already shows
+          // each object at its real detail level (see seedLodLevels).
+          seedLodLevels(mountedNow);
           setMountedVersion((v) => v + 1);
           importPerf.mark(`pump v${mountedVersion + 1}`);
           // Report progress to the store (throttled)
@@ -601,10 +653,15 @@ const [mountedVersion, setMountedVersion] = useState(0);
       objectsRef.current.length <= PROGRESSIVE_THRESHOLD
     ) {
       const objectById = idToObjectRef.current;
+      const mountedNow = [];
       for (const id of toAdd) {
         const obj = objectById.get(id);
-        if (obj) mountObjectInternal(obj);
+        if (obj) {
+          mountObjectInternal(obj);
+          mountedNow.push(obj);
+        }
       }
+      seedLodLevels(mountedNow);
       setMountedVersion((v) => v + 1);
       // Clear any in-progress render progress (all mounted instantly)
       useDiagramStore.getState().setRenderProgress(
@@ -624,10 +681,15 @@ const [mountedVersion, setMountedVersion] = useState(0);
       const firstBatch = pendingRef.current.splice(0, getProgressiveBudget());
       for (const id of firstBatch) pendingSet.delete(id);
       const objectById = idToObjectRef.current;
+      const mountedNow = [];
       for (const id of firstBatch) {
         const obj = objectById.get(id);
-        if (obj) mountObjectInternal(obj);
+        if (obj) {
+          mountObjectInternal(obj);
+          mountedNow.push(obj);
+        }
       }
+      seedLodLevels(mountedNow);
       setMountedVersion((v) => v + 1);
       // Immediately report that progressive mounting has started
       useDiagramStore.getState().setRenderProgress(

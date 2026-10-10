@@ -390,7 +390,13 @@ const posMapCacheRef = useRef({ objects: null, map: null });
         let withinFullRadius = 0;
         const objs = objectsRef.current;
         for (let i = 0; i < objs.length; i++) {
-          const p = objs[i].position;
+          const obj = objs[i];
+          // Containers are excluded from the LOD system entirely (they always
+          // render at full detail), so exclude them here too — otherwise the
+          // ground-truth count includes objects the enqueuer is designed to
+          // skip and FULL=0 with a non-zero count looks like a stamping bug.
+          if (obj.merfolkData?.isContainer === true) continue;
+          const p = obj.position;
           if (!p) continue;
           const dx = (p[0] || 0) - _cameraPos.x;
           const dy = (p[1] || 0) - _cameraPos.y;

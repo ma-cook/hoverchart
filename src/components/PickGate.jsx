@@ -80,6 +80,10 @@ function PickGate({ canvasQuality }) {
     if (importPerf.enabled && start) {
       const dt = now - start;
       if (dt > 100) console.log(`[perf][frame] span ${Math.round(dt)}ms`);
+      // A multi-second block right after this probe almost certainly ran
+      // inside an instrumented work chunk that never got to its end()
+      // before the block.  Dump the still-open markers to name that chunk.
+      if (dt > 5000) importPerf.dumpOpenMarks();
     }
   }, -9999);
 

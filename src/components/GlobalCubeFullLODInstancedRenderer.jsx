@@ -145,7 +145,7 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     const capacityRef = useRef(0);
     if (count > capacityRef.current) {
       capacityRef.current = Math.max(
-        32768,
+        64,
         2 ** Math.ceil(Math.log2(Math.max(1, count)))
       );
     }

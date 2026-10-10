@@ -70,7 +70,7 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
   // Grow-only capacity (power-of-2) to avoid instancedMesh remounts
   const capacityRef = useRef(0);
   if (count > capacityRef.current) {
-    capacityRef.current = Math.max(32768, 2 ** Math.ceil(Math.log2(Math.max(1, count))));
+    capacityRef.current = Math.max(64, 2 ** Math.ceil(Math.log2(Math.max(1, count))));
   }
   const capacity = capacityRef.current;
 
