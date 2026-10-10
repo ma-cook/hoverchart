@@ -33,9 +33,7 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [], on
   const lastDataRef = useRef(new Map());
   const indexToDodecaIdRef = useRef([]);
 
-  const lodLevels = useLODStore((s) => s.lodLevels);
-  const childParentMap = useLODStore((s) => s.childParentMap);
-  const parentIds = useLODStore((s) => s.parentIds);
+const lodLevels = useLODStore((s) => s.lodLevels);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
@@ -51,7 +49,7 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [], on
       return lodLevel === LOD_LEVELS.MEDIUM;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
-  }, [dodecahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
+  }, [dodecahedrons, lodLevels, _lodVersion, lodEnabled]);
 
   const count = mediumDodecahedrons.length;
 
@@ -134,8 +132,7 @@ const GlobalDodecahedronMediumLODRenderer = React.memo(({ dodecahedrons = [], on
       const position = realtimeTransform?.position || dodeca.position || [0, 0, 0];
       const scale = realtimeTransform?.scale || dodeca.scale || [1, 1, 1];
 
-      const isParent = parentIds.has(dodeca.id);
-      const color = isParent ? '#888888' : (dodeca.color || '#888888');
+      const color = dodeca.color || '#888888';
 
       const lastKnown = lastDataRef.current.get(dodecaId);
       const changed = !lastKnown ||

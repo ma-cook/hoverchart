@@ -4,11 +4,16 @@
  * Web Worker that offloads spatial queries from the main thread:
  *   - LOD level computation (distance-based, per object)
  *   - Frustum culling of connections (point-in-frustum for endpoints + midpoint)
- *   - Spatial containment for parent-child relationships
+ *   - Code-hierarchy (merfolk) parent-child relationships
  *
  * The worker maintains a mirror of all object positions and metadata.
  * The main thread syncs objects whenever they change and dispatches
  * computation requests.  Results are plain serialisable values.
+ *
+ * Note: geometric "which object sits inside which container box" containment
+ * was removed — group containers are excluded from the LOD system and never
+ * gate their contents. Only the persisted code hierarchy (parentNodeId) is
+ * used for parent-child relationships.
  *
  * Safe to run in a worker — no DOM, no stores, no Three.js.
  *
@@ -49,21 +54,18 @@ initWasm();
 // ---------------------------------------------------------------------------
 // Object data mirror (synced from main thread)
 // ---------------------------------------------------------------------------
-// Primary id-keyed Maps — kept for spatial-containment lookups which need
-// arbitrary id-to-position access.
+// Primary id-keyed Maps — kept for position lookups.
 const objectPositions = new Map(); // id (string) -> [x, y, z]
-const objectScales = new Map();    // id (string) -> [sx, sy, sz]
-const objectMerfolkData = new Map(); // id (string) -> { isContainer, isParent, ... }
+const objectMerfolkData = new Map(); // id (string) -> { isContainer, parentNodeId, ... }
 
 // Flat parallel buffers — updated every syncObjects().
 // Index order matches objectIdList.
 let objectIdList = [];              // string[]
 let positionsFlat = new Float32Array(0);  // N×3
 let scalesFlat = new Float32Array(0);     // N×3
-// metaFlagsFlat: bit0=isContainer, bit1=isParent (structural, from merfolkData).
-// Only set during _rebuildFlatBuffers; dynamic parent overrides from
-// computeLODLevels are applied on top of metaFlagsBase each call so
-// stale parent flags never accumulate across calls.
+// metaFlagsFlat: bit0=isContainer (excluded from LOD, always FULL).
+// The parent bit is gone — every non-container object uses the single child
+// distance regime, so no parent classification reaches the kernel.
 let metaFlagsFlat = new Uint8Array(0);    // N: per-object flags
 let metaFlagsBase = new Uint8Array(0);    // clean copy — no dynamic overrides
 let currentLevelsFlat = new Uint8Array(0); // N: current LOD level cache
@@ -98,8 +100,10 @@ function _rebuildFlatBuffers(objects) {
     const meta = obj.merfolkData;
     let flags = 0;
     if (meta) {
+      // bit0 = isContainer — excluded from LOD (always full detail).
+      // The previous parent bit (0x02) is gone: ALL objects now use the single
+      // child distance regime, so no parent classification reaches the kernel.
       if (meta.isContainer) flags |= 0x01;
-      if (meta.isParent || meta.hasChildren) flags |= 0x02;
     }
     metaFlagsFlat[i] = flags;
   }
@@ -114,18 +118,10 @@ function _rebuildFlatBuffers(objects) {
 // ---------------------------------------------------------------------------
 const LOD_CHILD_FULL_SQ = 2000 * 2000;
 const LOD_CHILD_MEDIUM_SQ = 20000 * 20000;
-const LOD_PARENT_FULL_SQ = 20000 * 20000;
-const LOD_PARENT_MEDIUM_SQ = 40000 * 30000;
 
 function childLOD(distanceSq) {
   if (distanceSq < LOD_CHILD_FULL_SQ) return 0;
   if (distanceSq < LOD_CHILD_MEDIUM_SQ) return 1;
-  return 2;
-}
-
-function parentLOD(distanceSq) {
-  if (distanceSq < LOD_PARENT_FULL_SQ) return 0;
-  if (distanceSq < LOD_PARENT_MEDIUM_SQ) return 1;
   return 2;
 }
 
@@ -157,14 +153,12 @@ const workerApi = {
    */
   syncObjects(objects) {
     objectPositions.clear();
-    objectScales.clear();
     objectMerfolkData.clear();
 
     for (let i = 0; i < objects.length; i++) {
       const obj = objects[i];
       const id = String(obj.id);
       objectPositions.set(id, obj.position || [0, 0, 0]);
-      objectScales.set(id, obj.scale || [1, 1, 1]);
       if (obj.merfolkData) {
         objectMerfolkData.set(id, obj.merfolkData);
       }
@@ -182,29 +176,18 @@ const workerApi = {
    * Falls back to the scalar JS loop otherwise.
    *
    * @param {number[]} cameraPos — [x, y, z]
-   * @param {string[]} parentIdList — IDs of parent objects
-   * @param {string[]} childIdList — IDs that have a parent (from childParentMap)
+   * @param {string[]} _parentIdList — retained for API stability; unused (single LOD regime)
+   * @param {string[]} _childIdList — retained for API stability; unused (single LOD regime)
    * @param {Array<[string, number]>} currentLodEntries — [[id, level], ...]
    * @returns {Array<[string, number]>} — only the changed entries
    */
-  computeLODLevels(cameraPos, parentIdList, childIdList, currentLodEntries) {
+  computeLODLevels(cameraPos, _parentIdList, _childIdList, currentLodEntries) {
     const cx = cameraPos[0];
     const cy = cameraPos[1];
     const cz = cameraPos[2];
 
-    // Reset metaFlagsFlat to the clean base (structural flags only) so that
-    // stale parent overrides from the previous call don't accumulate.
+    // Reset metaFlagsFlat to the clean base (structural flags only).
     metaFlagsFlat.set(metaFlagsBase);
-
-    // Apply dynamic parent overrides for this call
-    if (parentIdList.length > 0) {
-      for (const pid of parentIdList) {
-        const idx = idToIndex.get(pid);
-        if (idx !== undefined) {
-          metaFlagsFlat[idx] |= 0x02;
-        }
-      }
-    }
 
     // Sync current LOD levels into the flat buffer so the wasm kernel can
     // compare against them and return only deltas.
@@ -228,7 +211,7 @@ const workerApi = {
           currentLevelsFlat,
           cx, cy, cz,
           LOD_CHILD_FULL_SQ, LOD_CHILD_MEDIUM_SQ,
-          LOD_PARENT_FULL_SQ, LOD_PARENT_MEDIUM_SQ,
+          LOD_CHILD_FULL_SQ, LOD_CHILD_MEDIUM_SQ,
         );
 
         // rawUpdates is a Uint32Array of interleaved [index, newLevel, ...]
@@ -247,8 +230,6 @@ const workerApi = {
     }
 
     // --- Tier-1: JS path with flat buffers (cache-friendly scalar loop) ---
-    // The parent bits are already set in metaFlagsFlat from the parentIdList
-    // overrides applied above, so no separate Set is needed.
     const updates = [];
 
     for (let i = 0; i < n; i++) {
@@ -261,8 +242,7 @@ const workerApi = {
       const dz = cz - positionsFlat[pi + 2];
       const distanceSq = dx * dx + dy * dy + dz * dz;
 
-      const isParent = (flags & 0x02) !== 0;
-      const newLevel = isParent ? parentLOD(distanceSq) : childLOD(distanceSq);
+      const newLevel = childLOD(distanceSq);
 
       const currentLevel = currentLevelsFlat[i];
       if (newLevel !== currentLevel) {
@@ -377,27 +357,23 @@ const workerApi = {
   },
 
   /**
-   * Compute parent-child spatial containment.
+   * Compute the persisted code hierarchy (merfolk) parent-child relationships.
    *
-   * Finds which objects are inside which containers based on bounding-box
-   * overlap and explicit merfolkData.parentId references.
+   * Resolves each object's `parentNodeId` (a stable markdown node id) to its
+   * containing parent's object id. This is the ONLY source of parent-child
+   * relationships the LOD gating uses — group containers are excluded from the
+   * LOD system entirely and must never appear here (spatial containment of which
+   * object sits inside which container box was removed; containers must not
+   * gate their contents).
    *
    * @returns {{ parentIdList: string[], relationships: Array<{parentId: string, childId: string}> }}
    */
-  computeSpatialContainment() {
-    const containers = [];
-
-    for (const [id, meta] of objectMerfolkData) {
-      if (meta.isContainer) {
-        containers.push(id);
-      }
-    }
-
+  computeMerfolkHierarchy() {
     const parentIdList = [];
     const relationships = [];
 
     // nodeId -> object id so the persisted `parentNodeId` (a stable markdown
-    // node id) can be resolved to the containing component's object id.
+    // node id) can be resolved to the containing parent's object id.
     const nodeIdToObjectId = new Map();
     for (const [id, meta] of objectMerfolkData) {
       if (meta && meta.nodeId) nodeIdToObjectId.set(meta.nodeId, id);
@@ -405,59 +381,17 @@ const workerApi = {
 
     for (const [id, meta] of objectMerfolkData) {
       if (!meta) continue;
+      // Robustness fallback: legacy objects saved with isParent/hasChildren
+      // (before parentNodeId-only persistence) are still marked as parents so
+      // they are never treated as gated internal members.
       if (meta.isParent || meta.hasChildren) {
         parentIdList.push(id);
       }
-      let parentObjectId = meta.parentId;
-      if (!parentObjectId && meta.parentNodeId) {
-        parentObjectId = nodeIdToObjectId.get(meta.parentNodeId);
-      }
+      let parentObjectId = meta.parentNodeId
+        ? nodeIdToObjectId.get(meta.parentNodeId)
+        : undefined;
       if (parentObjectId && parentObjectId !== id) {
         relationships.push({ parentId: parentObjectId, childId: id });
-      }
-    }
-
-    if (containers.length === 0) {
-      return { parentIdList, relationships };
-    }
-
-    for (const cId of containers) {
-      parentIdList.push(cId);
-    }
-
-    for (const containerId of containers) {
-      const containerPos = objectPositions.get(containerId);
-      if (!containerPos) continue;
-
-      const containerScale = objectScales.get(containerId) || [1, 1, 1];
-      const halfX = (containerScale[0] || 1) * 5 * 1.5;
-      const halfY = (containerScale[1] || 1) * 5 * 1.5;
-      const halfZ = (containerScale[2] || 1) * 5 * 1.5;
-      const ccx = containerPos[0] || 0;
-      const ccy = containerPos[1] || 0;
-      const ccz = containerPos[2] || 0;
-
-      for (const [objId, pos] of objectPositions) {
-        if (objId === containerId) continue;
-
-        const meta = objectMerfolkData.get(objId);
-        if (meta && meta.isContainer) continue;
-
-        if (meta && meta.parentId === containerId) {
-          relationships.push({ parentId: containerId, childId: objId });
-          continue;
-        }
-
-        const ox = pos[0] || 0;
-        const oy = pos[1] || 0;
-        const oz = pos[2] || 0;
-        if (
-          Math.abs(ox - ccx) < halfX &&
-          Math.abs(oy - ccy) < halfY &&
-          Math.abs(oz - ccz) < halfZ
-        ) {
-          relationships.push({ parentId: containerId, childId: objId });
-        }
       }
     }
 

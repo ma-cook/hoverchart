@@ -1,6 +1,6 @@
-import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import useLODStore, { calculateLODLevel, calculateParentLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ, LOD_THRESHOLDS_SQ } from '../stores/lodStore';
+import useLODStore, { calculateLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ, LOD_THRESHOLDS_SQ } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
 import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
@@ -238,51 +238,36 @@ const wasImportActiveRef = useRef(false);
     });
   }, [deferredPassTick]);
 
-  // Stable key that only changes when container STRUCTURE changes (not positions/scales).
-  // This prevents the O(N²) spatial containment scan from re-running on every object move.
-  const containersKey = useMemo(() => {
-    const objects = objectsRef.current;
-    if (!objects || objects.length === 0) return '';
-    const containerParts = objects
-      .filter(obj => obj.merfolkData?.isContainer || obj.merfolkData?.isParent || obj.merfolkData?.parentId)
-      .map(obj => `${obj.id}:${obj.merfolkData?.parentId || 'root'}`)
-      .sort()
-      .join('|');
-    // Include objects.length so the effect re-runs when objects load,
-    // even if none have container metadata (containersKey would stay '' otherwise)
-    return `${objects.length}:${containerParts}`;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- recomputed on deferred ticks only
-  }, [deferredPassTick]);
-
-  // Initialize parent-child relationships when container STRUCTURE changes.
-  // Tries the worker first (off-main-thread O(N×containers) scan), falls back
-  // to sync computation if the worker hasn't synced yet.
+  // Register parent-child relationships from the persisted CODE hierarchy
+  // (component/function/class/hook -> its internal members).  Tries the worker
+  // first (off-main-thread resolution), falls back to sync computation if the
+  // worker hasn't synced yet.  Group containers are excluded from the LOD
+  // system entirely, so geometry-based containment is NOT computed — containers
+  // must never gate their contents.
   useEffect(() => {
     const objects = objectsRef.current;
     if (!objects || objects.length === 0) {
       return;
     }
 
-    importPerf.mark(`containment: pass begin (${objects.length} objs, containersKey=${containersKey.slice(0, 40)})`);
+    importPerf.mark(`hierarchy: pass begin (${objects.length} objs)`);
     const t0 = performance.now();
 
-    // --- Prefer the worker (off-main-thread O(N×containers) scan) ---
+    // --- Prefer the worker (off-main-thread resolution) ---
     if (!workerSyncedRef.current) {
-      // The worker hasn't finished its first sync yet.  Wait for it rather than
-      // running the sync fallback, which would be an O(N×containers)
-      // main-thread scan for a whole 92k-object space.  Enable LOD anyway —
+      // The worker hasn't finished its first sync yet.  Enable LOD anyway —
       // with an empty parent map each object just gets its own distance-based
       // level — and let the hierarchy fill in when the worker lands.
       initializedRef.current = true;
       needsImmediateUpdateRef.current = true;
       if (!workerUnavailableRef.current) return;
-      importPerf.mark(`containment: sync fallback (worker unavailable, ${objects.length} objs)`);
-      computeContainmentSync(objects);
+      importPerf.mark(`hierarchy: sync fallback (worker unavailable, ${objects.length} objs)`);
+      registerMerfolkHierarchySync(objects);
       return;
     }
 
     const worker = getSpatialIndexWorker();
-    worker.computeSpatialContainment().then(({ parentIdList, relationships }) => {
+    worker.computeMerfolkHierarchy().then(({ parentIdList, relationships }) => {
       if (parentIdList.length > 0) {
         // Deduplicate parentIdList
         batchRegisterParents([...new Set(parentIdList)]);
@@ -292,86 +277,41 @@ const wasImportActiveRef = useRef(false);
       }
       initializedRef.current = true;
       needsImmediateUpdateRef.current = true;
-      importPerf.mark(`containment: worker result applied in ${Math.round(performance.now() - t0)}ms (${relationships.length} rels)`);
+      importPerf.mark(`hierarchy: worker result applied in ${Math.round(performance.now() - t0)}ms (${relationships.length} rels)`);
     }).catch(() => {
       // Worker failed — fall through to sync path
-      computeContainmentSync(objects);
+      registerMerfolkHierarchySync(objects);
     });
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containersKey, workerSynced, batchRegisterParentChild, batchRegisterParents]);
+  }, [workerSynced, batchRegisterParentChild, batchRegisterParents]);
 
-  // Extracted sync containment logic for fallback
-  const computeContainmentSync = useCallback((objects) => {
+  // Extracted sync hierarchy logic for fallback
+  const registerMerfolkHierarchySync = useCallback((objects) => {
     const relationships = [];
     const parentIdList = [];
 
-    const containers = objects.filter(obj => obj.merfolkData?.isContainer);
-
-    for (const container of containers) {
-      parentIdList.push(container.id);
+    // `parentNodeId` is a stable markdown node id, so resolve it to the
+    // containing parent's object id via a nodeId -> objectId map.
+    const nodeIdToObjectId = new Map();
+    for (const obj of objects) {
+      if (obj.merfolkData?.nodeId) {
+        nodeIdToObjectId.set(obj.merfolkData.nodeId, obj.id);
+      }
     }
-
-    if (containers.length === 0) {
-      // No container objects — derive the hierarchy purely from the persisted
-      // merfolk linkage (component -> internal function/class/variable/hook).
-      // `parentNodeId` is a stable markdown node id, so resolve it to the
-      // containing component's object id via a nodeId -> objectId map.
-      const nodeIdToObjectId = new Map();
-      for (const obj of objects) {
-        if (obj.merfolkData?.nodeId) {
-          nodeIdToObjectId.set(obj.merfolkData.nodeId, obj.id);
-        }
+    for (const obj of objects) {
+      const md = obj.merfolkData;
+      if (!md) continue;
+      // Robustness fallback: legacy objects saved with isParent/hasChildren are
+      // still marked as parents so they are never treated as gated members.
+      if (md.isParent || md.hasChildren) {
+        parentIdList.push(obj.id);
       }
-      for (const obj of objects) {
-        const md = obj.merfolkData;
-        if (!md) continue;
-        if (md.isParent || md.hasChildren) {
-          parentIdList.push(obj.id);
-        }
-        let parentObjectId = md.parentId;
-        if (!parentObjectId && md.parentNodeId) {
-          parentObjectId = nodeIdToObjectId.get(md.parentNodeId);
-        }
-        if (parentObjectId && parentObjectId !== obj.id) {
-          relationships.push({ parentId: parentObjectId, childId: obj.id });
-        }
-      }
-      if (parentIdList.length > 0) {
-        batchRegisterParents(parentIdList);
-      }
-      if (relationships.length > 0) {
-        batchRegisterParentChild(relationships);
-      }
-      initializedRef.current = true;
-      return;
-    }
-
-    for (const container of containers) {
-      const containerId = container.id;
-      const containerPos = container.position || [0, 0, 0];
-      const containerScale = container.scale || [1, 1, 1];
-      const halfSize = [
-        (containerScale[0] || 1) * 5 * 1.5,
-        (containerScale[1] || 1) * 5 * 1.5,
-        (containerScale[2] || 1) * 5 * 1.5,
-      ];
-
-      for (const obj of objects) {
-        if (obj.merfolkData?.isContainer || obj.id === containerId) continue;
-        if (obj.merfolkData?.parentId === containerId) {
-          relationships.push({ parentId: containerId, childId: obj.id });
-          continue;
-        }
-        const objPos = obj.position;
-        if (!objPos) continue;
-        if (
-          Math.abs((objPos[0] || 0) - (containerPos[0] || 0)) < halfSize[0] &&
-          Math.abs((objPos[1] || 0) - (containerPos[1] || 0)) < halfSize[1] &&
-          Math.abs((objPos[2] || 0) - (containerPos[2] || 0)) < halfSize[2]
-        ) {
-          relationships.push({ parentId: containerId, childId: obj.id });
-        }
+      const parentObjectId = md.parentNodeId
+        ? nodeIdToObjectId.get(md.parentNodeId)
+        : undefined;
+      if (parentObjectId && parentObjectId !== obj.id) {
+        relationships.push({ parentId: parentObjectId, childId: obj.id });
       }
     }
 
@@ -477,8 +417,6 @@ const wasImportActiveRef = useRef(false);
     lastUpdateTimeRef.current = now;
     
     const currentLodLevels = useLODStore.getState().lodLevels;
-    const currentParentIds = useLODStore.getState().parentIds;
-    const currentChildParentMap = useLODStore.getState().childParentMap;
 
     // --- Enqueue LOD updates with cascading transition support ---
     // Both directions are queued; the drain useFrame below applies them at a
@@ -500,8 +438,9 @@ const wasImportActiveRef = useRef(false);
       workerBusyRef.current = true;
 
       const cameraPos = [_cameraPos.x, _cameraPos.y, _cameraPos.z];
-      const parentIdArr = [...currentParentIds];
-      const childIdArr = [...currentChildParentMap.keys()];
+      // Single LOD regime — the worker no longer consumes parent/child lists.
+      const parentIdArr = [];
+      const childIdArr = [];
       // Send current LOD levels so the worker only returns deltas
       const lodEntries = [...currentLodLevels.entries()];
 
@@ -569,16 +508,11 @@ const wasImportActiveRef = useRef(false);
       if (obj.merfolkData?.isContainer === true) {
         continue;
       }
-      
-      const isParent = currentParentIds.has(obj.id);
-      
-      let newLodLevel;
-      if (isParent) {
-        newLodLevel = calculateParentLODLevel(distanceSq);
-      } else {
-        newLodLevel = calculateLODLevel(distanceSq);
-      }
-      
+
+      // Single unified regime — every non-container object uses the same
+      // distance thresholds (the previous parent regime is gone).
+      const newLodLevel = calculateLODLevel(distanceSq);
+
       if (currentLodLevels.get(obj.id) !== newLodLevel) {
         lodUpdates.push([obj.id, newLodLevel]);
       }

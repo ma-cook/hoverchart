@@ -59,9 +59,7 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
   const lastDataRef = useRef(new Map());
   const indexToTetraIdRef = useRef([]);
 
-  const lodLevels = useLODStore((s) => s.lodLevels);
-  const childParentMap = useLODStore((s) => s.childParentMap);
-  const parentIds = useLODStore((s) => s.parentIds);
+const lodLevels = useLODStore((s) => s.lodLevels);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
@@ -77,7 +75,7 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
       return lodLevel === LOD_LEVELS.MEDIUM;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
-  }, [tetrahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
+  }, [tetrahedrons, lodLevels, _lodVersion, lodEnabled]);
 
   const count = mediumTetrahedrons.length;
 
@@ -160,8 +158,7 @@ const GlobalTetrahedronMediumLODRenderer = React.memo(({ tetrahedrons = [], onIn
       const position = realtimeTransform?.position || tetra.position || [0, 0, 0];
       const scale = realtimeTransform?.scale || tetra.scale || [1, 1, 1];
 
-      const isParent = parentIds.has(tetra.id);
-      const color = isParent ? '#d0d0d0' : (tetra.color || '#808080');
+      const color = tetra.color || '#808080';
 
       const lastKnown = lastDataRef.current.get(tetraId);
       const changed = !lastKnown ||

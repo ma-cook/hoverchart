@@ -1314,12 +1314,14 @@ const [mountedVersion, setMountedVersion] = useState(0);
       <GlobalTetrahedronLowLODRenderer tetrahedrons={tetrahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       <GlobalOctahedronLowLODRenderer octahedrons={octahedronObjects} onInstanceClick={handleInstancedCubeClick} />
       
-      {/* Render floating header labels above group containers */}
+      {/* Render floating header labels above group containers.
+          Always visible at any zoom — never distance-culled. */}
       <InstancedAtlasText
         labels={containerHeaders}
         renderOrder={25}
         scale={1}
         depthTest={false}
+        maxDistance={Infinity}
       />
 
       {/* Names for instanced-rendered (headerText-only) cubes */}

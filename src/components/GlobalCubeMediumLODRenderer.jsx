@@ -160,9 +160,9 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
       const position = realtimeTransform?.position || cube.position || [0, 0, 0];
       const scale = realtimeTransform?.scale || cube.scale || [1, 1, 1];
 
-      // Parent objects get a different color/opacity
-      const isParent = parentIds.has(cube.id);
-      const color = isParent ? '#e0e0e0' : (cube.color || '#2a2a2a');
+      // Every cube renders its own color — the previous parent-object grey
+      // override was removed (single unified LOD regime, all components blue).
+      const color = cube.color || '#2a2a2a';
 
       // Check if this cube's data changed
       const lastKnown = lastDataRef.current.get(cubeId);

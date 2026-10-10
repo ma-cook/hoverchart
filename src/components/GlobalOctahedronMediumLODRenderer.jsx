@@ -48,9 +48,7 @@ const GlobalOctahedronMediumLODRenderer = React.memo(({ octahedrons = [], onInst
   const lastDataRef = useRef(new Map());
   const indexToOctaIdRef = useRef([]);
 
-  const lodLevels = useLODStore((s) => s.lodLevels);
-  const childParentMap = useLODStore((s) => s.childParentMap);
-  const parentIds = useLODStore((s) => s.parentIds);
+const lodLevels = useLODStore((s) => s.lodLevels);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
@@ -65,7 +63,7 @@ const GlobalOctahedronMediumLODRenderer = React.memo(({ octahedrons = [], onInst
       return lodLevel === LOD_LEVELS.MEDIUM;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
-  }, [octahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
+  }, [octahedrons, lodLevels, _lodVersion, lodEnabled]);
 
   const count = mediumOctahedrons.length;
 
@@ -147,8 +145,7 @@ const GlobalOctahedronMediumLODRenderer = React.memo(({ octahedrons = [], onInst
       const position = realtimeTransform?.position || octa.position || [0, 0, 0];
       const scale = realtimeTransform?.scale || octa.scale || [1, 1, 1];
 
-      const isParent = parentIds.has(octa.id);
-      const color = isParent ? '#d0d0d0' : (octa.color || '#808080');
+      const color = octa.color || '#808080';
 
       const lastKnown = lastDataRef.current.get(octaId);
       const changed = !lastKnown ||

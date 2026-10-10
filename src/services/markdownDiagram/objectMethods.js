@@ -215,11 +215,9 @@ export const objectMethods = {
 
           const headerStyle = calculateHeaderStyle(scale, objectType, nodeId);
 
-          // Persist the merfolk hierarchy so the LOD system can classify this
+          // Persist the merfolk hierarchy so the LOD system can reclassify this
           // object after a reload. `parentNodeId` links an internal member
-          // (function/class/variable/hook) to its containing component;
-          // `isParent`/`hasChildren` mark components that contain members.
-          const nodeHasChildren = parentChildMap.has(nodeId) && parentChildMap.get(nodeId).size > 0;
+          // (function/class/variable/hook) to its containing parent object.
           const parentNodeId = childParentMap.get(nodeId) || undefined;
 
           return {
@@ -235,7 +233,6 @@ export const objectMethods = {
               ...(node.properties || {}),
               ...(node.metadata || {}),
               merfolkData: {
-                ...(nodeHasChildren && { isParent: true, hasChildren: true }),
                 ...(parentNodeId && { parentNodeId }),
               },
             },
@@ -262,12 +259,10 @@ export const objectMethods = {
             // a node whose object was created before that association existed.
             // Attach it so re-scanning a codebase wires new code to existing
             // objects instead of leaving them with an empty codeFilePath.
-            // The hierarchy fields (parentNodeId / isParent / hasChildren) are
-            // always backfilled so pre-existing objects gain the merfolk
-            // linkage the LOD system needs.
+            // `parentNodeId` is always backfilled so pre-existing objects gain
+            // the merfolk linkage the LOD gating needs.
             const hierarchy = data.extraData?.merfolkData || {};
             const patch = {
-              ...(hierarchy.isParent && { isParent: true, hasChildren: true }),
               ...(hierarchy.parentNodeId && { parentNodeId: hierarchy.parentNodeId }),
             };
             if (data.extraData?.codeFilePath) {
