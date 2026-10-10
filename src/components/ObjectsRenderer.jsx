@@ -241,14 +241,18 @@ const [mountedVersion, setMountedVersion] = useState(0);
 
   // ─── Mount-time LOD seeding ────────────────────────────────────────
   // The FIRST paint of a batch must already carry distance-correct LOD
-  // levels.  With an empty lodLevels map every renderer falls back to
-  // `?? LOD_LEVELS.FULL` (see lodStore), so the whole space paints at full
-  // detail — edges, faces, hitboxes, atlas name labels and heavy <Cube>
-  // components — and LODManager's first pass downgrades them all one frame
-  // later.  That flash is both a visual bug (objects start with every LOD
-  // level active) and the source of a mount/unmount storm: thousands of
-  // <Cube> subtrees get created and immediately torn down, plus a full
-  // atlas-label rasterization for cubes that will never stay FULL.
+  // levels.  The Global* renderers derive their instance lists from each
+  // object's stamped level (and from whether it is classified as a
+  // parent/child — see seedParentChildRelationships below); with an empty
+  // map/population they fall back to `?? LOD_LEVELS.MEDIUM`, so far objects
+  // no longer paint at full detail while the real levels are still pending.
+  // Missing that stamp made the whole space flash at full detail — edges,
+  // faces, hitboxes, atlas name labels and heavy <Cube> components — until
+  // LODManager's first pass downgraded them.  That flash is both a visual bug
+  // (objects start with every LOD level active) and the source of a
+  // mount/unmount storm: thousands of <Cube> subtrees get created and
+  // immediately torn down, plus a full atlas-label rasterization for cubes
+  // that will never stay FULL.
   //
   // Seeding calls calculateLODLevel — the same function LODManager's sync
   // pass uses — so a genuine pass over the same camera produces identical
@@ -280,6 +284,57 @@ const [mountedVersion, setMountedVersion] = useState(0);
     }
   };
 
+  // ─── Mount-time parent/child registration ──────────────────────────
+  // The Global* renderers only apply LOD to objects classified as a parent or
+  // a child (`parentIds` / `childParentMap`); anything else is drawn at FULL
+  // detail unconditionally.  Those maps are normally filled by LODManager's
+  // containment pass, but that pass is deferred while a bulk import streams —
+  // so for the ENTIRE load window every object is "neither parent nor child",
+  // its LOD level is ignored, and the space paints at full detail (edges,
+  // faces, labels, hitboxes).  That is the "objects start with every LOD level
+  // active" bug and the all-full-detail work that dominates the import freeze.
+  //
+  // We reconstruct the same metadata-derived relationships here (a strict
+  // subset of what LODManager registers on settle — `merfolkData.parentId` /
+  // `isParent` / `hasChildren`, exactly its sync-fallback inputs), so the LOD
+  // branch is live from the first mount.  Idempotent: LODManager's later pass
+  // only adds relationships, never contradicts these.
+  const seedParentChildRelationships = (objs) => {
+    const st = useLODStore.getState();
+    const existingParentIds = st.parentIds;
+    const existingChildParent = st.childParentMap;
+    const parentIdList = [];
+    const relationships = [];
+    for (let i = 0; i < objs.length; i++) {
+      const obj = objs[i];
+      const md = obj.merfolkData;
+      if (!md || md.isContainer === true) continue;
+      if (
+        (md.isParent === true || md.hasChildren === true) &&
+        !existingParentIds.has(obj.id)
+      ) {
+        parentIdList.push(obj.id);
+      }
+      const parentId = md.parentId;
+      if (parentId && existingChildParent.get(obj.id) !== parentId) {
+        relationships.push({ parentId, childId: obj.id });
+      }
+    }
+    if (parentIdList.length > 0) st.batchRegisterParents(parentIdList);
+    if (relationships.length > 0) st.batchRegisterParentChild(relationships);
+  };
+
+  // Shared guard/ref for the synchronous LOD + hierarchy seed.  Set right
+  // before the mount effect commits any batch, so the commit that first paints
+  // a batch already carries distance-correct levels and a populated hierarchy.
+  const lastSeedCountRef = useRef(0);
+
+  const seedLevelsAndHierarchy = (objs) => {
+    lastSeedCountRef.current = objs.length;
+    seedParentChildRelationships(objs);
+    seedLodLevels(objs);
+  };
+
   // ─── Store-array sync effect ────────────────────────────────────────
   // Keeps allIdsSetRef/idToObjectRef in step with the objects array using
   // ONE pass per flush (not one pass per mount batch).  Also detects
@@ -299,14 +354,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
         nextIds.add(obj.id);
       }
     }
-    // LOD seeding removed: levels must come from LODManager's real
-    // distance pass.  Stamping them here made a best-effort seed
-    // authoritative — if containment never completes, lodLevels never gets
-    // corrected, and every FULL-only renderer (GlobalCubeEdges /
-    // GlobalCubeFace / GlobalCubeFullLODInstanced) culls the seeded
-    // non-FULL objects forever, leaving the scene empty.  With an empty
-    // lodLevels map those renderers default to `?? LOD_LEVELS.FULL` and
-    // draw everything until a genuine pass runs.
     // Batched removal purge: collect ALL vanished ids first, then filter each
     // mounted collection once — per-id filtering would be O(removed × mounted).
     const removedNow = [];
@@ -366,36 +413,28 @@ const [mountedVersion, setMountedVersion] = useState(0);
       if (!structureChanged) structureChanged = true;
     }
     if (structureChanged) setMountedVersion((v) => v + 1);
+
+    // FIX 5: Stamp the hierarchy + LOD levels synchronously with the store
+    // sync, BEFORE the progressive-mount effects below commit any batch.  A
+    // separate post-commit effect (the old Fix 1a) let the first batches paint
+    // with an empty hierarchy/level map — every renderer falls back to FULL for
+    // unclassified/unstamped ids, so the whole space drew at full detail.
+    // Guarded by count growth so a static camera re-seeds at most once per
+    // import flush (batchSetLODLevels/batchRegister* are no-ops when unchanged).
+    if (
+      useLODStore.getState().lodEnabled &&
+      cameraRef.current &&
+      objects.length !== lastSeedCountRef.current
+    ) {
+      seedLevelsAndHierarchy(objects);
+    }
     importPerf.end('ET-mountSync');
 
     // NOTE: previously this component synced objectsRef in a separate tiny
     // effect; merged here so there is exactly one owner of store-array
     // synchronization.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- seedLevelsAndHierarchy is a stable-per-render closure over refs; only `objects` should re-run this sync
   }, [objects]);
-
-  // FIX 1a: Seed LOD levels for the ENTIRE object population before the mount
-  // pump consumes it.  The Global* renderers derive their instance lists from
-  // each object's stamped LOD level and default unstamped objects to FULL, so
-  // a stamp that lagged the progressive mounts made early batches render at
-  // their tombstone (FULL) level and then "pop" to their real level as
-  // LODManager revised levels mid-import — the all-LOD-levels-then-correct
-  // flash.  One pass over the same camera the renderers use
-  // (calculateLODLevel) means the very first frame already draws every mounted
-  // object at its real detail level.  Re-runs only when the object count
-  // GROWS (streaming installs change the array reference every flush, but an
-  // O(N) distance pass per flush would be wasteful); batchSetLODLevels is a
-  // no-op when values match, so a static camera causes no re-filter.  Heavy
-  // per-frame LOD revision is separately frozen during import (see LODManager
-  // FIX 1b).  Containers are skipped (they always render FULL).
-  const lastSeedCountRef = useRef(0);
-  useEffect(() => {
-    if (objects.length === 0) return;
-    if (!useLODStore.getState().lodEnabled) return;
-    if (!cameraRef.current) return;
-    if (objects.length === lastSeedCountRef.current) return;
-    lastSeedCountRef.current = objects.length;
-    seedLodLevels(objectsRef.current);
-  }, [objects.length]);
 
   // Keep refs in sync
   useEffect(() => {
@@ -529,6 +568,18 @@ const [mountedVersion, setMountedVersion] = useState(0);
           return;
         }
 
+        // FIX 5 (streaming): if the store pushed more objects since the last
+        // seed, stamp their hierarchy + LOD levels synchronously before this
+        // batch commits — otherwise newly-streamed-in objects paint at FULL.
+        const currentObjs = objectsRef.current;
+        if (
+          currentObjs.length !== lastSeedCountRef.current &&
+          useLODStore.getState().lodEnabled &&
+          cameraRef.current
+        ) {
+          seedLevelsAndHierarchy(currentObjs);
+        }
+
         const objectById = idToObjectRef.current;
         let added = 0;
         let head = pendingHeadRef.current;
@@ -562,11 +613,10 @@ const [mountedVersion, setMountedVersion] = useState(0);
             settleTimerRef.current = null;
           }
           lastMountActivityRef.current = Date.now();
-          // LOD seeding is owned by the full-population seed effect (Fix 1a)
-          // below — it stamps the entire store population on every growth, so
-          // the commit triggered by this version bump already paints every
-          // mounted object at its real detail level.  Per-batch re-seeding
-          // here would be redundant and could spur a second _lodVersion render.
+          // LOD levels + hierarchy were stamped synchronously at the top of
+          // this pump iteration (FIX 5) when the population grew, so the
+          // commit triggered by this version bump already paints every mounted
+          // object at its real detail level.
           setMountedVersion((v) => v + 1);
           importPerf.mark(`pump v${mountedVersion + 1}`);
           // Report progress to the store (throttled)
@@ -691,7 +741,8 @@ const [mountedVersion, setMountedVersion] = useState(0);
           mountObjectInternal(obj);
         }
       }
-      // LOD levels are stamped by the full-population seed effect (Fix 1a).
+      // LOD levels + hierarchy were stamped synchronously in the store-sync
+      // effect (FIX 5) before this instant-mount commit.
       setMountedVersion((v) => v + 1);
       // FIX (gate settle): the instant-mount path has no progressive pump to
       // release the bulk-import gate, so release it here explicitly.  With
@@ -966,6 +1017,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
     void mountedVersion; // invalidation: cubeArrRef content changes bump it
     void lodVersion; // invalidation: LOD transitions add/remove labels
     const lodLevels = useLODStore.getState().lodLevels;
+    const lodOn = useLODStore.getState().lodEnabled;
     const out = [];
     for (const obj of cubeArrRef.current) {
       if (!obj.headerText) continue;
@@ -974,7 +1026,13 @@ const [mountedVersion, setMountedVersion] = useState(0);
       // are distance-culled by InstancedAtlasText anyway, so labels for them
       // are wasted atlas rasterization work during import (the leak that made
       // ~2000 far cubes render full detail before the mass downgrade).
-      if ((lodLevels.get(obj.id) ?? LOD_LEVELS.FULL) !== LOD_LEVELS.FULL) continue;
+      // Unstamped (undefined) counts as NOT FULL while LOD is on, so a label
+      // never appears for an object whose level hasn't landed yet; with LOD
+      // off every label shows (levels map is empty by design).
+      if (lodOn) {
+        const level = lodLevels.get(obj.id);
+        if (level !== LOD_LEVELS.FULL) continue;
+      }
       if (!unmodifiedCubeIds.has(obj.id)) continue;
       if (selectedId === obj.id) continue;
       const halfHeight = (obj.scale?.[1] || 1) * 5;

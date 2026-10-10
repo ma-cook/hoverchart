@@ -161,7 +161,7 @@ const GlobalTetrahedronEdgesRenderer = React.memo(({
       }
       
       // Both parents and children use LOD levels with their respective thresholds
-      const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.FULL;
+      const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.MEDIUM;
       return lodLevel === LOD_LEVELS.FULL;
     });
   // _lodVersion ensures recompute when LOD levels change (Map is mutated in-place)

@@ -144,8 +144,8 @@ function ConnectionArrowheads({ connections, objects }) {
     if (!lodEnabled) return arrows;
 
     return arrows.filter((a) => {
-      const sLod = lodLevels.get(a.startId) ?? LOD_LEVELS.FULL;
-      const eLod = lodLevels.get(a.endId) ?? LOD_LEVELS.FULL;
+      const sLod = lodLevels.get(a.startId) ?? LOD_LEVELS.MEDIUM;
+      const eLod = lodLevels.get(a.endId) ?? LOD_LEVELS.MEDIUM;
       return sLod === LOD_LEVELS.FULL && eLod === LOD_LEVELS.FULL;
     });
     // lodVersion is an intentional mutation trigger — the LOD store bumps it

@@ -67,7 +67,7 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
       const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
       if (isGroupingContainer) return false;
 
-      const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.FULL;
+      const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.MEDIUM;
       return lodLevel === LOD_LEVELS.MEDIUM;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design

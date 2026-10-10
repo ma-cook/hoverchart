@@ -119,7 +119,7 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
           const isParent = parentIds.has(cube.id);
           const isChild = childParentMap.has(cube.id);
           if (isParent || isChild) {
-            const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.FULL;
+            const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.MEDIUM;
             if (lodLevel !== LOD_LEVELS.FULL) return false;
           }
         }

@@ -61,7 +61,7 @@ const GlobalOctahedronMediumLODRenderer = React.memo(({ octahedrons = [], onInst
       const isGroupingContainer = octa.merfolkData?.isContainer === true;
       if (isGroupingContainer) return false;
 
-      const lodLevel = lodLevels.get(octa.id) ?? LOD_LEVELS.FULL;
+      const lodLevel = lodLevels.get(octa.id) ?? LOD_LEVELS.MEDIUM;
       return lodLevel === LOD_LEVELS.MEDIUM;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design

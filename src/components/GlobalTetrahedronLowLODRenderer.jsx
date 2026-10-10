@@ -50,7 +50,7 @@ const GlobalTetrahedronLowLODRenderer = React.memo(({ tetrahedrons = [], onInsta
     if (!lodEnabled) return [];
     return tetrahedrons.filter(tetra => {
       if (tetra.merfolkData?.isContainer === true) return false;
-      const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.FULL;
+      const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.MEDIUM;
       return lodLevel === LOD_LEVELS.LOW;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design

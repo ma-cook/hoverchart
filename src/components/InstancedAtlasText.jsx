@@ -209,19 +209,40 @@ importPerf.end('RM-atlasLabels');
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [labelFingerprint, atlas, scale, atlasVersion]);
 
-  // Kick off one batched texture upload after all texts are added
-  // IMPORT FIX: while a bulk import is streaming, debounce the upload a few
-  // hundred ms so intermediate mount batches (which produce a stable atlas
-  // contents once the label population settles) collapse into a single
-  // full-canvas GPU upload instead of one per batch.
+  // Kick off one batched texture upload after all texts are added.
+  // IMPORT FIX: while a bulk import is streaming, do NOT upload at all — the
+  // atlas only ever needs to reach the GPU once the label population has
+  // settled, and each upload is a full-canvas texImage2D (seconds of GPU
+  // stall on weak hardware for large pages).  bulkImportState is a plain
+  // mutable flag with no reactive signal, so we poll it with a chained
+  // timeout (cheap) and flush exactly once when the import gate drops.
   useEffect(() => {
     if (pageGroups.length === 0) return;
+    let cancelled = false;
+    let timer = null;
+    const flush = () => {
+      if (!cancelled) atlas.updateTexture();
+    };
     if (bulkImportState.active) {
-      const t = setTimeout(() => atlas.updateTexture(), ATLAS_UPLOAD_DEBOUNCE_MS);
-      return () => clearTimeout(t);
+      const poll = () => {
+        if (cancelled) return;
+        if (bulkImportState.active) {
+          timer = setTimeout(poll, ATLAS_UPLOAD_DEBOUNCE_MS);
+        } else {
+          flush();
+        }
+      };
+      timer = setTimeout(poll, ATLAS_UPLOAD_DEBOUNCE_MS);
+      return () => {
+        cancelled = true;
+        if (timer !== null) clearTimeout(timer);
+      };
     }
-    const frameId = requestAnimationFrame(() => atlas.updateTexture());
-    return () => cancelAnimationFrame(frameId);
+    const frameId = requestAnimationFrame(flush);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frameId);
+    };
   }, [atlas, pageGroups]);
 
   if (pageGroups.length === 0) return null;

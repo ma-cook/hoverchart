@@ -182,7 +182,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       
       // Both parents and children use LOD levels, just with different distance thresholds
       // LODManager calculates the appropriate level based on object type
-      const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.FULL;
+      const lodLevel = lodLevels.get(cube.id) ?? LOD_LEVELS.MEDIUM;
       return lodLevel === LOD_LEVELS.FULL;
     });
   // _lodVersion ensures recompute when LOD levels change (Map is mutated in-place)
