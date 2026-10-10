@@ -1686,7 +1686,7 @@ const existingIdsRef = useRef(new Set());
     <>
       <FrameTicker />
       <FrameloopController />
-      <PickGate />
+      <PickGate canvasQuality={canvasQuality} />
       <LODManager enabled={useLOD} />
       <HeaderBillboardManager />
       {viewMode === '3d' && <ConnectionAnimationManager />}

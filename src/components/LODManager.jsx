@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
 import { getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 import { enqueueLodTransitions, takeDowngradeBatch } from '../utils/lodTransitionQueue';
+import { bulkImportState } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 
 // Reusable vectors to avoid GC pressure
@@ -105,13 +106,18 @@ const posMapCacheRef = useRef({ objects: null, map: null });
   const objectsRef = useRef(objects);
   useEffect(() => {
     objectsRef.current = objects;
+    if (!objects || objects.length === 0) return;
+    // LOD only needs an empty parent map to be useful (each object then gets
+    // its own distance-based level), so enable the frame loop as soon as
+    // objects exist rather than waiting on the deferred containment pass —
+    // which never completed during a streaming import and left everything
+    // stuck at FULL detail (~200ms frames).
+    if (!initializedRef.current) initializedRef.current = true;
     // When new objects arrive, force an immediate LOD pass so they don't
     // stay at full detail until the camera moves.
-    if (objects && objects.length !== prevObjectCountRef.current) {
+    if (objects.length !== prevObjectCountRef.current) {
       prevObjectCountRef.current = objects.length;
-      if (initializedRef.current) {
-        needsImmediateUpdateRef.current = true;
-      }
+      needsImmediateUpdateRef.current = true;
     }
   }, [objects]);
 
@@ -119,6 +125,10 @@ const posMapCacheRef = useRef({ objects: null, map: null });
   // Also request spatial containment computation (replaces the O(N²) loop below).
   const workerBusyRef = useRef(false);
   const workerSyncedRef = useRef(false);
+  const workerUnavailableRef = useRef(false);
+  // Reactive mirror of workerSyncedRef so effects re-run when the worker
+  // finishes its first sync (a ref alone can't trigger a re-render).
+  const [workerSynced, setWorkerSynced] = useState(false);
 
   // PERF FIX: coalesce per-flush storms into ONE deferred pass. During a
   // 92k-object import the store flushes every ~100ms; serialising ALL objects
@@ -126,23 +136,78 @@ const posMapCacheRef = useRef({ objects: null, map: null });
   // repeated per flush (quadratic cumulative). A trailing debounce collapses
   // that into a single pass shortly after the last flush lands, and also
   // absorbs rapid user edits after the import settles.
+  //
+  // BUT a trailing-only debounce starves for the whole duration of a
+  // continuous stream (objects keep arriving faster than the 400ms window):
+  // `deferredPassTick` never advanced, so `containersKey` never recomputed and
+  // the containment effect — which ran once at mount while `objects` was still
+  // empty — never re-ran. `initializedRef` therefore stayed false forever,
+  // which gates the entire LOD useFrame loop below, leaving every object at
+  // FULL detail (~200ms frames). The hard max-wait timer guarantees a pass at
+  // least every MAX_WAIT_MS even while the stream never settles.
+  const MAX_WAIT_MS = 2000;
   const [deferredPassTick, setDeferredPassTick] = useState(0);
-  useEffect(() => {
-    if (!objects || objects.length === 0) return;
-    const t = setTimeout(() => setDeferredPassTick(v => v + 1), 400);
-    return () => clearTimeout(t);
-  }, [objects]);
+  const lastDeferredTickAtRef = useRef(0);
+  const deferredTrailTimerRef = useRef(null);
+
+  const bumpDeferredTick = useCallback(() => {
+    if (deferredTrailTimerRef.current !== null) {
+      clearTimeout(deferredTrailTimerRef.current);
+      deferredTrailTimerRef.current = null;
+    }
+    lastDeferredTickAtRef.current = Date.now();
+    setDeferredPassTick((v) => v + 1);
+  }, []);
 
   useEffect(() => {
-    // Runs once on mount and again 400ms after the last store flush — reads
-    // via objectsRef so it never re-runs per individual property change.
+    if (!objects || objects.length === 0) return;
+    if (deferredTrailTimerRef.current !== null) {
+      clearTimeout(deferredTrailTimerRef.current);
+    }
+    deferredTrailTimerRef.current = setTimeout(bumpDeferredTick, 400);
+    return () => {
+      if (deferredTrailTimerRef.current !== null) {
+        clearTimeout(deferredTrailTimerRef.current);
+        deferredTrailTimerRef.current = null;
+      }
+    };
+  }, [objects, bumpDeferredTick]);
+
+  // Hard max-wait: fire a deferred pass even if `objects` never stops changing.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (Date.now() - lastDeferredTickAtRef.current >= MAX_WAIT_MS) {
+        bumpDeferredTick();
+      }
+    }, MAX_WAIT_MS);
+    return () => clearInterval(id);
+  }, [bumpDeferredTick]);
+
+  // Worker sync is by far the most expensive thing this component does (a full
+  // structured clone of every object), so it runs at most once per
+  // WORKER_RESYNC_MIN_INTERVAL_MS, only when the payload length changed since
+  // the previous sync, and never while a bulk import is still streaming.
+  const lastWorkerSyncAtRef = useRef(-1e9);
+  const lastWorkerSyncLengthRef = useRef(-1);
+  const WORKER_RESYNC_MIN_INTERVAL_MS = 15000;
+
+  useEffect(() => {
+    // Runs on mount and on each deferred pass — reads via objectsRef so it
+    // never re-runs per individual property change.
     const objects = objectsRef.current;
     if (!objects || objects.length === 0) return;
 
-    // Defer worker sync until after initial mount/containment has started
-    // to avoid a 6+ second structured clone blocking first paint.
-    if (!initializedRef.current && deferredPassTick < 2) return;
-    if (deferredPassTick === 0 && !workerSyncedRef.current) return;
+    // Defer the first sync until after initial mount so the 6+ second
+    // structured clone doesn't block first paint.
+    if (deferredPassTick < 2) return;
+
+    // Never re-sync mid-stream: the clone is seconds of main-thread work and
+    // would re-freeze the UI on every deferred pass.
+    if (bulkImportState.active) return;
+
+    const now = Date.now();
+    if (workerSyncedRef.current && lastWorkerSyncLengthRef.current === objects.length) return;
+    if (now - lastWorkerSyncAtRef.current < WORKER_RESYNC_MIN_INTERVAL_MS) return;
 
     importPerf.mark(`lodDeferred: serializing ${objects.length} objects for worker`);
     const t0 = performance.now();
@@ -155,11 +220,18 @@ const posMapCacheRef = useRef({ objects: null, map: null });
       merfolkData: obj.merfolkData || null,
     }));
 
+    lastWorkerSyncAtRef.current = now;
+    lastWorkerSyncLengthRef.current = objects.length;
+
     const worker = getSpatialIndexWorker();
     worker.syncObjects(serialised).then(() => {
       workerSyncedRef.current = true;
+      setWorkerSynced(true);
       importPerf.mark(`lodDeferred: worker sync done in ${Math.round(performance.now() - t0)}ms`);
-    }).catch(() => { /* worker unavailable — sync fallback will run */ });
+    }).catch(() => {
+      // Worker unavailable — let the containment effect use its sync fallback.
+      workerUnavailableRef.current = true;
+    });
   }, [deferredPassTick]);
 
   // Stable key that only changes when container STRUCTURE changes (not positions/scales).
@@ -190,32 +262,40 @@ const posMapCacheRef = useRef({ objects: null, map: null });
     importPerf.mark(`containment: pass begin (${objects.length} objs, containersKey=${containersKey.slice(0, 40)})`);
     const t0 = performance.now();
 
-    // --- Try worker path first ---
-    if (workerSyncedRef.current) {
-      const worker = getSpatialIndexWorker();
-      worker.computeSpatialContainment().then(({ parentIdList, relationships }) => {
-        if (parentIdList.length > 0) {
-          // Deduplicate parentIdList
-          batchRegisterParents([...new Set(parentIdList)]);
-        }
-        if (relationships.length > 0) {
-          batchRegisterParentChild(relationships);
-        }
-        initializedRef.current = true;
-        needsImmediateUpdateRef.current = true;
-        importPerf.mark(`containment: worker result applied in ${Math.round(performance.now() - t0)}ms (${relationships.length} rels)`);
-      }).catch(() => {
-        // Worker failed — fall through to sync path
-        computeContainmentSync(objects);
-      });
+    // --- Prefer the worker (off-main-thread O(N×containers) scan) ---
+    if (!workerSyncedRef.current) {
+      // The worker hasn't finished its first sync yet.  Wait for it rather than
+      // running the sync fallback, which would be an O(N×containers)
+      // main-thread scan for a whole 92k-object space.  Enable LOD anyway —
+      // with an empty parent map each object just gets its own distance-based
+      // level — and let the hierarchy fill in when the worker lands.
+      initializedRef.current = true;
+      needsImmediateUpdateRef.current = true;
+      if (!workerUnavailableRef.current) return;
+      importPerf.mark(`containment: sync fallback (worker unavailable, ${objects.length} objs)`);
+      computeContainmentSync(objects);
       return;
     }
 
-    // --- Sync fallback (identical to original logic) ---
-    computeContainmentSync(objects);
+    const worker = getSpatialIndexWorker();
+    worker.computeSpatialContainment().then(({ parentIdList, relationships }) => {
+      if (parentIdList.length > 0) {
+        // Deduplicate parentIdList
+        batchRegisterParents([...new Set(parentIdList)]);
+      }
+      if (relationships.length > 0) {
+        batchRegisterParentChild(relationships);
+      }
+      initializedRef.current = true;
+      needsImmediateUpdateRef.current = true;
+      importPerf.mark(`containment: worker result applied in ${Math.round(performance.now() - t0)}ms (${relationships.length} rels)`);
+    }).catch(() => {
+      // Worker failed — fall through to sync path
+      computeContainmentSync(objects);
+    });
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containersKey, batchRegisterParentChild, batchRegisterParents]);
+  }, [containersKey, workerSynced, batchRegisterParentChild, batchRegisterParents]);
 
   // Extracted sync containment logic for fallback
   const computeContainmentSync = useCallback((objects) => {
