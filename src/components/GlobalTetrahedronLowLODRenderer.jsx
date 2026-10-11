@@ -5,6 +5,7 @@ import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
+import { shouldDeferGlobalFilter } from '../utils/bulkImportState';
 
 // 2D triangle geometry to represent tetrahedrons at LOW LOD
 // Larger than full-detail to remain visible at extreme distance
@@ -46,13 +47,24 @@ const GlobalTetrahedronLowLODRenderer = React.memo(({ tetrahedrons = [], onInsta
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to LOW-LOD tetrahedrons (excludes grouping containers)
+  const lowTetrahedronsRef = useRef(null);
   const lowTetrahedrons = useMemo(() => {
-    if (!lodEnabled) return [];
-    return tetrahedrons.filter(tetra => {
-      if (tetra.merfolkData?.isContainer === true) return false;
-      const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.MEDIUM;
-      return lodLevel === LOD_LEVELS.LOW;
-    });
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('tetraLow', lowTetrahedronsRef.current !== null)) {
+      return lowTetrahedronsRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = [];
+    } else {
+      result = tetrahedrons.filter(tetra => {
+        if (tetra.merfolkData?.isContainer === true) return false;
+        const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.MEDIUM;
+        return lodLevel === LOD_LEVELS.LOW;
+      });
+    }
+    lowTetrahedronsRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [tetrahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 

@@ -6,7 +6,7 @@ import useLODStore from '../stores/lodStore';
 import { isFullDetailVisible } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
-import { bulkImportState } from '../utils/bulkImportState';
+import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 
 const CUBE_SIZE = 5;
@@ -115,9 +115,14 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     const unmodifiedVersion = useCubeStore((s) => s._unmodifiedVersion);
 
     // Filter to FULL-LOD, non-container, unmodified, non-selected cubes
+    const instancedCubesRef = useRef(null);
     const instancedCubes = useMemo(() => {
+      // IMPORT GATE: defer recompute while a bulk import streams.
+      if (shouldDeferGlobalFilter('cubeFull', instancedCubesRef.current !== null)) {
+        return instancedCubesRef.current;
+      }
       const cubesMap = useCubeStore.getState().cubes;
-      return cubes.filter((cube) => {
+      const result = cubes.filter((cube) => {
         // Containers are handled separately
         if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return false;
 
@@ -137,6 +142,8 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
 
         return true;
       });
+      instancedCubesRef.current = result;
+      return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
     }, [
       cubes,

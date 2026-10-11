@@ -59,234 +59,408 @@ export const calculateLODLevel = (distanceSq) => {
 export const FACE_TEXT_DISTANCE = 500;
 export const FACE_TEXT_DISTANCE_SQ = FACE_TEXT_DISTANCE * FACE_TEXT_DISTANCE;
 
-const useLODStore = create((set, get) => ({
-  // Map of objectId -> LOD level
-  lodLevels: new Map(),
-  
-  // Version counter incremented when lodLevels Map is mutated in-place.
-  // Subscribers that depend on this counter will re-run when LOD levels change
-  // without requiring an O(N) Map copy on every update.
-  _lodVersion: 0,
-  
-  // Set of parent/container object IDs
-  parentIds: new Set(),
-  
-  // Map of parentId -> Set of childIds (for container relationships)
-  parentChildMap: new Map(),
-  
-  // Map of childId -> parentId
-  childParentMap: new Map(),
-  
-  // Last camera position used for LOD calculation
-  lastCameraPosition: null,
-  
-  // Whether LOD is enabled globally
-  lodEnabled: true,
-  
-  // Face text visibility: Map of objectId -> boolean (true = show, false = hide)
-  // Objects beyond FACE_TEXT_DISTANCE are hidden even at FULL LOD
-  faceTextVisible: new Map(),
-  _faceTextVersion: 0,
-  
-  /**
-   * Batch update face text visibility
-   * PERFORMANCE: Mutates Map in-place, bumps version once per batch.
-   */
-  batchSetFaceTextVisible: (updates) => {
-    importPerf.begin('ST-faceTextSet');
-    const state = get();
-    let changed = false;
-    for (const [objectId, visible] of updates) {
-      if (state.faceTextVisible.get(objectId) !== visible) {
-        state.faceTextVisible.set(objectId, visible);
-        changed = true;
-      }
+const useLODStore = create((set, get) => {
+  // ─── Coalesced subscriber notification ────────────────────────────────
+  // PERF FIX (import freeze): every mutation applies to the live state object
+  // SYNCHRONOUSLY (so `getState()` reads are always correct within the same
+  // task — the mount-time seed reads levels/parent maps immediately after
+  // writing them), but SUBSCRIBER NOTIFICATION is coalesced to ONE set() per
+  // animation frame.
+  //
+  // Why: the mount seed, the LOD drain and the face-text pass each write to
+  // this store and each `set()` notifies every subscriber.  ~15 components
+  // (all Global* renderers + ConnectionArrowheads + ObjectsRenderer) subscribe
+  // to `_lodVersion` / `childParentMap` / `parentIds`, and React 18's
+  // useSyncExternalStore re-renders them eagerly.  A seed that issued several
+  // set() calls (hierarchy + levels) in one task therefore produced several
+  // full re-render waves of the whole renderer suite per flush — the
+  // multi-second import freeze.  Coalescing bounds that to one wave per frame.
+  let flushScheduled = false;
+  let lodDirty = false;
+  let hierDirty = false;
+  let faceDirty = false;
+
+  const flush = () => {
+    flushScheduled = false;
+    const patch = {};
+    if (lodDirty || hierDirty) {
+      patch._lodVersion = get()._lodVersion + 1;
+      lodDirty = false;
+      hierDirty = false;
     }
-    if (changed) {
-      set({ _faceTextVersion: state._faceTextVersion + 1 });
+    if (faceDirty) {
+      patch._faceTextVersion = get()._faceTextVersion + 1;
+      faceDirty = false;
     }
-    importPerf.end('ST-faceTextSet');
-  },
-  
-  /**
-   * Set LOD level for a specific object
-   * PERFORMANCE: Mutates the Map in-place and bumps _lodVersion to avoid O(N) copy.
-   */
-  setLODLevel: (objectId, level) => {
-    const state = get();
-    if (state.lodLevels.get(objectId) === level) return; // No change
-    state.lodLevels.set(objectId, level); // Mutate in-place
-    set({ _lodVersion: state._lodVersion + 1 });
-  },
-  
-  /**
-   * Batch update LOD levels for multiple objects
-   * PERFORMANCE: Mutates the Map in-place and bumps _lodVersion once per batch.
-   */
-  batchSetLODLevels: (updates) => {
-    importPerf.begin('ST-lodLevelsSet');
-    const state = get();
-    let changed = false;
-    for (const [objectId, level] of updates) {
-      if (state.lodLevels.get(objectId) !== level) {
-        state.lodLevels.set(objectId, level);
-        changed = true;
-      }
+    if (patch._lodVersion !== undefined || patch._faceTextVersion !== undefined) {
+      set(patch);
     }
-    if (changed) {
-      set({ _lodVersion: state._lodVersion + 1 });
+  };
+
+  const scheduleFlush = () => {
+    if (flushScheduled) return;
+    flushScheduled = true;
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(flush);
+    } else {
+      setTimeout(flush, 0);
     }
-    importPerf.end('ST-lodLevelsSet');
-  },
-  
-  /**
-   * Get LOD level for an object
-   */
-  getLODLevel: (objectId) => {
-    const { lodLevels, lodEnabled } = get();
-    if (!lodEnabled) return LOD_LEVELS.FULL;
-    return lodLevels.get(objectId) ?? LOD_LEVELS.FULL;
-  },
-  
-  /**
-   * Register a parent-child relationship
-   */
-  registerParentChild: (parentId, childId) => {
-    set((state) => {
-      const newParentChildMap = new Map(state.parentChildMap);
-      const newChildParentMap = new Map(state.childParentMap);
-      
-      if (!newParentChildMap.has(parentId)) {
-        newParentChildMap.set(parentId, new Set());
-      }
-      newParentChildMap.get(parentId).add(childId);
-      newChildParentMap.set(childId, parentId);
-      
-      return { 
-        parentChildMap: newParentChildMap,
-        childParentMap: newChildParentMap,
-      };
-    });
-  },
-  
-  /**
-   * Batch register parent-child relationships
-   */
-  batchRegisterParentChild: (relationships) => {
-    importPerf.begin('ST-contained');
-    set((state) => {
-      const newParentChildMap = new Map(state.parentChildMap);
-      const newChildParentMap = new Map(state.childParentMap);
-      const newParentIds = new Set(state.parentIds);
-      
-      for (const { parentId, childId } of relationships) {
-        if (!newParentChildMap.has(parentId)) {
-          newParentChildMap.set(parentId, new Set());
+  };
+
+  return {
+    // Map of objectId -> LOD level
+    lodLevels: new Map(),
+
+    // Version counter incremented when lodLevels Map is mutated in-place.
+    // Subscribers that depend on this counter will re-run when LOD levels change
+    // without requiring an O(N) Map copy on every update.
+    _lodVersion: 0,
+
+    // Set of parent/container object IDs
+    parentIds: new Set(),
+
+    // Map of parentId -> Set of childIds (for container relationships)
+    parentChildMap: new Map(),
+
+    // Map of childId -> parentId
+    childParentMap: new Map(),
+
+    // Last camera position used for LOD calculation
+    lastCameraPosition: null,
+
+    // Whether LOD is enabled globally
+    lodEnabled: true,
+
+    // Face text visibility: Map of objectId -> boolean (true = show, false = hide)
+    // Objects beyond FACE_TEXT_DISTANCE are hidden even at FULL LOD
+    faceTextVisible: new Map(),
+    _faceTextVersion: 0,
+
+    /**
+     * Batch update face text visibility
+     * PERFORMANCE: Mutates Map in-place, coalesces the version bump.
+     */
+    batchSetFaceTextVisible: (updates) => {
+      importPerf.begin('ST-faceTextSet');
+      const state = get();
+      let changed = false;
+      for (const [objectId, visible] of updates) {
+        if (state.faceTextVisible.get(objectId) !== visible) {
+          state.faceTextVisible.set(objectId, visible);
+          changed = true;
         }
-        newParentChildMap.get(parentId).add(childId);
-        newChildParentMap.set(childId, parentId);
-        newParentIds.add(parentId); // Track parent IDs
       }
-      
-      return { 
-        parentChildMap: newParentChildMap,
-        childParentMap: newChildParentMap,
-        parentIds: newParentIds,
-      };
-    });
-    importPerf.end('ST-contained');
-  },
-  
-  /**
-   * Register an object as a parent/container
-   */
-  registerParent: (parentId) => {
-    set((state) => {
-      const newParentIds = new Set(state.parentIds);
-      newParentIds.add(parentId);
-      return { parentIds: newParentIds };
-    });
-  },
-  
-  /**
-   * Batch register parent IDs
-   */
-  batchRegisterParents: (parentIdList) => {
-    importPerf.begin('ST-contained');
-    set((state) => {
-      const newParentIds = new Set(state.parentIds);
+      if (changed) {
+        faceDirty = true;
+        scheduleFlush();
+      }
+      importPerf.end('ST-faceTextSet');
+    },
+
+    /**
+     * Set LOD level for a specific object
+     * PERFORMANCE: Mutates the Map in-place and coalesces the version bump.
+     */
+    setLODLevel: (objectId, level) => {
+      const state = get();
+      if (state.lodLevels.get(objectId) === level) return; // No change
+      state.lodLevels.set(objectId, level); // Mutate in-place
+      lodDirty = true;
+      scheduleFlush();
+    },
+
+    /**
+     * Batch update LOD levels for multiple objects
+     * PERFORMANCE: Mutates the Map in-place and coalesces the version bump.
+     */
+    batchSetLODLevels: (updates) => {
+      importPerf.begin('ST-lodLevelsSet');
+      const state = get();
+      let changed = false;
+      for (const [objectId, level] of updates) {
+        if (state.lodLevels.get(objectId) !== level) {
+          state.lodLevels.set(objectId, level);
+          changed = true;
+        }
+      }
+      if (changed) {
+        lodDirty = true;
+        scheduleFlush();
+      }
+      importPerf.end('ST-lodLevelsSet');
+    },
+
+    /**
+     * Single-commit batch used by the mount-time seed.
+     *
+     * Commits hierarchy (parent ids + relationships) AND LOD levels (+ optional
+     * face-text visibility) in ONE pass, producing at most ONE subscriber
+     * notification.  This replaces the previous sequence of separate
+     * batchRegisterParents / batchRegisterParentChild / batchSetLODLevels
+     * calls, each of which re-rendered the entire Global* renderer suite.
+     *
+     * Idempotent and identity-preserving: maps/Sets are only replaced when
+     * their contents actually change, so re-running the seed with an unchanged
+     * population is a true no-op (no notification at all).
+     *
+     * @param {Object} [batch]
+     * @param {Array<string>} [batch.parents] parent object ids
+     * @param {Array<{parentId:string,childId:string}>} [batch.relationships]
+     * @param {Array<[string, number]>} [batch.levels] [objectId, level] pairs
+     * @param {Array<[string, boolean]>} [batch.faceText] [objectId, visible]
+     */
+    applyLODBatch: ({ parents, relationships, levels, faceText } = {}) => {
+      importPerf.begin('ST-lodBatch');
+      const state = get();
+
+      if (levels && levels.length > 0) {
+        let changed = false;
+        for (let i = 0; i < levels.length; i++) {
+          const objectId = levels[i][0];
+          const level = levels[i][1];
+          if (state.lodLevels.get(objectId) !== level) {
+            state.lodLevels.set(objectId, level);
+            changed = true;
+          }
+        }
+        if (changed) lodDirty = true;
+      }
+
+      if (faceText && faceText.length > 0) {
+        let changed = false;
+        for (let i = 0; i < faceText.length; i++) {
+          const objectId = faceText[i][0];
+          const visible = faceText[i][1];
+          if (state.faceTextVisible.get(objectId) !== visible) {
+            state.faceTextVisible.set(objectId, visible);
+            changed = true;
+          }
+        }
+        if (changed) faceDirty = true;
+      }
+
+      if (parents && parents.length > 0) {
+        let changed = false;
+        for (let i = 0; i < parents.length; i++) {
+          const id = parents[i];
+          if (!state.parentIds.has(id)) {
+            if (!changed) {
+              state.parentIds = new Set(state.parentIds);
+              changed = true;
+            }
+            state.parentIds.add(id);
+          }
+        }
+        if (changed) hierDirty = true;
+      }
+
+      if (relationships && relationships.length > 0) {
+        let changed = false;
+        for (let i = 0; i < relationships.length; i++) {
+          const parentId = relationships[i].parentId;
+          const childId = relationships[i].childId;
+          if (
+            state.parentIds.has(parentId) &&
+            state.childParentMap.get(childId) === parentId
+          ) {
+            continue;
+          }
+          if (!changed) {
+            state.parentChildMap = new Map(state.parentChildMap);
+            state.childParentMap = new Map(state.childParentMap);
+            changed = true;
+          }
+          let childSet = state.parentChildMap.get(parentId);
+          if (!childSet) {
+            childSet = new Set();
+            state.parentChildMap.set(parentId, childSet);
+          }
+          childSet.add(childId);
+          state.childParentMap.set(childId, parentId);
+          if (!state.parentIds.has(parentId)) {
+            state.parentIds = new Set(state.parentIds);
+            state.parentIds.add(parentId);
+          }
+        }
+        if (changed) hierDirty = true;
+      }
+
+      if (lodDirty || hierDirty || faceDirty) scheduleFlush();
+      importPerf.end('ST-lodBatch');
+    },
+
+    /**
+     * Get LOD level for an object
+     */
+    getLODLevel: (objectId) => {
+      const { lodLevels, lodEnabled } = get();
+      if (!lodEnabled) return LOD_LEVELS.FULL;
+      return lodLevels.get(objectId) ?? LOD_LEVELS.FULL;
+    },
+
+    /**
+     * Register a parent-child relationship
+     */
+    registerParentChild: (parentId, childId) => {
+      const state = get();
+      if (state.parentIds.has(parentId) && state.childParentMap.get(childId) === parentId) {
+        return;
+      }
+      state.parentChildMap = new Map(state.parentChildMap);
+      state.childParentMap = new Map(state.childParentMap);
+      state.parentIds = new Set(state.parentIds);
+
+      if (!state.parentChildMap.has(parentId)) {
+        state.parentChildMap.set(parentId, new Set());
+      }
+      state.parentChildMap.get(parentId).add(childId);
+      state.childParentMap.set(childId, parentId);
+      state.parentIds.add(parentId);
+
+      hierDirty = true;
+      scheduleFlush();
+    },
+
+    /**
+     * Batch register parent-child relationships
+     */
+    batchRegisterParentChild: (relationships) => {
+      importPerf.begin('ST-contained');
+      const state = get();
+      let changed = false;
+
+      for (const { parentId, childId } of relationships) {
+        if (state.parentIds.has(parentId) && state.childParentMap.get(childId) === parentId) {
+          continue;
+        }
+        if (!changed) {
+          state.parentChildMap = new Map(state.parentChildMap);
+          state.childParentMap = new Map(state.childParentMap);
+          changed = true;
+        }
+        if (!state.parentChildMap.has(parentId)) {
+          state.parentChildMap.set(parentId, new Set());
+        }
+        state.parentChildMap.get(parentId).add(childId);
+        state.childParentMap.set(childId, parentId);
+        if (!state.parentIds.has(parentId)) {
+          state.parentIds = new Set(state.parentIds);
+          state.parentIds.add(parentId);
+        }
+      }
+
+      if (changed) {
+        hierDirty = true;
+        scheduleFlush();
+      }
+      importPerf.end('ST-contained');
+    },
+
+    /**
+     * Register an object as a parent/container
+     */
+    registerParent: (parentId) => {
+      const state = get();
+      if (state.parentIds.has(parentId)) return;
+      state.parentIds = new Set(state.parentIds);
+      state.parentIds.add(parentId);
+      hierDirty = true;
+      scheduleFlush();
+    },
+
+    /**
+     * Batch register parent IDs
+     */
+    batchRegisterParents: (parentIdList) => {
+      importPerf.begin('ST-contained');
+      const state = get();
+      let changed = false;
       for (const id of parentIdList) {
-        newParentIds.add(id);
+        if (!state.parentIds.has(id)) {
+          if (!changed) {
+            state.parentIds = new Set(state.parentIds);
+            changed = true;
+          }
+          state.parentIds.add(id);
+        }
       }
-      return { parentIds: newParentIds };
-    });
-    importPerf.end('ST-contained');
-  },
-  
-  /**
-   * Check if an object is a parent/container
-   */
-  isParent: (objectId) => {
-    return get().parentIds.has(objectId);
-  },
-  
-  /**
-   * Get parent ID for a child object
-   */
-  getParentId: (childId) => {
-    return get().childParentMap.get(childId);
-  },
-  
-  /**
-   * Get all children of a parent
-   */
-  getChildren: (parentId) => {
-    return get().parentChildMap.get(parentId) || new Set();
-  },
-  
-  /**
-   * Check if an object is a child of a container
-   */
-  isChildOfContainer: (objectId) => {
-    return get().childParentMap.has(objectId);
-  },
-  
-  /**
-   * Update camera position (used to track if LOD needs recalculation)
-   */
-  setLastCameraPosition: (position) => {
-    set({ lastCameraPosition: position });
-  },
-  
-  /**
-   * Toggle LOD system
-   */
-  setLODEnabled: (enabled) => {
-    set({ lodEnabled: enabled });
-  },
-  
-  /**
-   * Clear all LOD data
-   */
-  clearLODData: () => {
-    set({
-      lodLevels: new Map(),
-      _lodVersion: 0,
-      faceTextVisible: new Map(),
-      _faceTextVersion: 0,
-      parentIds: new Set(),
-      parentChildMap: new Map(),
-      childParentMap: new Map(),
-      lastCameraPosition: null,
-    });
-  },
-  
-  /**
-   * Clear LOD levels only (keep relationships)
-   */
-  clearLODLevels: () => {
-    set({ lodLevels: new Map(), _lodVersion: 0 });
-  },
-}));
+      if (changed) {
+        hierDirty = true;
+        scheduleFlush();
+      }
+      importPerf.end('ST-contained');
+    },
+
+    /**
+     * Check if an object is a parent/container
+     */
+    isParent: (objectId) => {
+      return get().parentIds.has(objectId);
+    },
+
+    /**
+     * Get parent ID for a child object
+     */
+    getParentId: (childId) => {
+      return get().childParentMap.get(childId);
+    },
+
+    /**
+     * Get all children of a parent
+     */
+    getChildren: (parentId) => {
+      return get().parentChildMap.get(parentId) || new Set();
+    },
+
+    /**
+     * Check if an object is a child of a container
+     */
+    isChildOfContainer: (objectId) => {
+      return get().childParentMap.has(objectId);
+    },
+
+    /**
+     * Update camera position (used to track if LOD needs recalculation)
+     */
+    setLastCameraPosition: (position) => {
+      set({ lastCameraPosition: position });
+    },
+
+    /**
+     * Toggle LOD system
+     */
+    setLODEnabled: (enabled) => {
+      set({ lodEnabled: enabled });
+    },
+
+    /**
+     * Clear all LOD data
+     */
+    clearLODData: () => {
+      // Drop any pending coalesced bump — the reset below is authoritative.
+      lodDirty = false;
+      hierDirty = false;
+      faceDirty = false;
+      set({
+        lodLevels: new Map(),
+        _lodVersion: 0,
+        faceTextVisible: new Map(),
+        _faceTextVersion: 0,
+        parentIds: new Set(),
+        parentChildMap: new Map(),
+        childParentMap: new Map(),
+        lastCameraPosition: null,
+      });
+    },
+
+    /**
+     * Clear LOD levels only (keep relationships)
+     */
+    clearLODLevels: () => {
+      lodDirty = false;
+      set({ lodLevels: new Map(), _lodVersion: 0 });
+    },
+  };
+});
 
 export default useLODStore;

@@ -6,7 +6,7 @@ import useLODStore from '../stores/lodStore';
 import { isFullDetailVisible } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
-import { bulkImportState } from '../utils/bulkImportState';
+import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 
 // Mobile detection (same as CubeFace.jsx)
@@ -81,12 +81,24 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to full-LOD cubes (same logic as GlobalCubeEdgesRenderer)
+  const filteredCubesRef = useRef(null);
   const filteredCubes = useMemo(() => {
-    if (!lodEnabled) return cubes;
-    return cubes.filter(cube => {
-      if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return true;
-      return isFullDetailVisible(cube.id, lodLevels, childParentMap, parentIds);
-    });
+    // IMPORT GATE: defer recompute while a bulk import streams (see
+    // GlobalCubeEdgesRenderer for rationale).
+    if (shouldDeferGlobalFilter('cubeFace', filteredCubesRef.current !== null)) {
+      return filteredCubesRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = cubes;
+    } else {
+      result = cubes.filter(cube => {
+        if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return true;
+        return isFullDetailVisible(cube.id, lodLevels, childParentMap, parentIds);
+      });
+    }
+    filteredCubesRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 

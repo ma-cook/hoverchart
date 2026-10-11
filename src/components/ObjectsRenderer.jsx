@@ -200,6 +200,18 @@ const [mountedVersion, setMountedVersion] = useState(0);
   // every time the pending queue emptied mid-import).
   const lastSafetyScanRef = useRef(0);
 
+  // ─── Incremental seed bookkeeping (import-freeze fix) ────────────────
+  // Tracking which object ids have already had their LOD level / hierarchy
+  // seeded turns the previous per-flush full-population re-seed (O(N) per store
+  // flush, i.e. O(N²) cumulatively across an import) into an O(delta) pass.
+  // `nodeIdToObjectIdRef` resolves the merfolk `parentNodeId` fallback across
+  // flushes; `pendingRelResolveRef` holds ids whose parent object had not been
+  // seen yet, so they are retried on the next seed rather than dropped.
+  const seededLevelIdsRef = useRef(new Set());
+  const seededRelIdsRef = useRef(new Set());
+  const nodeIdToObjectIdRef = useRef(new Map());
+  const pendingRelResolveRef = useRef(new Set());
+
   /**
    * Classify a newly-mounted object into the incremental collections.
    * MUST be called once per mounted id, with the CURRENT object ref.
@@ -264,25 +276,36 @@ const [mountedVersion, setMountedVersion] = useState(0);
   const seedLodLevels = (objs) => {
     const cam = cameraRef.current;
     if (objs.length === 0 || !cam) return;
+    const seeded = seededLevelIdsRef.current;
     const cx = cam.position.x;
     const cy = cam.position.y;
     const cz = cam.position.z;
-    const updates = [];
+    // Only the objects that have not been stamped yet are considered — a
+    // container is marked done immediately (it never earns a level); an
+    // object without a position yet is left unmarked so it is retried once
+    // its position lands.
+    let updates = null;
     for (let i = 0; i < objs.length; i++) {
       const obj = objs[i];
-      if (obj.merfolkData?.isContainer === true) continue;
+      if (seeded.has(obj.id)) continue;
+      if (obj.merfolkData?.isContainer === true) {
+        seeded.add(obj.id);
+        continue;
+      }
       const p = obj.position;
       if (!p) continue;
+      seeded.add(obj.id);
       const px = Array.isArray(p) ? (p[0] || 0) : (p.x || 0);
       const py = Array.isArray(p) ? (p[1] || 0) : (p.y || 0);
       const pz = Array.isArray(p) ? (p[2] || 0) : (p.z || 0);
       const dx = px - cx;
       const dy = py - cy;
       const dz = pz - cz;
+      if (updates === null) updates = [];
       updates.push([obj.id, calculateLODLevel(dx * dx + dy * dy + dz * dz)]);
     }
-    if (updates.length > 0) {
-      useLODStore.getState().batchSetLODLevels(updates);
+    if (updates !== null) {
+      useLODStore.getState().applyLODBatch({ levels: updates });
     }
   };
 
@@ -339,53 +362,88 @@ const [mountedVersion, setMountedVersion] = useState(0);
     if (rels.length > 0) st.batchRegisterParentChild(rels);
   };
 
+  const lastPersistedHierRef = useRef({ hierarchy: undefined, nodeMap: undefined });
   const seedParentChildRelationships = (objs) => {
     const st = useLODStore.getState();
     const existingParentIds = st.parentIds;
     const existingChildParent = st.childParentMap;
+    const nodeIdMap = nodeIdToObjectIdRef.current;
+    const seeded = seededRelIdsRef.current;
+    const pending = pendingRelResolveRef.current;
 
-    // Pass 1 — map merfolk node id -> object id so the persisted
-    // `parentNodeId` (a stable markdown node id) can be resolved to the
-    // concrete object id of the containing component.
-    const nodeIdToObjectId = new Map();
+    // Pass 1 — map merfolk node id -> object id (maintained incrementally) so
+    // the persisted `parentNodeId` can be resolved to the containing
+    // component's object id.  A parent discovered in an earlier flush resolves
+    // children arriving in a later one.
     for (let i = 0; i < objs.length; i++) {
       const md = objs[i].merfolkData;
-      if (md?.nodeId) nodeIdToObjectId.set(md.nodeId, objs[i].id);
+      if (md?.nodeId) nodeIdMap.set(md.nodeId, objs[i].id);
     }
 
     const parentIdList = [];
     const relationships = [];
     for (let i = 0; i < objs.length; i++) {
       const obj = objs[i];
+      const id = obj.id;
       const md = obj.merfolkData;
-      if (!md || md.isContainer === true) continue;
+      if (!md || md.isContainer === true) {
+        seeded.add(id);
+        continue;
+      }
+      // Already fully seeded (and not awaiting a not-yet-seen parent) — skip.
+      if (seeded.has(id) && !pending.has(id)) continue;
+
       if (
         (md.isParent === true || md.hasChildren === true) &&
-        !existingParentIds.has(obj.id)
+        !existingParentIds.has(id) &&
+        !parentIdList.includes(id)
       ) {
-        parentIdList.push(obj.id);
+        parentIdList.push(id);
       }
       // Prefer the persisted node id; fall back to a direct object id for
       // older data written before parentNodeId existed.
       let parentObjectId = md.parentId;
       if (!parentObjectId && md.parentNodeId) {
-        parentObjectId = nodeIdToObjectId.get(md.parentNodeId);
+        parentObjectId = nodeIdMap.get(md.parentNodeId);
       }
       if (
         parentObjectId &&
-        parentObjectId !== obj.id &&
-        existingChildParent.get(obj.id) !== parentObjectId
+        parentObjectId !== id &&
+        existingChildParent.get(id) !== parentObjectId
       ) {
-        relationships.push({ parentId: parentObjectId, childId: obj.id });
+        relationships.push({ parentId: parentObjectId, childId: id });
+      }
+      // Deferred: a `parentNodeId` that cannot be resolved yet (parent object
+      // not seen) — keep it pending and retry on the next seed rather than
+      // dropping the relationship.
+      const deferred = !md.parentId && !!md.parentNodeId && !parentObjectId;
+      if (deferred) {
+        pending.add(id);
+      } else {
+        pending.delete(id);
+        seeded.add(id);
       }
     }
 
-    if (parentIdList.length > 0) st.batchRegisterParents(parentIdList);
-    if (relationships.length > 0) st.batchRegisterParentChild(relationships);
+    if (parentIdList.length > 0 || relationships.length > 0) {
+      st.applyLODBatch({ parents: parentIdList, relationships });
+    }
 
-    // Augment with the persisted merfolk hierarchy (see above).
+    // Augment with the persisted merfolk hierarchy (see above).  Guarded by
+    // identity so a re-seed with an unchanged hierarchy does not repeat the
+    // work; the dedicated effect below also applies it whenever it changes.
     const diagram = useDiagramStore.getState();
-    registerPersistedHierarchy(diagram.hierarchy, diagram.nodeToObjectIdMap);
+    const last = lastPersistedHierRef.current;
+    if (
+      last.hierarchy !== diagram.hierarchy ||
+      last.nodeMap !== diagram.nodeToObjectIdMap
+    ) {
+      lastPersistedHierRef.current = {
+        hierarchy: diagram.hierarchy,
+        nodeMap: diagram.nodeToObjectIdMap,
+      };
+      registerPersistedHierarchy(diagram.hierarchy, diagram.nodeToObjectIdMap);
+    }
   };
 
   // Shared guard/ref for the synchronous LOD + hierarchy seed.  Set right

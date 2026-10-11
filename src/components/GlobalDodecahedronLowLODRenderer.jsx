@@ -5,6 +5,7 @@ import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { dodecahedronTransformMap } from './GlobalDodecahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
+import { shouldDeferGlobalFilter } from '../utils/bulkImportState';
 
 // 2D octagon geometry to represent dodecahedrons at LOW LOD
 // Larger than full-detail to remain visible at extreme distance
@@ -45,13 +46,24 @@ const GlobalDodecahedronLowLODRenderer = React.memo(({ dodecahedrons = [], onIns
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to LOW-LOD dodecahedrons (excludes grouping containers)
+  const lowDodecahedronsRef = useRef(null);
   const lowDodecahedrons = useMemo(() => {
-    if (!lodEnabled) return [];
-    return dodecahedrons.filter(dodeca => {
-      if (dodeca.merfolkData?.isContainer === true) return false;
-      const lodLevel = lodLevels.get(dodeca.id) ?? LOD_LEVELS.MEDIUM;
-      return lodLevel === LOD_LEVELS.LOW;
-    });
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('dodecaLow', lowDodecahedronsRef.current !== null)) {
+      return lowDodecahedronsRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = [];
+    } else {
+      result = dodecahedrons.filter(dodeca => {
+        if (dodeca.merfolkData?.isContainer === true) return false;
+        const lodLevel = lodLevels.get(dodeca.id) ?? LOD_LEVELS.MEDIUM;
+        return lodLevel === LOD_LEVELS.LOW;
+      });
+    }
+    lowDodecahedronsRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [dodecahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 

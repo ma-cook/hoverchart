@@ -5,7 +5,7 @@ import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore from '../stores/lodStore';
 import { isFullDetailByOwnLevel } from '../utils/lodVisibility';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
-import { bulkImportState } from '../utils/bulkImportState';
+import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
 import { isPickingSuppressed } from './PickGate';
 
 // Mark only [offset, offset+count) of an attribute dirty for GPU upload.
@@ -161,18 +161,28 @@ const GlobalDodecahedronEdgesRenderer = React.memo(({
   
   // Filter dodecahedrons based on LOD level - only render edges for FULL LOD
   // Grouping containers are excluded from LOD and always render
+  const filteredDodecahedronsRef = useRef(null);
   const filteredDodecahedrons = useMemo(() => {
-    if (!lodEnabled) return dodecahedrons;
-    
-    return dodecahedrons.filter(dodeca => {
-      // Grouping containers are excluded from LOD - always render
-      const isGroupingContainer = dodeca.merfolkData?.isContainer === true;
-      if (isGroupingContainer) {
-        return true;
-      }
-      
-      return isFullDetailByOwnLevel(dodeca.id, lodLevels);
-    });
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('dodecaEdges', filteredDodecahedronsRef.current !== null)) {
+      return filteredDodecahedronsRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = dodecahedrons;
+    } else {
+      result = dodecahedrons.filter(dodeca => {
+        // Grouping containers are excluded from LOD - always render
+        const isGroupingContainer = dodeca.merfolkData?.isContainer === true;
+        if (isGroupingContainer) {
+          return true;
+        }
+
+        return isFullDetailByOwnLevel(dodeca.id, lodLevels);
+      });
+    }
+    filteredDodecahedronsRef.current = result;
+    return result;
   // _lodVersion ensures recompute when LOD levels change (Map is mutated in-place)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [dodecahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);

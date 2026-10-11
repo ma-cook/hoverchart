@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { dodecahedronTransformMap } from './GlobalDodecahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { shouldDeferGlobalFilter } from '../utils/bulkImportState';
 
 // Low-poly sphere to approximate dodecahedron silhouette at medium distance
 // Radius 8 matches edge renderer bounds (PHI * 5 ≈ 8.09)
@@ -38,16 +39,26 @@ const lodLevels = useLODStore((s) => s.lodLevels);
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to only MEDIUM LOD dodecahedrons (excludes grouping containers)
+  const mediumDodecahedronsRef = useRef(null);
   const mediumDodecahedrons = useMemo(() => {
-    if (!lodEnabled) return [];
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('dodecaMedium', mediumDodecahedronsRef.current !== null)) {
+      return mediumDodecahedronsRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = [];
+    } else {
+      result = dodecahedrons.filter(dodeca => {
+        const isGroupingContainer = dodeca.merfolkData?.isContainer === true;
+        if (isGroupingContainer) return false;
 
-    return dodecahedrons.filter(dodeca => {
-      const isGroupingContainer = dodeca.merfolkData?.isContainer === true;
-      if (isGroupingContainer) return false;
-
-      const lodLevel = lodLevels.get(dodeca.id) ?? LOD_LEVELS.MEDIUM;
-      return lodLevel === LOD_LEVELS.MEDIUM;
-    });
+        const lodLevel = lodLevels.get(dodeca.id) ?? LOD_LEVELS.MEDIUM;
+        return lodLevel === LOD_LEVELS.MEDIUM;
+      });
+    }
+    mediumDodecahedronsRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [dodecahedrons, lodLevels, _lodVersion, lodEnabled]);
 

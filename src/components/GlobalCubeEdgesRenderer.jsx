@@ -5,7 +5,7 @@ import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore from '../stores/lodStore';
 import { isFullDetailVisible } from '../utils/lodVisibility';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
-import { bulkImportState } from '../utils/bulkImportState';
+import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
 import { isPickingSuppressed } from './PickGate';
 import importPerf from '../utils/importPerf';
 
@@ -163,25 +163,39 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   // ContainerEdgesRenderer in a separate, LOD-independent instanced mesh.  This
   // prevents LOD changes / non-container mount-unmount (which force a full
   // rebuild of this shared mesh) from also rebuilding the container edges.
+  const filteredCubesRef = useRef(null);
   const filteredCubes = useMemo(() => {
+    // IMPORT GATE: while a bulk import / progressive mount is streaming the
+    // cube population grows every batch and `_lodVersion` bumps every flush;
+    // recomputing this O(N) filter (and the ~15 sibling renderers' filters)
+    // each time is wasted work — the settle pass bumps `_lodVersion` once the
+    // stream stops, which recomputes everything.  Return the previous result
+    // meanwhile.
+    if (shouldDeferGlobalFilter('cubeEdges', filteredCubesRef.current !== null)) {
+      return filteredCubesRef.current;
+    }
+    let result;
     if (!lodEnabled) {
-      return cubes.filter(cube =>
+      result = cubes.filter(cube =>
         cube.merfolkData?.isContainer !== true && cube.merfolkData?.isRepoContainer !== true
       );
-    }
+    } else {
+      result = cubes.filter(cube => {
+        // Grouping containers are rendered separately by ContainerEdgesRenderer
+        const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
+        if (isGroupingContainer) {
+          return false;
+        }
 
-    return cubes.filter(cube => {
-      // Grouping containers are rendered separately by ContainerEdgesRenderer
-      const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
-      if (isGroupingContainer) {
-        return false;
-      }
-      
-      // Gated internal member (function/class/variable/hook inside a component):
-      // hidden entirely unless its immediate parent component is at FULL detail.
-      // Sub-components (which are also parents) and free objects are NOT gated —
-      // they fall through to their own distance-based level below.
-      return isFullDetailVisible(cube.id, lodLevels, childParentMap, parentIds);    });
+        // Gated internal member (function/class/variable/hook inside a component):
+        // hidden entirely unless its immediate parent component is at FULL detail.
+        // Sub-components (which are also parents) and free objects are NOT gated —
+        // they fall through to their own distance-based level below.
+        return isFullDetailVisible(cube.id, lodLevels, childParentMap, parentIds);
+      });
+    }
+    filteredCubesRef.current = result;
+    return result;
   // _lodVersion ensures recompute when LOD levels change (Map is mutated in-place)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);

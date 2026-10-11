@@ -5,7 +5,7 @@ import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { visibleAtTier } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
-import { bulkImportState } from '../utils/bulkImportState';
+import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
 
@@ -40,13 +40,24 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to LOW-LOD cubes (excludes grouping containers)
+  const lowCubesRef = useRef(null);
   const lowCubes = useMemo(() => {
-    if (!lodEnabled) return [];
-    return cubes.filter(cube => {
-      if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return false;
-      // Gated internal members are excluded from LOW (FULL-only or hidden).
-      return visibleAtTier(cube.id, LOD_LEVELS.LOW, lodLevels, childParentMap, parentIds);
-    });
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('cubeLow', lowCubesRef.current !== null)) {
+      return lowCubesRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = [];
+    } else {
+      result = cubes.filter(cube => {
+        if (cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true) return false;
+        // Gated internal members are excluded from LOW (FULL-only or hidden).
+        return visibleAtTier(cube.id, LOD_LEVELS.LOW, lodLevels, childParentMap, parentIds);
+      });
+    }
+    lowCubesRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 

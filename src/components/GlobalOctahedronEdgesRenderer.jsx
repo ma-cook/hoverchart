@@ -5,7 +5,7 @@ import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore from '../stores/lodStore';
 import { isFullDetailByOwnLevel } from '../utils/lodVisibility';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
-import { bulkImportState } from '../utils/bulkImportState';
+import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
 import { isPickingSuppressed } from './PickGate';
 
 // Mark only [offset, offset+count) of an attribute dirty for GPU upload.
@@ -109,17 +109,27 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
+  const filteredOctahedronsRef = useRef(null);
   const filteredOctahedrons = useMemo(() => {
-    if (!lodEnabled) return octahedrons;
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('octaEdges', filteredOctahedronsRef.current !== null)) {
+      return filteredOctahedronsRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = octahedrons;
+    } else {
+      result = octahedrons.filter(octa => {
+        const isGroupingContainer = octa.merfolkData?.isContainer === true;
+        if (isGroupingContainer) {
+          return true;
+        }
 
-    return octahedrons.filter(octa => {
-      const isGroupingContainer = octa.merfolkData?.isContainer === true;
-      if (isGroupingContainer) {
-        return true;
-      }
-
-      return isFullDetailByOwnLevel(octa.id, lodLevels);
-    });
+        return isFullDetailByOwnLevel(octa.id, lodLevels);
+      });
+    }
+    filteredOctahedronsRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [octahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 

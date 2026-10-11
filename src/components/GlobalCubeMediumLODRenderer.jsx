@@ -5,7 +5,7 @@ import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { visibleAtTier } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
-import { bulkImportState } from '../utils/bulkImportState';
+import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
 import importPerf from '../utils/importPerf';
 
 const CUBE_SIZE = 5;
@@ -61,16 +61,26 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
 
   // Filter cubes to only those at MEDIUM LOD level
   // Grouping containers are excluded (they always render at full detail)
+  const mediumCubesRef = useRef(null);
   const mediumCubes = useMemo(() => {
-    if (!lodEnabled) return [];
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('cubeMedium', mediumCubesRef.current !== null)) {
+      return mediumCubesRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = [];
+    } else {
+      result = cubes.filter(cube => {
+        const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
+        if (isGroupingContainer) return false;
 
-    return cubes.filter(cube => {
-      const isGroupingContainer = cube.merfolkData?.isContainer === true || cube.merfolkData?.isRepoContainer === true;
-      if (isGroupingContainer) return false;
-
-      // Gated internal members are excluded from MEDIUM (FULL-only or hidden).
-      return visibleAtTier(cube.id, LOD_LEVELS.MEDIUM, lodLevels, childParentMap, parentIds);
-    });
+        // Gated internal members are excluded from MEDIUM (FULL-only or hidden).
+        return visibleAtTier(cube.id, LOD_LEVELS.MEDIUM, lodLevels, childParentMap, parentIds);
+      });
+    }
+    mediumCubesRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [cubes, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 

@@ -5,6 +5,7 @@ import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { octahedronTransformMap } from './GlobalOctahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
+import { shouldDeferGlobalFilter } from '../utils/bulkImportState';
 
 const _buildOctagonGeometry = () => {
   const S = 10;
@@ -50,13 +51,24 @@ const GlobalOctahedronLowLODRenderer = React.memo(({ octahedrons = [], onInstanc
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
+  const lowOctahedronsRef = useRef(null);
   const lowOctahedrons = useMemo(() => {
-    if (!lodEnabled) return [];
-    return octahedrons.filter(octa => {
-      if (octa.merfolkData?.isContainer === true) return false;
-      const lodLevel = lodLevels.get(octa.id) ?? LOD_LEVELS.MEDIUM;
-      return lodLevel === LOD_LEVELS.LOW;
-    });
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('octaLow', lowOctahedronsRef.current !== null)) {
+      return lowOctahedronsRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = [];
+    } else {
+      result = octahedrons.filter(octa => {
+        if (octa.merfolkData?.isContainer === true) return false;
+        const lodLevel = lodLevels.get(octa.id) ?? LOD_LEVELS.MEDIUM;
+        return lodLevel === LOD_LEVELS.LOW;
+      });
+    }
+    lowOctahedronsRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [octahedrons, lodLevels, _lodVersion, childParentMap, parentIds, lodEnabled]);
 

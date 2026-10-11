@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
 import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
+import { shouldDeferGlobalFilter } from '../utils/bulkImportState';
 
 // Custom tetrahedron geometry matching the full-detail Tetrahedron.jsx vertices exactly.
 // TETRAHEDRON_SIZE = 5:
@@ -64,16 +65,26 @@ const lodLevels = useLODStore((s) => s.lodLevels);
   const _lodVersion = useLODStore((s) => s._lodVersion);
 
   // Filter to only MEDIUM LOD tetrahedrons (excludes grouping containers)
+  const mediumTetrahedronsRef = useRef(null);
   const mediumTetrahedrons = useMemo(() => {
-    if (!lodEnabled) return [];
+    // IMPORT GATE: defer recompute while a bulk import streams.
+    if (shouldDeferGlobalFilter('tetraMedium', mediumTetrahedronsRef.current !== null)) {
+      return mediumTetrahedronsRef.current;
+    }
+    let result;
+    if (!lodEnabled) {
+      result = [];
+    } else {
+      result = tetrahedrons.filter(tetra => {
+        const isGroupingContainer = tetra.merfolkData?.isContainer === true;
+        if (isGroupingContainer) return false;
 
-    return tetrahedrons.filter(tetra => {
-      const isGroupingContainer = tetra.merfolkData?.isContainer === true;
-      if (isGroupingContainer) return false;
-
-      const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.MEDIUM;
-      return lodLevel === LOD_LEVELS.MEDIUM;
-    });
+        const lodLevel = lodLevels.get(tetra.id) ?? LOD_LEVELS.MEDIUM;
+        return lodLevel === LOD_LEVELS.MEDIUM;
+      });
+    }
+    mediumTetrahedronsRef.current = result;
+    return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [tetrahedrons, lodLevels, _lodVersion, lodEnabled]);
 
