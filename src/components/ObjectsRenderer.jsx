@@ -450,7 +450,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
   // before the mount effect commits any batch, so the commit that first paints
   // a batch already carries distance-correct levels and a populated hierarchy.
   const lastSeedCountRef = useRef(0);
-  const wasBulkImportActiveRef = useRef(false);
 
   const seedLevelsAndHierarchy = (objs) => {
     lastSeedCountRef.current = objs.length;
@@ -550,28 +549,26 @@ const [mountedVersion, setMountedVersion] = useState(0);
     }
     if (structureChanged) setMountedVersion((v) => v + 1);
 
-    // FIX 5: Stamp the hierarchy + LOD levels synchronously with the store
-    // sync, BEFORE the progressive-mount effects below commit any batch.  A
-    // separate post-commit effect (the old Fix 1a) let the first batches paint
-    // with an empty hierarchy/level map — every renderer falls back to FULL for
-    // unclassified/unstamped ids, so the whole space drew at full detail.
-    // Guarded by count growth so a static camera re-seeds at most once per
-    // import flush (batchSetLODLevels/batchRegister* are no-ops when unchanged).
-    if (
-      useLODStore.getState().lodEnabled &&
-      cameraRef.current &&
-      !bulkImportState.active
-    ) {
-      const isActive = bulkImportState.active;
-      if (wasBulkImportActiveRef.current && !isActive) {
-        seedLevelsAndHierarchy(objectsRef.current);
-        wasBulkImportActiveRef.current = false;
-      } else if (objects.length !== lastSeedCountRef.current) {
+    // Stamp the hierarchy + LOD levels synchronously with the store sync,
+    // BEFORE the progressive-mount effects below commit any batch.  A separate
+    // post-commit effect (the old Fix 1a) let the first batches paint with an
+    // empty hierarchy/level map — every renderer falls back to MEDIUM/FULL for
+    // unclassified/unstamped ids, so the whole space drew at the wrong detail.
+    //
+    // RATE FIX: this now runs DURING a bulk import too (it is no longer gated on
+    // !bulkImportState.active).  seedLevelsAndHierarchy is incremental (only
+    // objects not yet stamped are processed — see seedLodLevels /
+    // seedParentChildRelationships) and applyLODBatch coalesces its store write
+    // to one notification per frame, so per-batch cost is O(delta).  Gating it
+    // off during import left every streamed object unstamped until the gate
+    // dropped, at which point LODManager computed a diff for the ENTIRE
+    // population and committed it in one batch — the multi-second settle freeze
+    // (mass <Cube> unmount + every Global* renderer rebuilding at once).
+    // Guarded by count growth so a static camera re-seeds at most once per flush.
+    if (useLODStore.getState().lodEnabled && cameraRef.current) {
+      if (objects.length !== lastSeedCountRef.current) {
         seedLevelsAndHierarchy(objects);
       }
-      wasBulkImportActiveRef.current = isActive;
-    } else {
-      wasBulkImportActiveRef.current = bulkImportState.active;
     }
     importPerf.end('ET-mountSync');
 
@@ -715,23 +712,18 @@ const [mountedVersion, setMountedVersion] = useState(0);
 
         // FIX 5 (streaming): if the store pushed more objects since the last
         // seed, stamp their hierarchy + LOD levels synchronously before this
-        // batch commits — otherwise newly-streamed-in objects paint at FULL.
+        // batch commits — otherwise newly-streamed-in objects paint at the
+        // wrong detail.  Runs during a bulk import too (see the ET-mountSync
+        // effect above): the seed is incremental and the store write is
+        // coalesced, so streaming never leaves objects unstamped and the
+        // import-settle pass has nothing mass to correct.
         const currentObjs = objectsRef.current;
         if (
           useLODStore.getState().lodEnabled &&
           cameraRef.current &&
-          !bulkImportState.active
+          currentObjs.length !== lastSeedCountRef.current
         ) {
-          const isActive = bulkImportState.active;
-          if (wasBulkImportActiveRef.current && !isActive) {
-            seedLevelsAndHierarchy(objectsRef.current);
-            wasBulkImportActiveRef.current = false;
-          } else if (currentObjs.length !== lastSeedCountRef.current) {
-            seedLevelsAndHierarchy(currentObjs);
-          }
-          wasBulkImportActiveRef.current = isActive;
-        } else {
-          wasBulkImportActiveRef.current = bulkImportState.active;
+          seedLevelsAndHierarchy(currentObjs);
         }
 
         const objectById = idToObjectRef.current;

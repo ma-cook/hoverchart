@@ -1,6 +1,7 @@
-import { useRef, useState, useCallback, useEffect, useMemo, memo } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo, memo, Profiler } from 'react';
 import { EffectComposer, SMAA, Bloom, Vignette } from '@react-three/postprocessing';
 import useSceneStore from './stores/sceneStore';
+import importPerf from './utils/importPerf';
 
 import './App.css';
 
@@ -1680,11 +1681,29 @@ const existingIdsRef = useRef(new Set());
     useCodeStore.getState().openCodeWindow(objectId);
   }, []);
 
+  // DIAG (?perf): measure the real React commit cost of the scene subtree.
+  // The begin/end importPerf labels around individual renders only show the
+  // synchronous body of one component; they do NOT capture the commit cost of
+  // reconciling the whole scene (which is where the import-settle freeze lives).
+  // This Profiler reports the actual/base duration of every scene commit so a
+  // multi-second commit can be attributed to React instead of guessed at.
+  const onProfilerRender = useCallback(
+    (id, phase, actualDuration, baseDuration) => {
+      if (!importPerf.enabled) return;
+      if (actualDuration < 100 && baseDuration < 100) return;
+      importPerf.mark(
+        `profiler ${id} ${phase} actual=${Math.round(actualDuration)}ms base=${Math.round(baseDuration)}ms`
+      );
+    },
+    []
+  );
+
   // Memoize scene content to keep the same JSX reference across re-renders
   // when dependencies haven't changed.  Without this, every App render creates
   // a new React element tree → setDiagramScene → AppShell re-render → scene
   // remount → store updates → App re-render (infinite loop).
   const diagramSceneContent = useMemo(() => (
+    <Profiler id="diagramScene" onRender={onProfilerRender}>
     <>
       <FrameTicker />
       <FrameloopController />
@@ -1749,8 +1768,9 @@ const existingIdsRef = useRef(new Set());
       </EffectComposer>
       )}
     </>
+    </Profiler>
   ), [
-    useLOD, viewMode, spaceTypeProp, canvasQuality,
+    useLOD, viewMode, spaceTypeProp, canvasQuality, onProfilerRender,
     objects, visibleObjectIds, selectedId,
     handleObjectClick, handleObjectMoveCallback, handleObjectUpdateCallback,
     disableOrbitControls, enableOrbitControls,

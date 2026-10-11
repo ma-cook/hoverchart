@@ -29,10 +29,15 @@ const CAMERA_MOVE_THRESHOLD_SQ = CAMERA_MOVE_THRESHOLD * CAMERA_MOVE_THRESHOLD;
 // Upgrades (-> more detail) are sorted closest-first for best visuals.
 // A transition still lands the same frame it is enqueued when it fits the
 // budget, because the drain hook is registered after the enqueue hook.
-const LOD_UPGRADE_BUDGET_PER_FRAME = 1000;
+const LOD_UPGRADE_BUDGET_PER_FRAME = 300;
 
-// Downgrades reduce render cost, so they get the larger budget.
-const LOD_DOWNGRADE_BUDGET_PER_FRAME = 4000;
+// Downgrades reduce render cost, so they get a larger budget.  Kept modest so a
+// mass threshold crossing (e.g. the seeding correction when a bulk import
+// settles, or a camera teleport) cascades over several frames instead of
+// landing as one batchSetLODLevels commit that rebuilds every Global*
+// renderer's instance buffers — and unmounts thousands of <Cube> subtrees —
+// in a single React commit.
+const LOD_DOWNGRADE_BUDGET_PER_FRAME = 500;
 
 // Frame-time threshold (ms) above which both budgets are halved.
 // Prevents piling on detail when frames are already slow.
