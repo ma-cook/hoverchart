@@ -100,6 +100,11 @@ export const pollScanJob = ({ api, session, spaceId, onProgress, hydrate, onFail
   let inFlight = false;
   let armedTimer = null;
   let listener = null;
+  // A 401 that survives api()'s built-in refresh, or any other persistent
+  // failure, otherwise retries forever while the UI sits at "queued... 0%".
+  // After enough consecutive failures we surface a terminal failed job instead.
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 5;
 
   const cleanup = () => {
     if (armedTimer) clearTimeout(armedTimer);
@@ -138,6 +143,7 @@ export const pollScanJob = ({ api, session, spaceId, onProgress, hydrate, onFail
     try {
       const job = await api.get(`/api/scan-jobs/${session.jobId}`);
       if (cancelled) return;
+      consecutiveErrors = 0;
       if (!job) {
         schedule(Math.min(delay * 1.5, 15000));
         return;
@@ -172,7 +178,17 @@ export const pollScanJob = ({ api, session, spaceId, onProgress, hydrate, onFail
       });
       schedule(Math.min(delay * 1.5, 15000));
     } catch (err) {
+      consecutiveErrors += 1;
       console.warn('[durableScan] poll failed:', err.message);
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        cleanup();
+        clearScanSession(spaceId);
+        onProgress({ isScanning: false, progress: 100, stage: 'Failed' });
+        if (onFailed) {
+          onFailed({ ...session, status: 'failed', error: err.message });
+        }
+        return;
+      }
       onProgress({ isScanning: true, progress: session.progress || 0, stage: session.stage || 'Background scan...' });
       schedule(Math.min(delay * 1.5, 15000));
     } finally {

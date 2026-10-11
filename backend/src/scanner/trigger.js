@@ -10,22 +10,36 @@
 
 const authClientCache = new Map();
 
-function scannerUrl() {
+function scannerBaseUrl() {
   const base = process.env.SCANNER_SERVICE_URL;
   if (!base) return null;
-  return `${base.replace(/\/+$/, '')}/scan`;
+  return base.replace(/\/+$/, '');
 }
 
-async function getScopedHeaders(target) {
-  const isCloudRun = Boolean(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT);
+/**
+ * OIDC ID token for the scanner.
+ *
+ * The audience MUST be the scanner's *base* service URL: Cloud Run validates
+ * `aud` against the service hostname, so a `host/path` value (e.g. `.../scan`)
+ * is rejected even though the request is sent to that path. We therefore mint
+ * the token for the base URL and only append `/scan` to the fetch target.
+ *
+ * Cloud Run *services* expose K_SERVICE (not GOOGLE_CLOUD_PROJECT — that is a
+ * functions-only variable), so K_SERVICE is the reliable "am I on Cloud Run"
+ * signal. Falling back to the project vars keeps older setups working.
+ */
+async function getScopedHeaders(audience) {
+  const isCloudRun = Boolean(
+    process.env.K_SERVICE || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT
+  );
   if (!isCloudRun) return {};
 
-  let cached = authClientCache.get(target);
+  let cached = authClientCache.get(audience);
   if (!cached) {
     const { GoogleAuth } = await import('google-auth-library');
     const auth = new GoogleAuth();
-    cached = await auth.getIdTokenClient(target);
-    authClientCache.set(target, cached);
+    cached = await auth.getIdTokenClient(audience);
+    authClientCache.set(audience, cached);
   }
   return cached.getRequestHeaders();
 }
@@ -35,13 +49,13 @@ async function getScopedHeaders(target) {
  * @returns {Promise<{ skipped: boolean }>}
  */
 export async function triggerScanner(jobId) {
-  const url = scannerUrl();
-  if (!url) return { skipped: true };
+  const base = scannerBaseUrl();
+  if (!base) return { skipped: true };
 
-  const headers = { 'content-type': 'application/json', ...(await getScopedHeaders(url)) };
+  const headers = { 'content-type': 'application/json', ...(await getScopedHeaders(base)) };
   if (process.env.SCAN_INTERNAL_KEY) headers['x-scan-key'] = process.env.SCAN_INTERNAL_KEY;
 
-  const res = await fetch(url, {
+  const res = await fetch(`${base}/scan`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ jobId }),
