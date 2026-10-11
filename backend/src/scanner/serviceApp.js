@@ -146,9 +146,21 @@ export async function runJob(jobId) {
       objects_created: counts.nodes,
       connections_created: counts.edges,
     });
+
+    // `diagram_repo` is JSONB — it must receive a JSON value, not a bare
+    // "owner/repo" string (which Postgres rejects with "invalid input syntax
+    // for type json").  Store the same GitHub-repo-shaped object the client
+    // uses for `diagramRepo` so cross-device hydration matches.
+    const diagramRepo = {
+      owner: { login: job.repo_owner },
+      name: job.repo_name,
+      full_name: `${job.repo_owner}/${job.repo_name}`,
+      default_branch: job.branch || null,
+      branch: job.branch || null,
+    };
     await pool.query(
       `UPDATE spaces SET markdown_storage_url = $1, diagram_commit_sha = $2, diagram_repo = $3, updated_at = NOW() WHERE id = $4`,
-      [relPath, headSha, `${job.repo_owner}/${job.repo_name}`, job.space_id]
+      [relPath, headSha, diagramRepo, job.space_id]
     );
 
     console.log(`[scan ${job.repo_owner}/${job.repo_name}]${job.is_rescan ? ' (rescan)' : ''} done: ${counts.nodes} nodes, ${counts.edges} edges -> ${relPath}`);
