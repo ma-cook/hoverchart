@@ -1352,9 +1352,8 @@ const UIOverlay = ({
       triggerDownload(markdown);
     } else if (latestMarkdownUrl) {
       try {
-        const response = await fetch(latestMarkdownUrl);
-        const text = await response.text();
-        if (text.trimStart().startsWith('<!DOCTYPE') || text.trimStart().startsWith('<html')) {
+        const text = await fetchStoredMarkdown(latestMarkdownUrl);
+        if (!text) {
           alert('The stored markdown URL is no longer valid. Generate a new diagram to re-download.');
           return;
         }

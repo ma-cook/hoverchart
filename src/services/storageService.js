@@ -36,7 +36,7 @@ const uploadFileGeneric = async (file, userId, spaceId, folder, progressCallback
 
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(`${window.location.origin}/api/storage/${destPath}`);
+        resolve(`${API_BASE}/api/storage/${destPath}`);
       } else {
         reject(new Error(`Upload failed: ${xhr.status}`));
       }
@@ -86,15 +86,15 @@ export const uploadMarkdownToStorage = async (markdown, userId, spaceId, fileNam
 /**
  * Fetches stored diagram markdown text. The backend storage routes live behind
  * `authenticate`, so any URL pointing at our /api/storage endpoints must carry
- * the Bearer access token. Accepts a full/fetchable URL, a our-own full
- * same-origin URL (from storageService), or a bare rel path (`uploads/...`,
- * as produced by background scans).
+ * the Bearer access token. Accepts an absolute backend URL (from
+ * storageService, `{API_BASE}/api/storage/uploads/...`), a full/fetchable URL,
+ * or a bare rel path (`uploads/...`, as produced by background scans).
  */
 export const fetchStoredMarkdown = async (urlOrPath) => {
   if (!urlOrPath) return null;
   let url = urlOrPath;
   if (url.startsWith('uploads/')) {
-    url = `${window.location.origin}/api/storage/${url}`;
+    url = `${API_BASE}/api/storage/${url}`;
   }
   const ourEndpoint = url.includes('/api/storage/uploads/');
   const { accessToken } = loadTokens();
