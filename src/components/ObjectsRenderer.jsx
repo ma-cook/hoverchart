@@ -391,6 +391,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
   // before the mount effect commits any batch, so the commit that first paints
   // a batch already carries distance-correct levels and a populated hierarchy.
   const lastSeedCountRef = useRef(0);
+  const wasBulkImportActiveRef = useRef(false);
 
   const seedLevelsAndHierarchy = (objs) => {
     lastSeedCountRef.current = objs.length;
@@ -500,9 +501,18 @@ const [mountedVersion, setMountedVersion] = useState(0);
     if (
       useLODStore.getState().lodEnabled &&
       cameraRef.current &&
-      objects.length !== lastSeedCountRef.current
+      !bulkImportState.active
     ) {
-      seedLevelsAndHierarchy(objects);
+      const isActive = bulkImportState.active;
+      if (wasBulkImportActiveRef.current && !isActive) {
+        seedLevelsAndHierarchy(objectsRef.current);
+        wasBulkImportActiveRef.current = false;
+      } else if (objects.length !== lastSeedCountRef.current) {
+        seedLevelsAndHierarchy(objects);
+      }
+      wasBulkImportActiveRef.current = isActive;
+    } else {
+      wasBulkImportActiveRef.current = bulkImportState.active;
     }
     importPerf.end('ET-mountSync');
 
@@ -649,11 +659,20 @@ const [mountedVersion, setMountedVersion] = useState(0);
         // batch commits — otherwise newly-streamed-in objects paint at FULL.
         const currentObjs = objectsRef.current;
         if (
-          currentObjs.length !== lastSeedCountRef.current &&
           useLODStore.getState().lodEnabled &&
-          cameraRef.current
+          cameraRef.current &&
+          !bulkImportState.active
         ) {
-          seedLevelsAndHierarchy(currentObjs);
+          const isActive = bulkImportState.active;
+          if (wasBulkImportActiveRef.current && !isActive) {
+            seedLevelsAndHierarchy(objectsRef.current);
+            wasBulkImportActiveRef.current = false;
+          } else if (currentObjs.length !== lastSeedCountRef.current) {
+            seedLevelsAndHierarchy(currentObjs);
+          }
+          wasBulkImportActiveRef.current = isActive;
+        } else {
+          wasBulkImportActiveRef.current = bulkImportState.active;
         }
 
         const objectById = idToObjectRef.current;

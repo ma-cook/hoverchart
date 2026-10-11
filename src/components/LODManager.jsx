@@ -203,7 +203,7 @@ const wasImportActiveRef = useRef(false);
 
     // Defer the first sync until after initial mount so the 6+ second
     // structured clone doesn't block first paint.
-    if (deferredPassTick < 2) return;
+    if (deferredPassTick < 1) return;
 
     // Never re-sync mid-stream: the clone is seconds of main-thread work and
     // would re-freeze the UI on every deferred pass.
