@@ -19,6 +19,19 @@ export function getTextAtlasWorker() {
       new URL('./textAtlasWorker.js', import.meta.url),
       { type: 'module' }
     );
+
+    // A fatal worker error (uncaught, outside a Comlink handler) would leave
+    // in-flight proxy calls hanging forever.  Tear the worker down so callers
+    // reject / time out and the next request lazily builds a fresh worker.
+    worker.onerror = (e) => {
+      console.error('[textAtlasWorker] fatal worker error:', e?.message || e);
+      try {
+        terminateTextAtlasWorker();
+      } catch (err) {
+        console.error('[textAtlasWorker] failed to terminate after error:', err);
+      }
+    };
+
     instance = wrap(worker);
   }
   return instance;

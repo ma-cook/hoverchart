@@ -55,6 +55,7 @@ import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 import { checkPositionJitter } from './utils/positionUtils';
 import { throttle } from './utils/unifiedPerformanceUtils'; // Unified throttle utility
 import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkScheduler';
+import { resetGlobalTextAtlas } from './utils/textAtlas';
 
 import { signInUser } from './services/authService';
 import { toggleTaskExpansion, repositionAllTasks } from './services/repoContainerService';
@@ -545,6 +546,7 @@ const existingIdsRef = useRef(new Set());
       useObjectsStore.getState().resetObjects();
       useConnectionStore.getState().resetConnections();
       useSpatialManagerStore.getState().resetSpatialManager();
+      resetGlobalTextAtlas(); // Release the previous space's text atlas + worker
       existingIdsRef.current.clear(); // Reset persistent ID Set for new space
     }
     previousSpaceIdRef.current = effectiveSpaceId;

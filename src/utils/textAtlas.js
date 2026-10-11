@@ -535,6 +535,37 @@ function isOffscreenCanvasTextSupported() {
 // ---------------------------------------------------------------------------
 
 /**
+ * How long a single worker `renderBatch` call may take before it is considered
+ * hung.  A wedged worker previously left `_flushing` true forever and the page
+ * frozen; the timeout converts that into a recoverable error.
+ */
+const WORKER_RENDER_TIMEOUT_MS = 10000;
+
+/** Consecutive worker failures tolerated before switching to the sync atlas. */
+const WORKER_MAX_RETRIES = 2;
+
+/**
+ * Race a promise against a timeout so a hung worker cannot freeze the app.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @param {string} label
+ * @returns {Promise<T>}
+ */
+function _withTimeout(promise, ms, label) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== null) clearTimeout(timer);
+  });
+}
+
+/**
  * Drop-in replacement for MultiPageTextAtlas that renders text on
  * OffscreenCanvas inside a Web Worker.
  *
@@ -557,10 +588,26 @@ class WorkerMultiPageTextAtlas {
 
     /** Pending addText requests waiting for the next flush */
     this._pendingQueue = [];
+
+    /** Keys currently sitting in _pendingQueue (enqueue dedupe) */
+    this._queuedKeys = new Set();
+
+    /**
+     * Keys the worker refused to render (page exhausted / too large / errored
+     * past the retry budget).  Negative-cached so components that re-request
+     * them during a re-render do NOT re-queue forever — the exact condition
+     * that previously produced an infinite render → flush → bump loop.
+     */
+    this._skipped = new Set();
+
     this._flushScheduled = false;
     this._flushing = false;
     this._version = 0;
     this._maxGPUSizeForwarded = false;
+    this._workerErrorCount = 0;
+
+    /** Set once this instance has been disposed (reset / sync fallback). */
+    this._disposed = false;
 
     // Ensure page 0 exists with a placeholder texture
     this._ensurePage(0);
@@ -580,6 +627,14 @@ class WorkerMultiPageTextAtlas {
     const key = this._getKey(text, style);
     if (this.entries.has(key)) return this.entries.get(key);
 
+    // Permanently unrenderable (negative cache) — never queue again.
+    if (this._skipped.has(key)) return null;
+
+    // Already queued for the next flush — avoid unbounded queue growth when a
+    // component re-renders many times before the worker responds.
+    if (this._queuedKeys.has(key)) return null;
+
+    this._queuedKeys.add(key);
     this._pendingQueue.push({ text, style, key });
     this._scheduleFlush();
     return null;
@@ -611,6 +666,7 @@ class WorkerMultiPageTextAtlas {
   }
 
   dispose() {
+    this._disposed = true;
     for (const tex of this._pageTextures) {
       if (tex.image && typeof tex.image.close === 'function') tex.image.close();
       tex.dispose();
@@ -618,6 +674,8 @@ class WorkerMultiPageTextAtlas {
     this._pageTextures = [];
     this.entries.clear();
     this._pendingQueue = [];
+    this._queuedKeys.clear();
+    this._skipped.clear();
     import('../workers/textAtlasWorkerClient.js').then(
       ({ terminateTextAtlasWorker }) => terminateTextAtlasWorker()
     ).catch(() => {});
@@ -641,13 +699,14 @@ class WorkerMultiPageTextAtlas {
   }
 
   _scheduleFlush() {
-    if (this._flushScheduled) return;
+    if (this._flushScheduled || this._disposed) return;
     this._flushScheduled = true;
     requestAnimationFrame(() => this._flush());
   }
 
   async _flush() {
     this._flushScheduled = false;
+    if (this._disposed) return;
     if (this._pendingQueue.length === 0) return;
     if (this._flushing) {
       // Already in-flight — re-schedule so the new items get sent next frame
@@ -658,10 +717,17 @@ class WorkerMultiPageTextAtlas {
 
     // Grab and deduplicate the queue
     const raw = this._pendingQueue.splice(0);
+    this._queuedKeys.clear();
     const seen = new Set();
     const requests = [];
     for (const req of raw) {
-      if (this.entries.has(req.key) || seen.has(req.key)) continue;
+      if (
+        this.entries.has(req.key) ||
+        this._skipped.has(req.key) ||
+        seen.has(req.key)
+      ) {
+        continue;
+      }
       seen.add(req.key);
       requests.push(req);
     }
@@ -670,6 +736,10 @@ class WorkerMultiPageTextAtlas {
       this._flushing = false;
       return;
     }
+
+    // Map key → request so rendered entries can retain their source text/style
+    // (needed by the synchronous fallback to reconstruct the atlas).
+    const requestByKey = new Map(requests.map((r) => [r.key, r]));
 
     try {
       const { getTextAtlasWorker } = await import('../workers/textAtlasWorkerClient.js');
@@ -681,9 +751,18 @@ class WorkerMultiPageTextAtlas {
         this._maxGPUSizeForwarded = true;
       }
 
-      const result = await worker.renderBatch(
-        requests.map(r => ({ text: r.text, style: r.style }))
+      if (this._disposed) return;
+
+      const result = await _withTimeout(
+        worker.renderBatch(requests.map(r => ({ text: r.text, style: r.style }))),
+        WORKER_RENDER_TIMEOUT_MS,
+        'text atlas worker renderBatch'
       );
+
+      if (this._disposed) return;
+
+      // Any successful round-trip clears the consecutive-error counter.
+      this._workerErrorCount = 0;
 
       // Ensure page textures exist for all pages the worker reports
       this._ensurePage(result.pageCount - 1);
@@ -701,30 +780,76 @@ class WorkerMultiPageTextAtlas {
         for (const entry of result.allEntries) {
           this._ensurePage(entry.pageIndex);
           const tex = this._pageTextures[entry.pageIndex];
-          this.entries.set(entry.key, { ...entry, texture: tex });
+          const prev = this.entries.get(entry.key);
+          this.entries.set(entry.key, {
+            ...entry,
+            texture: tex,
+            text: prev?.text,
+            style: prev?.style,
+          });
         }
       }
 
       // Add newly rendered entries to the cache
+      const returnedKeys = new Set();
+      let addedAny = false;
       for (const entry of result.entries) {
-        if (!this.entries.has(entry.key)) {
-          this._ensurePage(entry.pageIndex);
-          const tex = this._pageTextures[entry.pageIndex];
-          this.entries.set(entry.key, { ...entry, texture: tex });
+        returnedKeys.add(entry.key);
+        this._ensurePage(entry.pageIndex);
+        const tex = this._pageTextures[entry.pageIndex];
+        if (!this.entries.has(entry.key)) addedAny = true;
+        const req = requestByKey.get(entry.key);
+        this.entries.set(entry.key, {
+          ...entry,
+          texture: tex,
+          text: req?.text,
+          style: req?.style,
+        });
+      }
+
+      // Negative-cache every requested key the worker did not return.  This is
+      // the crucial guard that breaks the render → flush → bump loop: without
+      // it, an unrenderable key is re-queued by every re-render forever.
+      for (const r of requests) {
+        if (!returnedKeys.has(r.key) && !this.entries.has(r.key)) {
+          this._skipped.add(r.key);
         }
       }
 
-      this._version++;
-
-      // Notify React via the Zustand store so consumers re-render
-      useTextAtlasStore.getState().bumpVersion();
-
+      // Only notify React when something actually changed.  Bumping on a
+      // no-op flush (all keys skipped) is what drove the infinite loop.
+      if (addedAny || result.bitmaps.length > 0) {
+        this._version++;
+        useTextAtlasStore.getState().bumpVersion();
+      }
     } catch (err) {
-      console.warn('[WorkerMultiPageTextAtlas] Worker error, falling back to sync atlas:', err);
-      _switchToSyncAtlas(requests);
+      console.warn('[WorkerMultiPageTextAtlas] Worker error:', err);
+      this._workerErrorCount++;
+
+      if (this._workerErrorCount >= WORKER_MAX_RETRIES) {
+        // Give up on the worker and switch to the synchronous atlas.
+        _switchToSyncAtlas(requests, this);
+      } else {
+        // Recreate the worker (the old one may be wedged/terminated) and
+        // re-queue the failed requests for another attempt.  Terminate before
+        // re-scheduling so the next flush cannot pick up the wedged proxy.
+        for (const r of requests) {
+          if (!this.entries.has(r.key) && !this._skipped.has(r.key)) {
+            if (!this._queuedKeys.has(r.key)) this._queuedKeys.add(r.key);
+            this._pendingQueue.push(r);
+          }
+        }
+        try {
+          const { terminateTextAtlasWorker } = await import(
+            '../workers/textAtlasWorkerClient.js'
+          );
+          terminateTextAtlasWorker();
+        } catch { /* ignore */ }
+        this._maxGPUSizeForwarded = false;
+      }
     } finally {
       this._flushing = false;
-      if (this._pendingQueue.length > 0) {
+      if (!this._disposed && this._pendingQueue.length > 0) {
         this._scheduleFlush();
       }
     }
@@ -734,27 +859,37 @@ class WorkerMultiPageTextAtlas {
 /**
  * Emergency fallback: replace the global atlas with the synchronous
  * MultiPageTextAtlas and re-add any pending requests.
+ *
+ * The failed worker atlas is marked disposed before being torn down, so its
+ * in-flight `_flush` cannot re-schedule itself — previously this churned by
+ * recreating the worker on every failed flush.  Consumers observe the swap
+ * because they read `getGlobalTextAtlas()` on each render and are re-rendered
+ * by the version bump below (they then re-add their own text to the sync atlas).
+ *
+ * @param {Array<{text:string, style:Object}>} pendingRequests
+ * @param {Object|null} failedAtlas - the worker atlas that threw
  */
-function _switchToSyncAtlas(pendingRequests = []) {
-  const oldAtlas = globalAtlas;
-  globalAtlas = new MultiPageTextAtlas({ padding: 4 });
+function _switchToSyncAtlas(pendingRequests = [], failedAtlas = null) {
+  // Already fell back (global is a sync atlas) — do not churn.
+  if (globalAtlas && !(globalAtlas instanceof WorkerMultiPageTextAtlas)) {
+    return;
+  }
 
-  // Re-add previously cached entries (sync draw)
-  if (oldAtlas && oldAtlas.entries) {
-    for (const [, entry] of oldAtlas.entries) {
-      if (entry.text && entry.style) {
-        globalAtlas.addText(entry.text, entry.style);
-      }
+  const oldAtlas = failedAtlas || globalAtlas;
+  const syncAtlas = new MultiPageTextAtlas({ padding: 4 });
+
+  // Add the requests that triggered the error first (cheap; components will
+  // re-populate the rest on their next render).
+  for (const req of pendingRequests) {
+    if (req && req.text != null && req.style != null) {
+      syncAtlas.addText(req.text, req.style);
     }
   }
+  syncAtlas.updateTexture();
 
-  // Add the requests that triggered the error
-  for (const req of pendingRequests) {
-    globalAtlas.addText(req.text, req.style);
-  }
-  globalAtlas.updateTexture();
+  globalAtlas = syncAtlas;
 
-  if (oldAtlas && typeof oldAtlas.dispose === 'function') {
+  if (oldAtlas && oldAtlas !== syncAtlas && typeof oldAtlas.dispose === 'function') {
     oldAtlas.dispose();
   }
 

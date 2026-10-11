@@ -112,7 +112,9 @@ const InstancedAtlasText = ({
   scale = 0.45,
   depthTest = true,
 }) => {
-  const atlas = useMemo(() => getGlobalTextAtlas(), []);
+  // Read the current global atlas each render so a reset / sync-fallback swap
+  // propagates on the next atlasVersion bump (see textAtlasStore).
+  const atlas = getGlobalTextAtlas();
   const { gl } = useThree();
 
   // Subscribe to atlas version so this component re-renders when the worker

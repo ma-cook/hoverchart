@@ -89,8 +89,10 @@ const AtlasTextSprite = ({
   const meshRef = useRef();
   const lastUpdateTimeRef = useRef(0);
 
-  // Get shared atlas instance
-  const atlas = useMemo(() => getGlobalTextAtlas(), []);
+  // Get the current global atlas.  Read (not memoized) so that a reset or a
+  // sync-fallback swap propagates to this component on the next version bump —
+  // a one-shot capture would keep pointing at the disposed instance.
+  const atlas = getGlobalTextAtlas();
 
   // Subscribe to atlas version so this component re-renders when the worker
   // delivers rendered text bitmaps (the first addText call returns null;
