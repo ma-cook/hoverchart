@@ -118,6 +118,7 @@ const ObjectsRenderer = React.memo(({
   useLOD,
   onCodeToggle,
 }) => {
+  importPerf.begin('RX-objectsTree');
   const { camera } = useThree();
   // The progressive-mount pump's stable closure is captured on FIRST render,
   // so it must read the current camera through a ref (R3F can swap the
@@ -1291,6 +1292,8 @@ const [mountedVersion, setMountedVersion] = useState(0);
     unmodifiedCubeIds,
     onCodeToggle,
   ]);
+
+  importPerf.end('RX-objectsTree');
 
   return (
     <>

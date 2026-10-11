@@ -142,6 +142,10 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   const needsFullUpdateRef = useRef(true);
   const lastPositionsRef = useRef(new Map()); // Track last known positions to detect changes
   const visibilityRef = useRef(new Map()); // Track visibility state per cube
+  // Count of leading filtered cubes whose transform data has already been
+  // scanned and written.  Lets an append-only frame skip the processed prefix
+  // and touch only the new tail (O(appended) instead of O(N)).
+  const processedCountRef = useRef(0);
   
   // Get camera for frustum culling
   const { camera, size } = useThree();
@@ -422,14 +426,26 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     // -------------------------------------------------------------------------
     const count = filteredCubes.length;
 
+    // An append-only frame (bulk import streaming, no drag, culling off)
+    // cannot have changed any already-processed cube, so skip the prefix and
+    // scan only the appended tail.  This turns the per-frame cost from O(N)
+    // into O(appended) and the whole mount from O(N²) into O(N).
+    const appendOnly =
+      bulkImportState.active &&
+      !hasActiveTransforms &&
+      !needsInitialSetup &&
+      !enableCulling &&
+      processedCountRef.current <= count;
+    const scanFrom = appendOnly ? processedCountRef.current : 0;
+
     if (isWasmReady()) {
       _ensureCubeWasmBuffers(count);
 
-      // PERF: track the FIRST dirty cube index so only the changed tail/range
-      // is copied into the GPU attributes (partial updateRange upload), not
-      // all N×12 edges every frame.
+      // PERF: track the FIRST dirty cube index so only the changed range is
+      // passed to the wasm kernel (O(dirty) compute, not O(N)) and only that
+      // slice is copied into the GPU attributes (partial updateRange upload).
       let minDirty = needsInitialSetup ? 0 : Infinity;
-      for (let i = 0; i < count; i++) {
+      for (let i = scanFrom; i < count; i++) {
         const cube = filteredCubes[i];
         const cubeId = cube.id?.toString();
         const realtimeTransform = cubeTransformMap.get(cubeId);
@@ -472,22 +488,23 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       }
 
       if (minDirty !== Infinity) {
+        // Feed the kernel ONLY the dirty range so its cost is O(dirty), not
+        // O(N): the scratch output then starts at the first dirty cube.
         fillEdgeBuffers(
-          _cubeWasmPositions.subarray(0, count * 3),
-          _cubeWasmScales.subarray(0, count * 3),
-          _cubeWasmColors.subarray(0, count * 3),
-          _cubeWasmVisible.subarray(0, count),
+          _cubeWasmPositions.subarray(minDirty * 3, count * 3),
+          _cubeWasmScales.subarray(minDirty * 3, count * 3),
+          _cubeWasmColors.subarray(minDirty * 3, count * 3),
+          _cubeWasmVisible.subarray(minDirty, count),
           CUBE_TEMPLATE_START,
           CUBE_TEMPLATE_END,
           EDGES_PER_CUBE,
         );
 
         const startF = minDirty * EDGES_PER_CUBE * 3;
-        const endF = count * EDGES_PER_CUBE * 3;
-        const lenF = endF - startF;
-        instanceStart.array.set(getScratchStartView(endF).subarray(startF), startF);
-        instanceEnd.array.set(getScratchEndView(endF).subarray(startF), startF);
-        instanceColor.array.set(getScratchColorView(endF).subarray(startF), startF);
+        const lenF = (count - minDirty) * EDGES_PER_CUBE * 3;
+        instanceStart.array.set(getScratchStartView(lenF), startF);
+        instanceEnd.array.set(getScratchEndView(lenF), startF);
+        instanceColor.array.set(getScratchColorView(lenF), startF);
         applyUpdateRange(instanceStart, startF, lenF);
         applyUpdateRange(instanceEnd, startF, lenF);
         applyUpdateRange(instanceColor, startF, lenF);
@@ -497,7 +514,8 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       // -----------------------------------------------------------------------
       // JS fallback: per-cube matrix math (existing implementation)
       // -----------------------------------------------------------------------
-      filteredCubes.forEach((cube, cubeIndex) => {
+      for (let cubeIndex = scanFrom; cubeIndex < filteredCubes.length; cubeIndex++) {
+        const cube = filteredCubes[cubeIndex];
         const cubeId = cube.id?.toString();
 
         const realtimeTransform = cubeTransformMap.get(cubeId);
@@ -541,8 +559,9 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
           });
           needsUpdate = true;
         }
-      });
+      }
     }
+    processedCountRef.current = count;
 
     if (needsUpdate) {
       // Instance matrices were already set to identity once per mesh

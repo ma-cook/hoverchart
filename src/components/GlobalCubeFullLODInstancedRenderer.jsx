@@ -36,6 +36,17 @@ const ZERO_SCALE_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
 // full capacity-sized instanceMatrix re-upload is coalesced to ~4Hz.
 const INSTANCE_UPLOAD_COALESCE_MS = 250;
 
+// True when `obj` has at least one own key.  Avoids `Object.keys(obj).length`,
+// which allocates a key array on every call — this helper runs per-cube on the
+// hot instanced-filter path, so the allocation churn mattered at scale.
+function hasKeys(obj) {
+  if (!obj) return false;
+  for (const _k in obj) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Determines whether a cube is "unmodified" — i.e. has no user customisation
  * beyond what the markdownDiagramService set at creation time.
@@ -59,19 +70,14 @@ export function isCubeUnmodified(cubeId, cubesMap, objectHeaderText, objectData)
   // Check the object's own stored data for face colors/texts before falling
   // back to cubeStore.  On page load the cubeStore is empty for cubes that
   // were never selected, so the objects-array data is the only source of truth.
-  if (objectData?.faceColors && Object.keys(objectData.faceColors).length > 0) return false;
-  if (objectData?.faceTexts && Object.keys(objectData.faceTexts).length > 0) return false;
+  if (hasKeys(objectData?.faceColors)) return false;
+  if (hasKeys(objectData?.faceTexts)) return false;
 
   const state = cubesMap?.get(cubeId?.toString());
   if (!state) return true; // No store entry yet = freshly loaded = unmodified
 
-  const hasFaceColors =
-    state.faceColors && Object.keys(state.faceColors).length > 0;
-  const hasFaceTexts =
-    state.faceTexts && Object.keys(state.faceTexts).length > 0;
-
   // headerText alone does NOT disqualify — see named-cube fast path above.
-  return !hasFaceColors && !hasFaceTexts;
+  return !hasKeys(state.faceColors) && !hasKeys(state.faceTexts);
 }
 
 /**
