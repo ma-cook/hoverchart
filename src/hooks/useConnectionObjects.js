@@ -2,6 +2,26 @@ import { useMemo } from 'react';
 import { shallow } from 'zustand/shallow';
 import useObjectsStore from '../stores/objectsStore';
 
+// PERFORMANCE: O(1) object lookup by string id, rebuilt only when the objects
+// array reference changes. Mirrors the getObjectById pattern in objectsStore,
+// but keyed by String(id) to preserve the existing toString-based matching
+// (mixed numeric/string ids). Previously each individual Connection scanned the
+// entire objects array twice per store notification (O(K*N) per flush).
+let _lastObjectsByIdRef = null;
+let _objectsByStringIdCache = new Map();
+
+const getObjectByStringId = (state, id) => {
+  if (!state?.objects) return null;
+  if (state.objects !== _lastObjectsByIdRef) {
+    _lastObjectsByIdRef = state.objects;
+    _objectsByStringIdCache = new Map();
+    for (const obj of state.objects) {
+      if (obj?.id != null) _objectsByStringIdCache.set(String(obj.id), obj);
+    }
+  }
+  return _objectsByStringIdCache.get(String(id)) || null;
+};
+
 // Module-level equality — avoids re-creating identical comparator per render per connection
 const objectPositionEqual = (a, b) => {
   if (a === b) return true;
@@ -42,11 +62,11 @@ export const useConnectionObjects = (connection) => {
     }
 
     const startObject = startObjectId
-      ? objects.find((obj) => obj.id.toString() === startObjectId)
+      ? getObjectByStringId({ objects }, startObjectId)
       : null;
 
     const endObject = endObjectId
-      ? objects.find((obj) => obj.id.toString() === endObjectId)
+      ? getObjectByStringId({ objects }, endObjectId)
       : null;
 
     // For pathfinding, we need all objects for intersection testing
@@ -99,17 +119,13 @@ export const useConnectionObjectPositions = (startObjectId, endObjectId) => {
   // The shallow comparison will compare the object's properties
   const startObject = useObjectsStore((state) => {
     if (!startObjectId || !state.objects) return null;
-    return state.objects.find(
-      (obj) => obj.id?.toString() === startObjectId.toString()
-    ) || null;
+    return getObjectByStringId(state, startObjectId);
   }, objectPositionEqual);
 
   // Select ONLY the end object with custom equality checking
   const endObject = useObjectsStore((state) => {
     if (!endObjectId || !state.objects) return null;
-    return state.objects.find(
-      (obj) => obj.id?.toString() === endObjectId.toString()
-    ) || null;
+    return getObjectByStringId(state, endObjectId);
   }, objectPositionEqual);
 
   return {

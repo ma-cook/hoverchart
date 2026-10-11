@@ -429,16 +429,12 @@ export const calculateFacePosition = (indicator, objects) => {
             NUMERIC_FACE_RE.test(indicator.face)
           ) {
             const faceIndex = parseInt(indicator.face);
-            console.warn(
-              `⚠️ Numeric face (${faceIndex}) found on ${indicator.type} - this might be a dodecahedron misclassified as cube`
-            );
-
+            // PERF: no logging here — this is a per-connection hot path
+            // (categorization, arrowheads, text labels, precompute) and could
+            // otherwise emit hundreds of thousands of warnings.
             if (faceIndex >= 0 && faceIndex <= 5) {
               cubeFace = _NUMERIC_TO_CUBE_FACE[faceIndex];
             } else {
-              console.warn(
-                `⚠️ Numeric face ${faceIndex} out of range for cube (0-5), using 'front'`
-              );
               cubeFace = 'front';
             }
           }
@@ -464,14 +460,7 @@ export const calculateFacePosition = (indicator, objects) => {
               faceOffset = tempOffsetVec.set(-objectSize * tempWorldScale.x, 0, 0);
               break;
             default:
-              console.warn(
-                '⚠️ Unknown face type, using center position:',
-                cubeFace,
-                'Original face:',
-                indicator.face,
-                'Type:',
-                indicator.type
-              );
+              // PERF: silent fallback (see note above on warn spam in this hot path).
               faceOffset = tempOffsetVec.set(0, 0, 0);
           }
 
