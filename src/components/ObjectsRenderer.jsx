@@ -427,6 +427,30 @@ const [mountedVersion, setMountedVersion] = useState(0);
       }
     }
 
+    // Retry relationships deferred in an EARLIER batch.  With per-batch
+    // seeding a child can be stamped before its parent's batch mounts, so its
+    // `parentNodeId` was unresolvable then; once a later batch populates
+    // nodeIdMap, re-resolve those children here.  (The old full-population seed
+    // got this for free by re-seeding the entire array every time.)
+    if (pending.size > 0) {
+      const objectById = idToObjectRef.current;
+      for (const childId of pending) {
+        const child = objectById.get(childId);
+        if (!child) { pending.delete(childId); continue; }
+        const cmd = child.merfolkData;
+        const parentObjectId = cmd?.parentNodeId ? nodeIdMap.get(cmd.parentNodeId) : undefined;
+        if (!parentObjectId) continue; // parent object still not mounted
+        if (
+          parentObjectId !== childId &&
+          existingChildParent.get(childId) !== parentObjectId
+        ) {
+          relationships.push({ parentId: parentObjectId, childId });
+        }
+        pending.delete(childId);
+        seeded.add(childId);
+      }
+    }
+
     if (parentIdList.length > 0 || relationships.length > 0) {
       st.applyLODBatch({ parents: parentIdList, relationships });
     }
@@ -451,10 +475,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
   // Shared guard/ref for the synchronous LOD + hierarchy seed.  Set right
   // before the mount effect commits any batch, so the commit that first paints
   // a batch already carries distance-correct levels and a populated hierarchy.
-  const lastSeedCountRef = useRef(0);
-
   const seedLevelsAndHierarchy = (objs) => {
-    lastSeedCountRef.current = objs.length;
     importPerf.begin('ET-seedHier');
     seedParentChildRelationships(objs);
     importPerf.end('ET-seedHier');
@@ -555,33 +576,16 @@ const [mountedVersion, setMountedVersion] = useState(0);
     }
     if (structureChanged) setMountedVersion((v) => v + 1);
 
-    // Stamp the hierarchy + LOD levels synchronously with the store sync,
-    // BEFORE the progressive-mount effects below commit any batch.  A separate
-    // post-commit effect (the old Fix 1a) let the first batches paint with an
-    // empty hierarchy/level map — every renderer falls back to MEDIUM/FULL for
-    // unclassified/unstamped ids, so the whole space drew at the wrong detail.
-    //
-    // RATE FIX: this now runs DURING a bulk import too (it is no longer gated on
-    // !bulkImportState.active).  seedLevelsAndHierarchy is incremental (only
-    // objects not yet stamped are processed — see seedLodLevels /
-    // seedParentChildRelationships) and applyLODBatch coalesces its store write
-    // to one notification per frame, so per-batch cost is O(delta).  Gating it
-    // off during import left every streamed object unstamped until the gate
-    // dropped, at which point LODManager computed a diff for the ENTIRE
-    // population and committed it in one batch — the multi-second settle freeze
-    // (mass <Cube> unmount + every Global* renderer rebuilding at once).
-    // Guarded by count growth so a static camera re-seeds at most once per flush.
-    if (useLODStore.getState().lodEnabled && cameraRef.current) {
-      if (objects.length !== lastSeedCountRef.current) {
-        seedLevelsAndHierarchy(objects);
-      }
-    }
+    // LOD levels + hierarchy are stamped per mount batch instead (see the
+    // seedLevelsAndHierarchy calls in the progressive pump and the
+    // instant/first-batch mount paths), so a large import never pays a
+    // one-shot O(population) seed in this effect — bounding each frame's
+    // seed work to the batch size.
     importPerf.end('ET-mountSync');
 
     // NOTE: previously this component synced objectsRef in a separate tiny
     // effect; merged here so there is exactly one owner of store-array
     // synchronization.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- seedLevelsAndHierarchy is a stable-per-render closure over refs; only `objects` should re-run this sync
   }, [objects]);
 
   // Keep refs in sync
@@ -716,25 +720,13 @@ const [mountedVersion, setMountedVersion] = useState(0);
           return;
         }
 
-        // FIX 5 (streaming): if the store pushed more objects since the last
-        // seed, stamp their hierarchy + LOD levels synchronously before this
-        // batch commits — otherwise newly-streamed-in objects paint at the
-        // wrong detail.  Runs during a bulk import too (see the ET-mountSync
-        // effect above): the seed is incremental and the store write is
-        // coalesced, so streaming never leaves objects unstamped and the
-        // import-settle pass has nothing mass to correct.
-        const currentObjs = objectsRef.current;
-        if (
-          useLODStore.getState().lodEnabled &&
-          cameraRef.current &&
-          currentObjs.length !== lastSeedCountRef.current
-        ) {
-          seedLevelsAndHierarchy(currentObjs);
-        }
-
         const objectById = idToObjectRef.current;
         let added = 0;
         let head = pendingHeadRef.current;
+        // Objects mounted in THIS batch.  LOD levels + hierarchy for exactly
+        // these are stamped below before the commit, so a large import never
+        // pays a one-shot O(population) seed — each frame seeds O(budget).
+        const batchObjs = [];
         importPerf.begin('mountBatch');
         while (head < pending.length && added < budget) {
           const id = pending[head];
@@ -747,6 +739,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
           const obj = objectById.get(id);
           if (obj) {
             mountObjectInternal(obj);
+            batchObjs.push(obj);
             added++;
           }
         }
@@ -765,10 +758,12 @@ const [mountedVersion, setMountedVersion] = useState(0);
             settleTimerRef.current = null;
           }
           lastMountActivityRef.current = Date.now();
-          // LOD levels + hierarchy were stamped synchronously at the top of
-          // this pump iteration (FIX 5) when the population grew, so the
-          // commit triggered by this version bump already paints every mounted
-          // object at its real detail level.
+          // Stamp LOD levels + hierarchy for just this batch before the commit
+          // so the version bump below paints the newly-mounted objects at their
+          // real detail level (O(budget), never O(population)).
+          if (useLODStore.getState().lodEnabled && cameraRef.current) {
+            seedLevelsAndHierarchy(batchObjs);
+          }
           setMountedVersion((v) => v + 1);
           importPerf.mark(`pump v${mountedVersion + 1}`);
           // Report progress to the store (throttled)
@@ -887,14 +882,19 @@ const [mountedVersion, setMountedVersion] = useState(0);
       objectsRef.current.length <= PROGRESSIVE_THRESHOLD
     ) {
       const objectById = idToObjectRef.current;
+      const batchObjs = [];
       for (const id of toAdd) {
         const obj = objectById.get(id);
         if (obj) {
           mountObjectInternal(obj);
+          batchObjs.push(obj);
         }
       }
-      // LOD levels + hierarchy were stamped synchronously in the store-sync
-      // effect (FIX 5) before this instant-mount commit.
+      // Stamp LOD levels + hierarchy for just this batch before the commit so
+      // the first paint carries real detail (O(batch), not O(population)).
+      if (useLODStore.getState().lodEnabled && cameraRef.current) {
+        seedLevelsAndHierarchy(batchObjs);
+      }
       setMountedVersion((v) => v + 1);
       // FIX (gate settle): the instant-mount path has no progressive pump to
       // release the bulk-import gate, so release it here explicitly.  With
@@ -919,11 +919,16 @@ const [mountedVersion, setMountedVersion] = useState(0);
       const firstBatch = pendingRef.current.splice(0, getProgressiveBudget());
       for (const id of firstBatch) pendingSet.delete(id);
       const objectById = idToObjectRef.current;
+      const batchObjs = [];
       for (const id of firstBatch) {
         const obj = objectById.get(id);
         if (obj) {
           mountObjectInternal(obj);
+          batchObjs.push(obj);
         }
+      }
+      if (useLODStore.getState().lodEnabled && cameraRef.current) {
+        seedLevelsAndHierarchy(batchObjs);
       }
       setMountedVersion((v) => v + 1);
       // Immediately report that progressive mounting has started
