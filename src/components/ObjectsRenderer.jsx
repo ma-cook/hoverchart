@@ -57,6 +57,14 @@ function getProgressiveBudget() {
 const PROGRESSIVE_THRESHOLD = 40;
 
 /**
+ * Net object-array growth (in one store flush) that counts as a bulk import and
+ * pre-asserts the deferral gate from a layout effect — see the early-gate
+ * effect below.  Kept small (the progressive mount budget) so any meaningful
+ * burst arms it, while single/few-object edits stay on the normal path.
+ */
+const BULK_IMPORT_GATE_GROWTH = 24;
+
+/**
  * How long the mount pump must be idle before the bulk-import deferral gate
  * (bulkImportState.active) is released.  During a streaming import the pending
  * queue drains transiently between store flushes; releasing the gate each time
@@ -586,6 +594,29 @@ const [mountedVersion, setMountedVersion] = useState(0);
     // NOTE: previously this component synced objectsRef in a separate tiny
     // effect; merged here so there is exactly one owner of store-array
     // synchronization.
+  }, [objects]);
+
+  // ─── Early bulk-import gate ─────────────────────────────────────────
+  // LODManager computes LOD inside useFrame (rAF), which can fire BEFORE this
+  // component's passive effects assert beginBulkImport().  When a large batch
+  // of objects lands, that race let LODManager run a full-population LOD pass
+  // (O(N), ~4s for 2.7k objects) at the very start of the import — the observed
+  // freeze.  A layout effect runs synchronously during the commit, before paint
+  // and before the next rAF, so the gate is already held when LODManager's
+  // frame runs.  A debounced fallback release guarantees the gate can never get
+  // stuck if no mount batch follows.
+  const prevObjectsLenRef = useRef(0);
+  useLayoutEffect(() => {
+    const grown = objects.length - prevObjectsLenRef.current;
+    prevObjectsLenRef.current = objects.length;
+    if (grown < BULK_IMPORT_GATE_GROWTH || bulkImportState.active) return;
+    beginBulkImport();
+    lastMountActivityRef.current = Date.now();
+    if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = null;
+      endBulkImportIfIdle(0);
+    }, SETTLE_IDLE_MS + 1500);
   }, [objects]);
 
   // Keep refs in sync
