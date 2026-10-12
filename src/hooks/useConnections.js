@@ -12,6 +12,7 @@ import useConnectionStore from '../stores/connectionStore';
 const selectConnectionHookState = (state) => ({
   connections: state.connections,
   addConnection: state.addConnection,
+  bulkAddConnections: state.bulkAddConnections,
   updateConnection: state.updateConnection,
   removeConnection: state.removeConnection,
   getConnection: state.getConnection,
@@ -30,7 +31,7 @@ import useSpatialManagerStore from '../stores/spatialManagerStore';
  */
 export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
   // PERFORMANCE OPTIMIZATION: Module-level selector + shallow equality
-  const { connections, addConnection, updateConnection, removeConnection, getConnection } = 
+  const { connections, addConnection, bulkAddConnections, updateConnection, removeConnection, getConnection } = 
     useConnectionStore(selectConnectionHookState, shallow);
 
   // Track cell changes via the cheap monotonic version counter
@@ -48,6 +49,26 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
 
   // Track which connections belong to which cells for spatial unloading
   const connectionsByCellRef = useRef(new Map()); // cellId -> Set of connectionIds
+
+  // Buffer polled "added" connections so a burst results in ONE store write +
+  // render instead of one per connection. Per-connection writes rebuild the
+  // connectionsByObjectId map each time (O(n)), making a bulk load O(n^2).
+  const pendingAddedConnectionsRef = useRef([]);
+  const addFlushScheduledRef = useRef(false);
+
+  const flushPendingAddedConnections = useCallback(() => {
+    addFlushScheduledRef.current = false;
+    const pending = pendingAddedConnectionsRef.current;
+    if (pending.length === 0) {
+      return;
+    }
+    pendingAddedConnectionsRef.current = [];
+    if (pending.length === 1) {
+      addConnection(pending[0]);
+    } else {
+      bulkAddConnections(pending);
+    }
+  }, [addConnection, bulkAddConnections]);
 
   // Create a unique space identifier for multi-space support
   const spaceId = useMemo(() => {
@@ -170,8 +191,13 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     (event) => {
       // Handle fresh connections from Firebase immediately
       if (event && event.type === 'added' && event.connection) {
-        // Always add the connection to the store first
-        addConnection(event.connection);
+        // Buffer additions and flush once per microtask: a burst of polled
+        // connections becomes a single bulkAddConnections call.
+        pendingAddedConnectionsRef.current.push(event.connection);
+        if (!addFlushScheduledRef.current) {
+          addFlushScheduledRef.current = true;
+          queueMicrotask(flushPendingAddedConnections);
+        }
 
         // Track cell association if we have coordinates
         if (event.cellCoords) {
@@ -209,7 +235,7 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
         connectionCallback(event);
       }
     },
-    [connectionCallback, addConnection]
+    [connectionCallback, addConnection, flushPendingAddedConnections]
   );
 
   // Set up and manage connection subscriptions with performance optimizations
