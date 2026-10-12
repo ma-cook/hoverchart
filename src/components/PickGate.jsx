@@ -56,7 +56,17 @@ function PickGate({ canvasQuality }) {
       compiledRef.current = true;
       clearInterval(id);
       try {
-        gl.compile(scene, camera);
+        // compileAsync uses KHR_parallel_shader_compile to warm material
+        // programs OFF the main thread.  The previous synchronous gl.compile
+        // compiled every material in one task — the exact multi-second main-
+        // thread block (frame probe span with no open importPerf mark) it was
+        // meant to prevent on low-end iGPUs.  When the extension is missing
+        // three resolves after a normal compile, so this degrades gracefully.
+        if (typeof gl.compileAsync === 'function') {
+          gl.compileAsync(scene, camera).catch(() => { /* diagnostics only */ });
+        } else {
+          gl.compile(scene, camera);
+        }
       } catch { /* diagnostics only */ }
     }, 500);
     return () => clearInterval(id);

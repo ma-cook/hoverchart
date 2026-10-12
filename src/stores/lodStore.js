@@ -256,6 +256,10 @@ const useLODStore = create((set, get) => {
 
       if (relationships && relationships.length > 0) {
         let changed = false;
+        // Collect parents not yet present and clone parentIds ONCE after the
+        // loop.  Cloning inside the loop was O(relationships × parentIds) —
+        // quadratic on a large hierarchy (a repo scan can register 100k+ rels).
+        let newParents = null;
         for (let i = 0; i < relationships.length; i++) {
           const parentId = relationships[i].parentId;
           const childId = relationships[i].childId;
@@ -278,9 +282,14 @@ const useLODStore = create((set, get) => {
           childSet.add(childId);
           state.childParentMap.set(childId, parentId);
           if (!state.parentIds.has(parentId)) {
-            state.parentIds = new Set(state.parentIds);
-            state.parentIds.add(parentId);
+            if (newParents === null) newParents = [];
+            newParents.push(parentId);
           }
+        }
+        if (newParents !== null) {
+          state.parentIds = new Set(state.parentIds);
+          for (let i = 0; i < newParents.length; i++) state.parentIds.add(newParents[i]);
+          changed = true;
         }
         if (changed) hierDirty = true;
       }
@@ -328,6 +337,7 @@ const useLODStore = create((set, get) => {
       importPerf.begin('ST-contained');
       const state = get();
       let changed = false;
+      let newParents = null;
 
       for (const { parentId, childId } of relationships) {
         if (state.parentIds.has(parentId) && state.childParentMap.get(childId) === parentId) {
@@ -344,9 +354,15 @@ const useLODStore = create((set, get) => {
         state.parentChildMap.get(parentId).add(childId);
         state.childParentMap.set(childId, parentId);
         if (!state.parentIds.has(parentId)) {
-          state.parentIds = new Set(state.parentIds);
-          state.parentIds.add(parentId);
+          if (newParents === null) newParents = [];
+          newParents.push(parentId);
         }
+      }
+
+      if (newParents !== null) {
+        state.parentIds = new Set(state.parentIds);
+        for (let i = 0; i < newParents.length; i++) state.parentIds.add(newParents[i]);
+        changed = true;
       }
 
       if (changed) {

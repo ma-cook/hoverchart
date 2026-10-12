@@ -381,6 +381,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
     }
 
     const parentIdList = [];
+    const parentIdSeen = new Set();
     const relationships = [];
     for (let i = 0; i < objs.length; i++) {
       const obj = objs[i];
@@ -396,9 +397,10 @@ const [mountedVersion, setMountedVersion] = useState(0);
       if (
         (md.isParent === true || md.hasChildren === true) &&
         !existingParentIds.has(id) &&
-        !parentIdList.includes(id)
+        !parentIdSeen.has(id)
       ) {
         parentIdList.push(id);
+        parentIdSeen.add(id);
       }
       // Prefer the persisted node id; fall back to a direct object id for
       // older data written before parentNodeId existed.
@@ -453,8 +455,12 @@ const [mountedVersion, setMountedVersion] = useState(0);
 
   const seedLevelsAndHierarchy = (objs) => {
     lastSeedCountRef.current = objs.length;
+    importPerf.begin('ET-seedHier');
     seedParentChildRelationships(objs);
+    importPerf.end('ET-seedHier');
+    importPerf.begin('ET-seedLod');
     seedLodLevels(objs);
+    importPerf.end('ET-seedLod');
   };
 
   // ─── Persisted-hierarchy backfill ────────────────────────────────────
