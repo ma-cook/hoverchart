@@ -6,7 +6,6 @@ import useDiagramStore from '../../stores/diagramStore.js';
 import useObjectsStore from '../../stores/objectsStore.js';
 import useConnectionStore from '../../stores/connectionStore.js';
 import { api } from '../../api-client';
-import importPerf from '../../utils/importPerf';
 
 export const processMethods = {
   initializeProcessor() {
@@ -330,7 +329,6 @@ export const processMethods = {
       }
     }
 
-    importPerf.mark('processMarkdown: all objects created, starting save + communities');
     const savePromise = this.saveConnections(
       allConnectionsToSave,
       currentSpaceId,

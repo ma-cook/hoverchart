@@ -20,7 +20,6 @@ import InstancedAtlasText from './InstancedAtlasText';
 import { useCubeStore, useSpatialManagerStore } from '../stores';
 import { acquireBudget, getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 import { getCellCoordinates } from '../services/spatialPartitioning';
-import importPerf from '../utils/importPerf';
 import { beginBulkImport, endBulkImportIfIdle, bulkImportState } from '../utils/bulkImportState';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useDiagramStore from '../stores/diagramStore';
@@ -126,7 +125,6 @@ const ObjectsRenderer = React.memo(({
   useLOD,
   onCodeToggle,
 }) => {
-  importPerf.begin('RX-objectsTree');
   const { camera } = useThree();
   // The progressive-mount pump's stable closure is captured on FIRST render,
   // so it must read the current camera through a ref (R3F can swap the
@@ -484,12 +482,8 @@ const [mountedVersion, setMountedVersion] = useState(0);
   // before the mount effect commits any batch, so the commit that first paints
   // a batch already carries distance-correct levels and a populated hierarchy.
   const seedLevelsAndHierarchy = (objs) => {
-    importPerf.begin('ET-seedHier');
     seedParentChildRelationships(objs);
-    importPerf.end('ET-seedHier');
-    importPerf.begin('ET-seedLod');
     seedLodLevels(objs);
-    importPerf.end('ET-seedLod');
   };
 
   // ─── Persisted-hierarchy backfill ────────────────────────────────────
@@ -512,7 +506,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
   // updates usually mutate in place, so this is rare) and patches the
   // mounted collections' slots in place.
   useEffect(() => {
-    importPerf.begin('ET-mountSync');
     const prevIds = allIdsSetRef.current;
     const nextMap = new Map();
     const nextIds = new Set(prevIds);
@@ -589,7 +582,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
     // instant/first-batch mount paths), so a large import never pays a
     // one-shot O(population) seed in this effect — bounding each frame's
     // seed work to the batch size.
-    importPerf.end('ET-mountSync');
 
     // NOTE: previously this component synced objectsRef in a separate tiny
     // effect; merged here so there is exactly one owner of store-array
@@ -623,18 +615,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
   useEffect(() => {
     visibleObjectIdsRef.current = visibleObjectIds;
   }, [visibleObjectIds]);
-
-  // Commit-latency beacon: the pump marks `pump vN` when it queues a render
-  // for version N; this layout effect logs the instant React commits it.  The
-  // console wall-time gap between the two marks IS the per-batch render+commit
-  // duration — compare it to the freeze's longtask to name the culprit.
-  const lastCommitRef = useRef(0);
-  useLayoutEffect(() => {
-    if (mountedVersion !== lastCommitRef.current) {
-      lastCommitRef.current = mountedVersion;
-      importPerf.mark(`commit v${mountedVersion} mounted=${mountedIdsRef.current.size}`);
-    }
-  });
 
   // All store objects are mounted.  The earlier cap that only mounted objects
   // whose cell was already loaded (and the mirror store cap in objectMethods.js)
@@ -692,13 +672,11 @@ const [mountedVersion, setMountedVersion] = useState(0);
           if (Date.now() - lastSafetyScanRef.current > 1000) {
             lastSafetyScanRef.current = Date.now();
             const unmounted = [];
-            importPerf.begin('ET-safetyScan');
             for (const obj of objectsRef.current) {
               if (!mountedIdsRef.current.has(obj.id)) {
                 unmounted.push(obj.id);
               }
             }
-            importPerf.end('ET-safetyScan');
             if (unmounted.length > 0) {
               pendingRef.current = unmounted;
               pendingHeadRef.current = 0;
@@ -758,7 +736,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
         // these are stamped below before the commit, so a large import never
         // pays a one-shot O(population) seed — each frame seeds O(budget).
         const batchObjs = [];
-        importPerf.begin('mountBatch');
         while (head < pending.length && added < budget) {
           const id = pending[head];
           head++;
@@ -775,7 +752,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
           }
         }
         pendingHeadRef.current = head;
-        importPerf.end('mountBatch');
 
         if (added > 0) {
           // Signal bulk-import mode so expensive per-frame subsystems
@@ -796,7 +772,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
             seedLevelsAndHierarchy(batchObjs);
           }
           setMountedVersion((v) => v + 1);
-          importPerf.mark(`pump v${mountedVersion + 1}`);
           // Report progress to the store (throttled)
           const now = Date.now();
           const total = getMountableTotal();
@@ -848,13 +823,11 @@ const [mountedVersion, setMountedVersion] = useState(0);
     //    cost), so mounting everything is safe.
     const pendingSet = pendingSetRef.current;
     const toAdd = [];
-    importPerf.begin('ET-mountScan');
     for (const obj of objectsRef.current) {
       if (!currentMounted.has(obj.id) && !pendingSet.has(obj.id)) {
         toAdd.push(obj.id);
       }
     }
-    importPerf.end('ET-mountScan');
 
     // Nothing new to add — skip.  Before bailing, reconcile the progress
     // toast: if every mountable object is already mounted, push the final
@@ -1385,7 +1358,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
     onCodeToggle,
   ]);
 
-  importPerf.end('RX-objectsTree');
 
   return (
     <>

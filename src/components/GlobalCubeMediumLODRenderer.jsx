@@ -6,7 +6,6 @@ import { visibleAtTier } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
-import importPerf from '../utils/importPerf';
 
 const CUBE_SIZE = 5;
 
@@ -45,7 +44,6 @@ const INSTANCE_UPLOAD_COALESCE_MS = 250;
  * @param {Array} cubes - Array of ALL cube objects (filtering done internally)
  */
 const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick }) => {
-  importPerf.begin('RX-cubeMedium');
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastDataRef = useRef(new Map()); // Track last known data to detect changes
@@ -155,7 +153,6 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
     // Defer full O(N) rebuilds during camera motion.
     if (needsInitialSetup && isPickingSuppressed()) return;
 
-    importPerf.begin('FR-cubeMedium');
     hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;
     const idMap = [];
@@ -230,7 +227,6 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
       mesh.boundingSphere = null;
       needsFullUpdateRef.current = false;
     }
-    importPerf.end('FR-cubeMedium');
   });
 
   const handleClick = useCallback(
@@ -247,7 +243,6 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
   );
 
   if (capacity === 0) {
-    importPerf.abort('RX-cubeMedium');
     return null;
   }
 
@@ -260,7 +255,6 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
       onClick={handleClick}
     />
   );
-  importPerf.end('RX-cubeMedium');
   return jsx;
 });
 

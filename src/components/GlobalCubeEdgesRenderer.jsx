@@ -7,7 +7,6 @@ import { isFullDetailVisible } from '../utils/lodVisibility';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
 import { isPickingSuppressed } from './PickGate';
-import importPerf from '../utils/importPerf';
 
 extend({ LineShaderMaterial });
 
@@ -137,7 +136,6 @@ export const cubeTransformMap = new Map(); // Map<cubeId, { position: [x,y,z], s
  * @param {number} cullingThreshold - Override threshold for enabling frustum culling (default: 50)
  */
 const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, cullingThreshold = FRUSTUM_CULLING_THRESHOLD }) => {
-  importPerf.begin('RX-cubeEdges');
   const meshRef = useRef();
   const needsFullUpdateRef = useRef(true);
   const lastPositionsRef = useRef(new Map()); // Track last known positions to detect changes
@@ -414,7 +412,6 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       }
     }
 
-    importPerf.begin('FR-edgesPass');
 
     const instanceStart = geometry.getAttribute('instanceStart');
     const instanceEnd = geometry.getAttribute('instanceEnd');
@@ -583,11 +580,9 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       needsFullUpdateRef.current = false;
     }
     hasPendingAppendsRef.current = false;
-    importPerf.end('FR-edgesPass');
   });
 
   if (!geometry || capacity === 0) {
-    importPerf.abort('RX-cubeEdges');
     return null;
   }
 
@@ -600,7 +595,6 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
       renderOrder={10}
     />
   );
-  importPerf.end('RX-cubeEdges');
   return jsx;
 });
 

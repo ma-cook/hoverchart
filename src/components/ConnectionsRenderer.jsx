@@ -20,7 +20,6 @@ import {
   hasPrecomputedPathCache,
 } from '../utils/pathfindingUtils';
 import { bulkImportState } from '../utils/bulkImportState';
-import importPerf from '../utils/importPerf';
 import { calculateMidpoint } from '../utils/positionUtils';
 import { calculateFacePosition } from '../utils/facePositionUtils';
 import { saveConnection } from '../services/connectionsService';
@@ -62,13 +61,11 @@ const DistanceFilteredConnectionText = React.memo(({
     // FREEZE FIX: Skip visibility checks when main thread is lagging
     if (isFrameBudgetExhausted()) return;
     lastCheckRef.current = now;
-    importPerf.begin('FR-connText');
     
     if (!groupRef.current) return;
     
     if (!position) {
       groupRef.current.visible = false;
-      importPerf.abort('FR-connText');
       return;
     }
     
@@ -78,7 +75,6 @@ const DistanceFilteredConnectionText = React.memo(({
     const distanceSquared = dx * dx + dy * dy + dz * dz;
     
     groupRef.current.visible = distanceSquared <= maxDistanceSquared;
-    importPerf.end('FR-connText');
   });
   
   return <group ref={groupRef}>{children}</group>;
@@ -1247,9 +1243,6 @@ const ConnectionsRenderer = ({
   const prevPathfindingObjectsRef = useRef(null);
   const lastCategorizationRef = useRef({ batchedConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
   const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null, highlightedFlowPathIds: null });
-  // PROBE: throttle logging of the pathfinding-suppression fast path so it
-  // doesn't drown the ?perf console during a streaming import.
-  const lastSuppressedMarkRef = useRef(0);
 
   // NOTE: pathfindingHash was removed - it had 0.5-unit resolution which meant object moves
   // smaller than 0.5 units would never trigger cache invalidation. Since pathfindingObjects
@@ -1300,15 +1293,6 @@ const ConnectionsRenderer = ({
       const highlightedSet = highlightedFlowPathIds;
       const highlighted = [];
       const deferred = [];
-      // PROBE: confirm the gate is actually suppressing pathfinding during the
-      // streaming import (throttled — the memo re-runs per mount batch).
-      if (importPerf.enabled) {
-        const _nowMark = performance.now();
-        if (_nowMark - lastSuppressedMarkRef.current > 1000) {
-          lastSuppressedMarkRef.current = _nowMark;
-          importPerf.mark(`MK-pathCat suppressed (${(progressiveConnections || []).length} conns)`);
-        }
-      }
       for (const conn of (progressiveConnections || [])) {
         if (
           conn.id === selectedConnection ||
@@ -1374,7 +1358,6 @@ const ConnectionsRenderer = ({
     const curved = [];
     const individual = [];
 
-    importPerf.begin('RM-pathCat');
 
     // Build objectsById for face position resolution in categorization
     const catObjectsById = new Map();
@@ -1456,7 +1439,6 @@ const ConnectionsRenderer = ({
         batched.push(conn);
       }
     });
-    importPerf.end('RM-pathCat');
     
     const result = { 
       batchedConnections: batched, 
@@ -1510,14 +1492,12 @@ const ConnectionsRenderer = ({
 
       if (requests.length === 0) return;
 
-      importPerf.begin('RM-workerSerialize');
       const serializedObjects = pathfindingObjects.map(obj => ({
         id: obj.id,
         type: obj.type,
         position: obj.position,
         scale: obj.scale,
       }));
-      importPerf.end('RM-workerSerialize');
 
       // Serializing the whole object layout (above) is O(N) on the main thread
       // and results would be stale against a still-growing layout, so this path
@@ -1570,7 +1550,6 @@ const ConnectionsRenderer = ({
   // Computed once for all connections and applied to both textLabels and
   // individualConnections rendering paths.
   const faceOverrides = useMemo(() => {
-    importPerf.begin('RM-faceOverrides');
     const objectsById = new Map();
     if (objects?.length) {
       for (const obj of objects) {
@@ -1578,7 +1557,6 @@ const ConnectionsRenderer = ({
       }
     }
     const result = redistributeFaces(progressiveConnections, objectsById);
-    importPerf.end('RM-faceOverrides');
     return result;
   }, [progressiveConnections, objects]);
 
@@ -1591,7 +1569,6 @@ const ConnectionsRenderer = ({
   //      per-connection hash to pick a unique position along the line.
   const textLabels = useMemo(() => {
     // Build an objectId → object lookup for inline face position calculation
-    importPerf.begin('RM-textLabels');
     const objectsById = new Map();
     if (objects?.length) {
       for (const obj of objects) {
@@ -1640,7 +1617,6 @@ const ConnectionsRenderer = ({
         textStyle: conn.textStyle,
       };
     }).filter(Boolean);
-    importPerf.end('RM-textLabels');
     return textItems;
   }, [textConnections, objects, faceOverrides]);
 

@@ -38,10 +38,6 @@ export const wakeConnectionPolling = () => {
   });
 };
 
-// DIAG: instance tracking to catch stacked/leaked connection pollers
-if (typeof window !== 'undefined' && window.__connPollerSeq == null) window.__connPollerSeq = 0;
-const liveConnPollers = new Set();
-
 import { api } from '../api-client';
 import useConnectionStore from '../stores/connectionStore';
 import { cleanObject } from '../utils/unifiedValidationUtils';
@@ -270,11 +266,6 @@ export const subscribeToConnections = (
   // Ensure loadedCells is always an array
   const effectiveCells = Array.isArray(loadedCells) ? [...loadedCells] : [];
 
-  // DIAG
-  const instanceId = ++window.__connPollerSeq;
-  console.log(`[diag][connPoller #${instanceId}] CREATED cells=${effectiveCells.length}`, new Error().stack?.split('\n').slice(1, 4).join('\n'));
-  liveConnPollers.add(instanceId);
-
   let isActive = true;
   const pollingCache = new Map();
 
@@ -287,10 +278,6 @@ export const subscribeToConnections = (
   let pollTimer = null;
   let isHardIdle = false;
   let idleStreak = 0;
-  // DIAG (always-on): high-frequency polling detector
-  let pollsInWindow = 0;
-  let windowStartMs = 0;
-  let highRateWarnedAt = 0;
 
   const poll = async () => {
     if (!isActive || isPolling) return;
@@ -378,17 +365,6 @@ export const subscribeToConnections = (
       fetchFailed = true; // Polling error - will retry on next poll
     } finally {
       isPolling = false;
-      // DIAG (always-on): warn once per 60s if polling at a sustained high rate
-      const nowMs = performance.now();
-      if (nowMs - windowStartMs > 30000) { windowStartMs = nowMs; pollsInWindow = 0; }
-      pollsInWindow += 1;
-      if (pollsInWindow >= 12 && nowMs - highRateWarnedAt > 60000) {
-        highRateWarnedAt = nowMs;
-        console.warn(`[diag][connPoller #${instanceId}] HIGH-RATE: ${pollsInWindow} polls in <30s (changed=${anythingChanged} fetchFailed=${fetchFailed} live=${liveConnPollers.size})`, new Error().stack?.split('\n').slice(1, 3).join('\n'));
-      }
-      if (window.__POLL_DIAG) {
-        console.log(`[diag][connPoller #${instanceId}] poll changed=${anythingChanged} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${effectiveCells.length} cacheSize=${pollingCache.size} live=${liveConnPollers.size}`);
-      }
       if (anythingChanged) {
         pollDelay = POLL_INTERVAL_FAST_MS;
         idleStreak = 0;
@@ -425,15 +401,8 @@ export const subscribeToConnections = (
     }, pollDelay);
   };
 
-  let lastWakeLogMs = 0;
   const wake = () => {
     if (!isActive) return;
-    // DIAG (always-on, rate-limited): capture WHO wakes the poller
-    const wakeNow = performance.now();
-    if (wakeNow - lastWakeLogMs > 5000) {
-      lastWakeLogMs = wakeNow;
-      console.log(`[diag][connPoller #${instanceId}] WAKE`, new Error().stack?.split('\n').slice(1, 5).join('\n'));
-    }
     if (isHardIdle) {
       isHardIdle = false;
       idleStreak = 0;
@@ -467,9 +436,6 @@ export const subscribeToConnections = (
 
   // Return cleanup function
   return () => {
-    // DIAG
-    console.log(`[diag][connPoller #${instanceId}] CLEANUP live=${liveConnPollers.size}`);
-    liveConnPollers.delete(instanceId);
     isActive = false;
     connectionPollWakes.delete(wake);
     document.removeEventListener('visibilitychange', handleVisibilityChange);

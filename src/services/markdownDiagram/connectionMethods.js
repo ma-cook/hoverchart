@@ -1,5 +1,4 @@
 import { api } from '../../api-client';
-import importPerf from '../../utils/importPerf';
 import useConnectionStore from '../../stores/connectionStore';
 import { useObjectsStore, useSpatialManagerStore } from '../../stores';
 import {
@@ -382,7 +381,6 @@ export const connectionMethods = {
     const connectionStore = useConnectionStore.getState();
 
     try {
-      importPerf.mark(`saveConnections: bulkAdd begin (${allConnectionsToSave.length} conns total)`);
       const _tBulk = performance.now();
       // Only hydrate connections whose cell is currently loaded.  Connections
       // in distant cells are still persisted to the DB (allConnectionsToSave)
@@ -397,7 +395,6 @@ export const connectionMethods = {
       if (storeConnections.length > 0) {
         connectionStore.bulkAddConnections(storeConnections);
       }
-      importPerf.mark(`saveConnections: bulkAdd done in ${Math.round(performance.now() - _tBulk)}ms`);
     } catch (error) {
       console.error('Failed to bulk add connections to store:', error);
     }
@@ -497,11 +494,9 @@ export const connectionMethods = {
 
       const MAX_PAYLOAD_SIZE = 9 * 1024 * 1024;
 
-      importPerf.mark(`bulkImport: serializing ${objects.length} objects + ${connections.length} connections`);
       // Serialize once per item so chunk sizing is exact (no re-serialization).
       const serializedObjects = objects.map((o) => JSON.stringify(o));
       const serializedConnections = connections.map((c) => JSON.stringify(c));
-      importPerf.mark('bulkImport: serialization done');
       const spaceIdOverhead = JSON.stringify({
         spaceId: currentSpaceId,
         objects: [],
@@ -624,12 +619,9 @@ export const connectionMethods = {
           const i = nextChunkIdx++;
           const chunk = chunks[i];
           try {
-            importPerf.mark(`bulkImport: POST chunk ${i + 1}/${chunks.length} (${chunk.objects.length} objs, ${chunk.connections.length} conns)`);
-            const t0 = performance.now();
             const result = await postChunk(
               chunk.objects, chunk.connections, i + 1, chunks.length
             );
-            importPerf.mark(`bulkImport: chunk ${i + 1} done in ${Math.round(performance.now() - t0)}ms`);
             chunkResults[i] = result;
           } catch (error) {
             if (!firstError) firstError = { index: i, chunk, error };

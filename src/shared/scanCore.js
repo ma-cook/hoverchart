@@ -20,18 +20,12 @@
  *                      ctx collections in place, matching the in-tab behavior.
  *  - runTypeScriptAnalysis: (files, tsconfigContent) => Promise<Object|null>
  *  - preFilteredFiles: optional already-changed file list (rescan path)
- *
- * NOTE: `fetchStatsLine` is stubbed below — the underlying browser network
- * counters live in githubRepoService.js and are not part of the shared core.
  */
 import { parse } from '@babel/parser';
 import { createModuleResolver, resolveBarrelChains } from '../services/moduleResolver';
 import { computeSymbolRanges, languageFromFilePath } from '../services/symbolRanges';
 import { detectCommunitiesSync } from '../services/context/communityDetection';
-import importPerf from '../utils/importPerf';
 import { reportMemoryPressureOnce } from '../utils/memoryMonitor';
-
-const fetchStatsLine = () => '';
 
 /**
  * Map a file path to the language key the tree-sitter scanner registers, or
@@ -1205,7 +1199,6 @@ const traverseVueSource = (
  */
 export const runRepositoryScan = async (owner, repoName, options = {}) => {
   const { onProgress } = options;
-  importPerf.mark(`scan: START ${owner}/${repoName}`);
   try {
     // When a pre-filtered file list is provided (e.g. from Compare API during
     // rescan), skip the expensive recursive structure fetch entirely.
@@ -1214,7 +1207,6 @@ export const runRepositoryScan = async (owner, repoName, options = {}) => {
       throw new Error('runRepositoryScan: no repo structure provided (options.structure or options.preFilteredFiles required)');
     }
     console.log(`📁 Using ${options.preFilteredFiles ? 'pre-filtered' : 'provided'} file list: ${structure.length} files`);
-    importPerf.mark(`scan: structure done (${structure.length} files | ${fetchStatsLine()})`);
 
     // Log structure breakdown
     const shaderFiles = structure.filter(f => f.type === 'shader');
@@ -3215,7 +3207,6 @@ const pkgContent = await options.fetchFile('package.json');
     let fetchIdx = 0;
 
     let fetchedCount = 0;
-    importPerf.mark(`scan: fetching ${filesToProcess.length} files (concurrency ${Math.min(MAX_CONCURRENCY, filesToProcess.length)})`);
 
     const fetchWorker = async () => {
       while (fetchIdx < filesToProcess.length) {
@@ -3233,10 +3224,8 @@ const pkgContent = await options.fetchFile('package.json');
 
     const poolSize = Math.min(MAX_CONCURRENCY, filesToProcess.length);
     await Promise.all(Array.from({ length: poolSize }, () => fetchWorker()));
-    importPerf.mark(`scan: fetched ${fetchedCount}/${filesToProcess.length} files (${fetchStatsLine()})`);
 
     const PROCESS_YIELD_EVERY = 10;
-    importPerf.mark('scan: AST parsing starting');
     for (let idx = 0; idx < fetched.length; idx++) {
       const entry = fetched[idx];
       if (!entry) continue;
@@ -3253,7 +3242,6 @@ const pkgContent = await options.fetchFile('package.json');
         reportMemoryPressureOnce('repo scan');
       }
     }
-    importPerf.mark(`scan: AST parsing done (${fetched.length} files)`);
 
     // ── L1 Post-scan: Resolve path aliases and barrel chains ───────────────
     // Reclassify aliased imports that were misclassified as external libraries
@@ -3431,9 +3419,7 @@ const pkgContent = await options.fetchFile('package.json');
             } catch { /* ignore */ }
           }
 
-          importPerf.mark('scan: L2 TypeScript analysis starting');
           const tsAnalysis = await options.runTypeScriptAnalysis(tsSourceFiles, tsconfigForTS);
-          importPerf.mark('scan: L2 TypeScript analysis done');
           if (tsAnalysis) {
             componentPropTypes = tsAnalysis.componentPropTypes;
             hookReturnTypes = tsAnalysis.hookReturnTypes;
@@ -3649,7 +3635,6 @@ const pkgContent = await options.fetchFile('package.json');
       richTypes: tsRichTypes || new Map(),
       entryPoint: detectedEntryPoint,
     });
-    importPerf.mark(`scan: markdown generated (${merfolkResult.length} chars | ${fetchStatsLine()})`);
 
     // Debug: log the generated Merfolk markdown so we can diagnose parse issues
     console.log(`📝 Generated Merfolk markdown (${merfolkResult.length} chars):\n${merfolkResult.substring(0, 3000)}`);

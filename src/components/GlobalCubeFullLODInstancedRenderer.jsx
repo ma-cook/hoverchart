@@ -7,7 +7,6 @@ import { isFullDetailVisible } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
-import importPerf from '../utils/importPerf';
 
 const CUBE_SIZE = 5;
 
@@ -95,7 +94,6 @@ export function isCubeUnmodified(cubeId, cubesMap, objectHeaderText, objectData)
  */
 const GlobalCubeFullLODInstancedRenderer = React.memo(
   ({ cubes = [], onInstanceClick }) => {
-    importPerf.begin('RX-cubeFull');
     const meshRef = useRef();
     const needsFullUpdateRef = useRef(true);
     const lastDataRef = useRef(new Map());
@@ -227,7 +225,6 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     // Defer full O(N) rebuilds during camera motion.
     if (needsInitialSetup && isPickingSuppressed()) return;
 
-    importPerf.begin('FR-cubeFullSetup');
     hasPendingAppendsRef.current = false;
     let needsUpdate = needsInitialSetup;
     const idMap = [];
@@ -287,7 +284,6 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
         }
         needsFullUpdateRef.current = false;
       }
-      importPerf.end('FR-cubeFullSetup');
     });
 
     // Click handler — maps instanceId back to cube ID
@@ -305,7 +301,6 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
     );
 
     if (capacity === 0) {
-      importPerf.abort('RX-cubeFull');
       return null;
     }
 
@@ -318,7 +313,6 @@ const GlobalCubeFullLODInstancedRenderer = React.memo(
         onClick={handleClick}
       />
     );
-    importPerf.end('RX-cubeFull');
     return jsx;
   }
 );

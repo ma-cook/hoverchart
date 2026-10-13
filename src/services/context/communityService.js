@@ -8,7 +8,6 @@
  */
 
 import useDiagramStore from '../../stores/diagramStore';
-import importPerf from '../../utils/importPerf';
 import { detectCommunities } from './communityDetection';
 import { summarizeCommunities } from './communitySummarizer';
 
@@ -39,18 +38,14 @@ export async function detectAndStoreCommunities() {
 
   const startTime = performance.now();
 
-  importPerf.mark(`community: starting detection (${totalNodes} nodes)`);
 
   // Detect communities (async — yields periodically to keep the UI responsive)
   const assignments = await detectCommunities(graphs);
 
-  importPerf.mark(`community: detection done in ${Math.round(performance.now() - startTime)}ms`);
 
   // Generate summaries (async/cooperative — see communitySummarizer)
-  const t1 = performance.now();
   const connectionTags = store.connectionTags;
   const summaries = await summarizeCommunities(graphs, assignments, connectionTags);
-  importPerf.mark(`community: summaries done in ${Math.round(performance.now() - t1)}ms`);
 
   // Store in diagramStore
   store.setCommunities(summaries);

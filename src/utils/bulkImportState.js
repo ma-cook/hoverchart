@@ -3,8 +3,6 @@
 // connection pathfinding categorization) consult this to defer work until
 // mounting settles, instead of paying O(N) repeatedly while the scene grows.
 
-import { startCpuProfile, stopCpuProfile } from './cpuProfiler';
-
 export const bulkImportState = {
   active: false,
 };
@@ -12,9 +10,6 @@ export const bulkImportState = {
 /** Begin deferring expensive work. Safe to call redundantly. */
 export function beginBulkImport() {
   bulkImportState.active = true;
-  // Diagnostic only (no-op unless ?cpuprofile): ensure a sampling profile
-  // covers the burst even if boot-time start was skipped.
-  startCpuProfile();
 }
 
 /**
@@ -24,8 +19,6 @@ export function beginBulkImport() {
 export function endBulkImportIfIdle(pendingCount) {
   if (bulkImportState.active && pendingCount === 0) {
     bulkImportState.active = false;
-    // Let the sampler capture the final catch-up frame, then stop.
-    if (typeof setTimeout === 'function') setTimeout(stopCpuProfile, 2500);
     return true;
   }
   return false;

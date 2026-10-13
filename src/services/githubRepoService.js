@@ -9,7 +9,6 @@ import { clearAllCellCaches } from './cellObjectCache';
 import { joinChunks } from './context/chunkIndex';
 import { safeGetItem, safeRemoveItem, safeSetItem } from '../utils/safeLocalStorage';
 import { githubProxyRequest } from './githubApiProxy';
-import importPerf from '../utils/importPerf';
 import useCodeStore from '../stores/codeStore';
 import {
   getTreeSitterLanguage,
@@ -94,12 +93,6 @@ async function fetchWithRetry(url, options = {}, retries = 3) {
     throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
   }
 }
-
-// One-line snapshot of the network counters for [perf] marks.
-const fetchStatsLine = () =>
-  `api=${githubFetchStats.apiRequests} cdn=${githubFetchStats.cdnRequests} ` +
-  `rateLimited=${githubFetchStats.rateLimitedResponses} sleepMs=${githubFetchStats.rateLimitSleepMs} ` +
-  `bytes=${(githubFetchStats.bytesFetched / 1048576).toFixed(1)}MB`;
 
 // When set to a commit SHA, `fetchFileContent` reads files from the
 // raw.githubusercontent.com CDN instead of the GitHub Contents API,
@@ -603,7 +596,6 @@ export const scanRepositoryAndGenerateDiagram = async (
     }
     
     if (onProgress) onProgress(60, 'Processing markdown...');
-    importPerf.mark(`scan: complete, handing off to processMarkdownFile (${fetchStatsLine()})`);
 
     // Create a File from the markdown for processing
     const markdownBlob = new Blob([merfolkMarkdown], {

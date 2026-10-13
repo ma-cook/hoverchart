@@ -1,5 +1,4 @@
 import { createWithEqualityFn } from 'zustand/traditional';
-import importPerf from '../utils/importPerf';
 
 // Selector cache to avoid creating new selector functions on every render
 const selectorCache = new Map();
@@ -61,15 +60,8 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
   _unmodifiedVersion: 0, // Version counter bumped only when unmodified-relevant data changes
 
   // Actions
-  createCube: (cubeId, initialState = {}) => {
-    if (!importPerf.enabled) return get()._createCubeImpl(cubeId, initialState);
-    importPerf.begin('createCube');
-    try {
-      return get()._createCubeImpl(cubeId, initialState);
-    } finally {
-      importPerf.end('createCube');
-    }
-  },
+  createCube: (cubeId, initialState = {}) =>
+    get()._createCubeImpl(cubeId, initialState),
 
   _createCubeImpl: (cubeId, initialState = {}) => {
     set((state) => {
@@ -116,15 +108,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
     });
   },
 
-  updateCube: (cubeId, updates) => {
-    if (!importPerf.enabled) return get()._updateCubeImpl(cubeId, updates);
-    importPerf.begin('updateCube');
-    try {
-      return get()._updateCubeImpl(cubeId, updates);
-    } finally {
-      importPerf.end('updateCube');
-    }
-  },
+  updateCube: (cubeId, updates) => get()._updateCubeImpl(cubeId, updates),
 
   _updateCubeImpl: (cubeId, updates) => {
     set((state) => {

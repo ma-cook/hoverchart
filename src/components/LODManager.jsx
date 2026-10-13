@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import useLODStore, { calculateLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ, LOD_THRESHOLDS_SQ } from '../stores/lodStore';
+import useLODStore, { calculateLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
 import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
@@ -8,7 +8,6 @@ import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
 import { getSmoothedFrameTime } from '../utils/renderWorkScheduler';
 import { enqueueLodTransitions, takeDowngradeBatch } from '../utils/lodTransitionQueue';
 import { bulkImportState } from '../utils/bulkImportState';
-import importPerf from '../utils/importPerf';
 
 // Reusable vectors to avoid GC pressure
 const _cameraPos = new THREE.Vector3();
@@ -64,8 +63,6 @@ const lastUpdateTimeRef = useRef(0);
 const lastCameraPositionRef = useRef(new THREE.Vector3());
 const initializedRef = useRef(false);
 const needsImmediateUpdateRef = useRef(false);
-// DIAG (?perf): throttle for the periodic LOD level histogram.
-const lodDiagRef = useRef({ lastAt: -1e9 });
 const prevObjectCountRef = useRef(0);
 const posMapCacheRef = useRef({ objects: null, map: null });
 // FRAME edge of the bulk-import gate: bulkImportState is a plain mutable
@@ -218,9 +215,6 @@ const wasImportActiveRef = useRef(false);
     if (workerSyncedRef.current && lastWorkerSyncLengthRef.current === objects.length) return;
     if (now - lastWorkerSyncAtRef.current < WORKER_RESYNC_MIN_INTERVAL_MS) return;
 
-    importPerf.mark(`lodDeferred: serializing ${objects.length} objects for worker`);
-    const t0 = performance.now();
-
     // Serialise just the data the worker needs
     const serialised = objects.map(obj => ({
       id: String(obj.id),
@@ -236,7 +230,6 @@ const wasImportActiveRef = useRef(false);
     worker.syncObjects(serialised).then(() => {
       workerSyncedRef.current = true;
       setWorkerSynced(true);
-      importPerf.mark(`lodDeferred: worker sync done in ${Math.round(performance.now() - t0)}ms`);
     }).catch(() => {
       // Worker unavailable — let the containment effect use its sync fallback.
       workerUnavailableRef.current = true;
@@ -255,9 +248,6 @@ const wasImportActiveRef = useRef(false);
       return;
     }
 
-    importPerf.mark(`hierarchy: pass begin (${objects.length} objs)`);
-    const t0 = performance.now();
-
     // --- Prefer the worker (off-main-thread resolution) ---
     if (!workerSyncedRef.current) {
       // The worker hasn't finished its first sync yet.  Enable LOD anyway —
@@ -266,7 +256,6 @@ const wasImportActiveRef = useRef(false);
       initializedRef.current = true;
       needsImmediateUpdateRef.current = true;
       if (!workerUnavailableRef.current) return;
-      importPerf.mark(`hierarchy: sync fallback (worker unavailable, ${objects.length} objs)`);
       registerMerfolkHierarchySync(objects);
       return;
     }
@@ -282,7 +271,6 @@ const wasImportActiveRef = useRef(false);
       }
       initializedRef.current = true;
       needsImmediateUpdateRef.current = true;
-      importPerf.mark(`hierarchy: worker result applied in ${Math.round(performance.now() - t0)}ms (${relationships.length} rels)`);
     }).catch(() => {
       // Worker failed — fall through to sync path
       registerMerfolkHierarchySync(objects);
@@ -342,44 +330,6 @@ const wasImportActiveRef = useRef(false);
     // Get current camera position
     _cameraPos.setFromMatrixPosition(camera.matrixWorld);
 
-    // DIAG (?perf): periodic LOD histogram.  The "objects no longer render"
-    // report can only be settled by knowing how many objects are actually at
-    // FULL detail — FULL is the only level the edge/face/instanced renderers
-    // draw, so a scene whose levels are almost all MEDIUM/LOW looks empty.
-    if (importPerf.enabled) {
-      const diag = lodDiagRef.current;
-      if (now - diag.lastAt > 1000) {
-        diag.lastAt = now;
-        const st = useLODStore.getState();
-        const counts = [0, 0, 0];
-        for (const l of st.lodLevels.values()) counts[l] = (counts[l] || 0) + 1;
-        // Independent ground truth: how many objects are physically inside the
-        // FULL-detail radius right now.  If this is ~0 the empty view is a
-        // threshold/scale issue (nothing is close enough to earn FULL detail);
-        // if it is large while FULL=0 the stamped levels themselves are wrong.
-        const fullSq = LOD_THRESHOLDS_SQ.FULL_DETAIL;
-        let withinFullRadius = 0;
-        const objs = objectsRef.current;
-        for (let i = 0; i < objs.length; i++) {
-          const obj = objs[i];
-          // Containers are excluded from the LOD system entirely (they always
-          // render at full detail), so exclude them here too — otherwise the
-          // ground-truth count includes objects the enqueuer is designed to
-          // skip and FULL=0 with a non-zero count looks like a stamping bug.
-          if (obj.merfolkData?.isContainer === true) continue;
-          const p = obj.position;
-          if (!p) continue;
-          const dx = (p[0] || 0) - _cameraPos.x;
-          const dy = (p[1] || 0) - _cameraPos.y;
-          const dz = (p[2] || 0) - _cameraPos.z;
-          if (dx * dx + dy * dy + dz * dz < fullSq) withinFullRadius++;
-        }
-        importPerf.mark(
-          `lod objs=${objs.length} stamped=${st.lodLevels.size} FULL=${counts[0]} MEDIUM=${counts[1]} LOW=${counts[2]} withinFullRadius=${withinFullRadius} parents=${st.parentIds.size} childRels=${st.childParentMap.size} camDist=${_cameraPos.length().toFixed(0)} upQ=${upgradeQueueRef.current.size} downQ=${downgradeQueueRef.current.size}`
-        );
-      }
-    }
-
     // FIX 1b: Freeze LOD assignments while a bulk import / progressive mount
     // is streaming.  ObjectsRenderer seeds the entire population with
     // calculateLODLevel before the first mount (seedLodLevels), and re-running
@@ -415,7 +365,6 @@ const wasImportActiveRef = useRef(false);
     }
 
     needsImmediateUpdateRef.current = false;
-    importPerf.begin('FR-lodEnqueue');
     
     // Update last camera position
     lastCameraPositionRef.current.copy(_cameraPos);
@@ -481,7 +430,6 @@ const wasImportActiveRef = useRef(false);
         batchSetFaceTextVisible(faceTextUpdates);
       }
 
-      importPerf.abort('FR-lodEnqueue');
       return; // Don't also run the sync path this frame
     }
     
@@ -527,7 +475,6 @@ const wasImportActiveRef = useRef(false);
     if (faceTextUpdates.length > 0) {
       batchSetFaceTextVisible(faceTextUpdates);
     }
-    importPerf.end('FR-lodEnqueue');
   });
 
   // --- Drain LOD transition queues at a budgeted rate per frame ---
@@ -544,7 +491,6 @@ const wasImportActiveRef = useRef(false);
     const downgradeQueue = downgradeQueueRef.current;
     const upgradeQueue = upgradeQueueRef.current;
     if (downgradeQueue.size === 0 && upgradeQueue.size === 0) return;
-    importPerf.begin('FR-lodDrain');
 
     // Allow upgrades during camera movement so objects don't stay
     // invisible during panning. The per-frame budget keeps GPU impact minimal.
@@ -608,10 +554,8 @@ const wasImportActiveRef = useRef(false);
     }
 
     if (updates.length > 0) {
-      importPerf.mark(`MK-lodCommit ${updates.length} levels`);
       batchSetLODLevels(updates);
     }
-    importPerf.end('FR-lodDrain');
   });
   
   // Cleanup on unmount

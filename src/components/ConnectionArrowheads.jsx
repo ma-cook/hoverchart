@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import useLODStore from '../stores/lodStore';
 import { isFullDetailVisible } from '../utils/lodVisibility';
 import { calculateFacePosition } from '../utils/facePositionUtils';
-import importPerf from '../utils/importPerf';
 
 const CONE_HEIGHT = 5;
 const CONE_RADIUS = 2;
@@ -173,7 +172,6 @@ function ConnectionArrowheads({ connections, objects }) {
     // manual capacity guard is needed here.
     mesh.count = count;
 
-    importPerf.begin('FR-arrowheads');
     for (let i = 0; i < count; i++) {
       const a = visibleArrows[i];
       _dir.set(
@@ -201,7 +199,6 @@ function ConnectionArrowheads({ connections, objects }) {
     if (mesh.instanceColor) {
       mesh.instanceColor.needsUpdate = true;
     }
-    importPerf.end('FR-arrowheads');
   });
 
   if (visibleArrows.length === 0) return null;

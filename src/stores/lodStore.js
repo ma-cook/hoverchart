@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import importPerf from '../utils/importPerf';
 
 /**
  * LOD (Level of Detail) Store
@@ -141,7 +140,6 @@ const useLODStore = create((set, get) => {
      * PERFORMANCE: Mutates Map in-place, coalesces the version bump.
      */
     batchSetFaceTextVisible: (updates) => {
-      importPerf.begin('ST-faceTextSet');
       const state = get();
       let changed = false;
       for (const [objectId, visible] of updates) {
@@ -154,7 +152,6 @@ const useLODStore = create((set, get) => {
         faceDirty = true;
         scheduleFlush();
       }
-      importPerf.end('ST-faceTextSet');
     },
 
     /**
@@ -174,7 +171,6 @@ const useLODStore = create((set, get) => {
      * PERFORMANCE: Mutates the Map in-place and coalesces the version bump.
      */
     batchSetLODLevels: (updates) => {
-      importPerf.begin('ST-lodLevelsSet');
       const state = get();
       let changed = false;
       for (const [objectId, level] of updates) {
@@ -187,7 +183,6 @@ const useLODStore = create((set, get) => {
         lodDirty = true;
         scheduleFlush();
       }
-      importPerf.end('ST-lodLevelsSet');
     },
 
     /**
@@ -210,7 +205,6 @@ const useLODStore = create((set, get) => {
      * @param {Array<[string, boolean]>} [batch.faceText] [objectId, visible]
      */
     applyLODBatch: ({ parents, relationships, levels, faceText } = {}) => {
-      importPerf.begin('ST-lodBatch');
       const state = get();
 
       if (levels && levels.length > 0) {
@@ -295,7 +289,6 @@ const useLODStore = create((set, get) => {
       }
 
       if (lodDirty || hierDirty || faceDirty) scheduleFlush();
-      importPerf.end('ST-lodBatch');
     },
 
     /**
@@ -334,7 +327,6 @@ const useLODStore = create((set, get) => {
      * Batch register parent-child relationships
      */
     batchRegisterParentChild: (relationships) => {
-      importPerf.begin('ST-contained');
       const state = get();
       let changed = false;
       let newParents = null;
@@ -369,7 +361,6 @@ const useLODStore = create((set, get) => {
         hierDirty = true;
         scheduleFlush();
       }
-      importPerf.end('ST-contained');
     },
 
     /**
@@ -388,7 +379,6 @@ const useLODStore = create((set, get) => {
      * Batch register parent IDs
      */
     batchRegisterParents: (parentIdList) => {
-      importPerf.begin('ST-contained');
       const state = get();
       let changed = false;
       for (const id of parentIdList) {
@@ -404,7 +394,6 @@ const useLODStore = create((set, get) => {
         hierDirty = true;
         scheduleFlush();
       }
-      importPerf.end('ST-contained');
     },
 
     /**

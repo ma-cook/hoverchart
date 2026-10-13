@@ -44,10 +44,6 @@ export const wakeSpatialPolling = () => {
   });
 };
 
-// DIAG: instance tracking to catch stacked/leaked spatial object pollers
-if (typeof window !== 'undefined' && window.__objPollerSeq == null) window.__objPollerSeq = 0;
-const liveObjPollers = new Set();
-
 // ── Batched write queue ──────────────────────────────────────────────
 // Instead of N individual setTimeout→Firestore writes, pending saves
 // accumulate here and flush together in a single batch.
@@ -606,11 +602,6 @@ export const subscribeToSpatialObjects = (
   // Ensure loadedCells is always an array
   const safeCells = Array.isArray(loadedCells) ? loadedCells : [];
 
-  // DIAG
-  const instanceId = ++window.__objPollerSeq;
-  console.log(`[diag][objPoller #${instanceId}] CREATED cells=${safeCells.length}`, new Error().stack?.split('\n').slice(1, 4).join('\n'));
-  liveObjPollers.add(instanceId);
-
   // Clean up tracking for cells that are no longer loaded
   objectSubscriptionsByCell.forEach((subscriptions, cellId) => {
     if (!safeCells.includes(cellId)) {
@@ -645,10 +636,6 @@ export const subscribeToSpatialObjects = (
   let pollTimer = null;
   let isHardIdle = false;
   let idleStreak = 0;
-  // DIAG (always-on): high-frequency polling detector
-  let pollsInWindow = 0;
-  let windowStartMs = 0;
-  let highRateWarnedAt = 0;
 
   const poll = async () => {
     if (!isSubscribed || isPolling) return;
@@ -656,8 +643,6 @@ export const subscribeToSpatialObjects = (
     isPolling = true;
     let anythingChanged = false;
     let fetchFailed = false;
-    let totalAdds = 0;
-    let totalRemoves = 0;
     let currentCells = [];
     try {
       // Read cells live from the store on each poll so cell changes
@@ -873,7 +858,6 @@ export const subscribeToSpatialObjects = (
 
         if (batchedAdds.length > 0) {
           anythingChanged = true;
-          totalAdds += batchedAdds.length;
           callback({
             type: 'batch-added',
             changes: batchedAdds,
@@ -881,7 +865,6 @@ export const subscribeToSpatialObjects = (
         }
         if (batchedRemoves.length > 0) {
           anythingChanged = true;
-          totalRemoves += batchedRemoves.length;
           callback({
             type: 'batch-removed',
             changes: batchedRemoves,
@@ -902,17 +885,6 @@ export const subscribeToSpatialObjects = (
       console.error('Error polling spatial objects:', error);
     } finally {
       isPolling = false;
-      // DIAG (always-on): warn once per 60s if polling at a sustained high rate
-      const nowMs = performance.now();
-      if (nowMs - windowStartMs > 30000) { windowStartMs = nowMs; pollsInWindow = 0; }
-      pollsInWindow += 1;
-      if (pollsInWindow >= 12 && nowMs - highRateWarnedAt > 60000) {
-        highRateWarnedAt = nowMs;
-        console.warn(`[diag][objPoller #${instanceId}] HIGH-RATE: ${pollsInWindow} polls in <30s (changed=${anythingChanged} fetchFailed=${fetchFailed} live=${liveObjPollers.size})`, new Error().stack?.split('\n').slice(1, 3).join('\n'));
-      }
-      if (window.__POLL_DIAG) {
-        console.log(`[diag][objPoller #${instanceId}] poll changed=${anythingChanged} adds=${totalAdds} removes=${totalRemoves} fetchFailed=${fetchFailed} delay=${pollDelay} cells=${currentCells.length} cacheSize=${objectsCache.size} live=${liveObjPollers.size}`);
-      }
       if (anythingChanged) {
         pollDelay = POLL_INTERVAL_FAST_MS;
         idleStreak = 0;
@@ -949,15 +921,8 @@ export const subscribeToSpatialObjects = (
     }, pollDelay);
   };
 
-  let lastWakeLogMs = 0;
   const wake = () => {
     if (!isSubscribed) return;
-    // DIAG (always-on, rate-limited): capture WHO wakes the poller
-    const wakeNow = performance.now();
-    if (wakeNow - lastWakeLogMs > 5000) {
-      lastWakeLogMs = wakeNow;
-      console.log(`[diag][objPoller #${instanceId}] WAKE`, new Error().stack?.split('\n').slice(1, 5).join('\n'));
-    }
     if (isHardIdle) {
       isHardIdle = false;
       idleStreak = 0;
@@ -991,9 +956,6 @@ export const subscribeToSpatialObjects = (
 
   // Return cleanup function
   return () => {
-    // DIAG
-    console.log(`[diag][objPoller #${instanceId}] CLEANUP live=${liveObjPollers.size}`);
-    liveObjPollers.delete(instanceId);
     isSubscribed = false;
     spatialPollWakes.delete(wake);
     document.removeEventListener('visibilitychange', handleVisibilityChange);

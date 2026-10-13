@@ -7,7 +7,6 @@ import { isFullDetailVisible } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
-import importPerf from '../utils/importPerf';
 
 // Mobile detection (same as CubeFace.jsx)
 const isMobile =
@@ -68,7 +67,6 @@ const tempColor = new THREE.Color();
  * Performance: replaces N individual colored-face draw calls with 1 instanced draw call.
  */
 const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
-  importPerf.begin('RX-cubeFace');
   const meshRef = useRef();
   const lastCapacityRef = useRef(0);
   const needsFullUpdateRef = useRef(true);
@@ -151,7 +149,6 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
     // Defer full O(N) rebuilds during camera motion.
     if (needsInitialSetup && isPickingSuppressed()) return;
 
-    importPerf.begin('FR-cubeFace');
     hasPendingAppendsRef.current = false;
     const cubeStoreState = useCubeStore.getState();
     let idx = 0;
@@ -216,11 +213,9 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
       }
     }
     needsFullUpdateRef.current = false;
-    importPerf.end('FR-cubeFace');
   });
 
   if (capacity === 0) {
-    importPerf.abort('RX-cubeFace');
     return null;
   }
 
@@ -231,7 +226,6 @@ const GlobalCubeFaceRenderer = React.memo(({ cubes = [] }) => {
       frustumCulled={false}
     />
   );
-  importPerf.end('RX-cubeFace');
   return jsx;
 });
 

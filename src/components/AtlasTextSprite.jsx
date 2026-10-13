@@ -2,7 +2,6 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
-import importPerf from '../utils/importPerf';
 import useTextAtlasStore from '../stores/textAtlasStore';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import { registerHeaderBillboardMesh } from './HeaderBillboardManager';
@@ -318,7 +317,6 @@ const AtlasTextSprite = ({
   useFrame(() => {
     if (!geometry || !atlasEntryKeyRef.current) return;
     if (atlasVersionRef.current === atlas.version) return;
-    importPerf.begin('FR-spriteUV');
 
     const entry = atlas.entries.get(atlasEntryKeyRef.current);
     if (entry && geometry.attributes.uv) {
@@ -333,7 +331,6 @@ const AtlasTextSprite = ({
       // Also ensure texture is uploaded
       atlas.updateTexture();
     }
-    importPerf.end('FR-spriteUV');
   });
 
   // Cleanup geometry on unmount
