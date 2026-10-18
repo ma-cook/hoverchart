@@ -43,7 +43,9 @@ const isMain = process.argv[1] && (
 );
 if (isMain) {
   runMigrations()
-    .then(() => {
+    .then(async () => {
+      const { backfillSlugs } = await import('./backfillSlugs.js');
+      await backfillSlugs();
       console.log('Migrations complete');
       process.exit(0);
     })

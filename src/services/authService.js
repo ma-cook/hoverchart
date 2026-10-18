@@ -53,7 +53,7 @@ export const handleUrlAuth = async () => {
     const data = await api.post('/api/auth/code', { code }, { retries: 0 });
     if (data.accessToken) {
       setTokens(data.accessToken, data.refreshToken);
-      const spaceId = params.get('spaceId');
+      const spaceId = params.get('spaceId') || params.get('space');
       let newUrl = window.location.pathname;
       if (spaceId) newUrl += `?spaceId=${encodeURIComponent(spaceId)}`;
       window.history.replaceState({}, document.title, newUrl);

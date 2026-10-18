@@ -6,6 +6,7 @@ import { authenticate } from './auth/middleware.js';
 import { requireAdmin, getAdminEmailDiagnostics } from './auth/admin.js';
 import pool from './db.js';
 import { runMigrations } from './migrate.js';
+import { backfillSlugs } from './backfillSlugs.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -118,6 +119,7 @@ const PORT = process.env.PORT || 8080;
 
 async function start() {
   await runMigrations();
+  await backfillSlugs();
   httpServer.listen(PORT, () => {
     console.log(`Hoverchart API listening on port ${PORT}`);
   });

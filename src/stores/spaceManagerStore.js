@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { api } from '../api-client';
 import { findSpaceOwner } from '../services/sharedSpacesService';
+import { isUuid, resolveSpaceSlug } from '../services/spaceSlugService';
 
 import { setUserPresence } from '../services/presenceService';
 
 const useSpaceManagerStore = create((set, get) => ({
   currentSpaceId: null,
+  currentSpaceSlug: null,
   spaceType: 'diagram',
   isLoadingSpace: false,
   spaceError: null,
@@ -13,6 +15,10 @@ const useSpaceManagerStore = create((set, get) => ({
 
   setCurrentSpaceId: (spaceId) => {
     set({ currentSpaceId: spaceId });
+  },
+
+  setCurrentSpaceSlug: (spaceSlug) => {
+    set({ currentSpaceSlug: spaceSlug });
   },
 
   setSpaceType: (spaceType) => {
@@ -42,8 +48,26 @@ const useSpaceManagerStore = create((set, get) => ({
 
     try {
       const params = new URLSearchParams(window.location.search);
-      const urlSpaceId = params.get('spaceId') || params.get('space');
+      let urlSpaceId = params.get('spaceId') || params.get('space');
       const urlOwnerUid = params.get('ownerUid') || params.get('owner');
+
+      // Translate a slug URL into the canonical UUID up front. Everything
+      // downstream (API paths, socket rooms, storage keys) keys off the UUID;
+      // the slug is retained only for display/share URL construction.
+      if (urlSpaceId && !isUuid(urlSpaceId)) {
+        const resolved = await resolveSpaceSlug(urlSpaceId);
+        if (resolved) {
+          const originalSlug = urlSpaceId;
+          set({ currentSpaceSlug: resolved.slug || originalSlug });
+          if (window.publicAccessSpace === originalSlug) {
+            window.publicAccessSpace = resolved.id;
+          }
+          if (!urlOwnerUid && resolved.ownerId) {
+            window.currentSpaceOwner = resolved.ownerId;
+          }
+          urlSpaceId = resolved.id;
+        }
+      }
 
       const isPublicSpace = !!(
         window.publicAccessSpace && window.currentSpaceOwner
@@ -343,6 +367,7 @@ const useSpaceManagerStore = create((set, get) => ({
   resetSpace: () => {
     set({
       currentSpaceId: null,
+      currentSpaceSlug: null,
       spaceType: 'diagram',
       isLoadingSpace: false,
       spaceError: null,

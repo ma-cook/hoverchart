@@ -67,6 +67,7 @@ import { CELL_SIZE, getObjectsFromCells } from './services/spatialPartitioning';
 import { hasAnyPendingObjects, getAllCellObjectsForCells, clearAllCellCaches } from './services/cellObjectCache';
 import { setGuestPresence } from './services/presenceService';
 import { getPublicSpaceMetadata } from './services/spacesService';
+import { isUuid, resolveSpaceSlug } from './services/spaceSlugService';
 import { setIsInitialLoading as setGlobalInitialLoading } from './utils/loadingState';
 import isEqual from 'lodash/isEqual';
 import { initWebRTC } from './services/webRservice';
@@ -114,8 +115,10 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
     return overlay ? overlay.cellBoundariesVisible : false;
   });
   // Calculate effective space ID early to avoid circular dependency
-  // Initialize publicSpaceId and isLookingUpPublicSpace immediately from URL to prevent timing issues
-  const { publicSpaceId, shouldLookupPublicSpace } = useMemo(() => {
+  // Initialize the public-space id and lookup flag immediately from the URL to
+  // prevent timing issues. `publicSpaceId` is state (not derived) so the async
+  // slug resolution below can swap a slug URL for its canonical UUID.
+  const initialSpaceFromUrl = useMemo(() => {
     // First check if already set in window
     if (window.publicAccessSpace) {
       return {
@@ -156,12 +159,43 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
     };
   }, []); // Empty deps - only calculate once on mount
 
+  const [publicSpaceId, setPublicSpaceId] = useState(
+    initialSpaceFromUrl.publicSpaceId
+  );
+  const shouldLookupPublicSpace = initialSpaceFromUrl.shouldLookupPublicSpace;
+
   // Initialize isLookingUpPublicSpace based on whether we need to lookup
   const [isLookingUpPublicSpace, setIsLookingUpPublicSpace] = useState(
     shouldLookupPublicSpace
   );
 
-  const effectiveSpaceId = publicSpaceId || currentSpaceId;
+  // A slug-based public URL must be translated to the canonical UUID before
+  // any lookup or state keyed on the space id runs (API calls, sessionStorage,
+  // socket rooms). Runs once per slug; legacy UUID URLs are left untouched.
+  useEffect(() => {
+    if (!publicSpaceId || isUuid(publicSpaceId)) return;
+    let cancelled = false;
+    resolveSpaceSlug(publicSpaceId).then((resolved) => {
+      if (cancelled || !resolved?.id) return;
+      if (window.publicAccessSpace === publicSpaceId) {
+        window.publicAccessSpace = resolved.id;
+      }
+      if (resolved.ownerId) {
+        window.currentSpaceOwner = resolved.ownerId;
+        setCurrentSpaceOwner(resolved.ownerId);
+      }
+      setPublicSpaceId(resolved.id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [publicSpaceId]);
+
+  // Prefer the public-space id only once it is a canonical UUID; while it is
+  // still a slug (awaiting the resolution effect) fall back to the store id so
+  // no hook keys off the slug.
+  const effectiveSpaceId =
+    publicSpaceId && isUuid(publicSpaceId) ? publicSpaceId : currentSpaceId;
 
   // Memoize canViewSpace calculation to prevent unnecessary recalculations
   const canViewSpace = useMemo(() => {
@@ -364,9 +398,19 @@ const existingIdsRef = useRef(new Set());
   useEffect(() => {
     // Extract parameters from URL
     const params = new URLSearchParams(window.location.search);
-    const spaceParam = params.get('space') || params.get('spaceId'); // Support both 'space' and 'spaceId'
+    let spaceParam = params.get('space') || params.get('spaceId'); // Support both 'space' and 'spaceId'
     const ownerParam = params.get('owner') || params.get('ownerUid');
     const codeParam = params.get('code'); // Check for authenticated access
+
+    // A slug URL is translated to its UUID by the resolution effect above.
+    // Wait for that before looking anything up by the (non-UUID) slug.
+    if (spaceParam && !isUuid(spaceParam)) {
+      if (publicSpaceId && isUuid(publicSpaceId)) {
+        spaceParam = publicSpaceId;
+      } else {
+        return;
+      }
+    }
 
     if (spaceParam) {
       // If we have a code param, this is authenticated access - let the auth system handle it
@@ -500,6 +544,7 @@ const existingIdsRef = useRef(new Set());
     user,
     currentSpaceId,
     effectiveSpaceId,
+    publicSpaceId,
     isAuthReady,
     isLookingUpPublicSpace,
     setIsLookingUpPublicSpace,

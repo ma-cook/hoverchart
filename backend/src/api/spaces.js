@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import pool from '../db.js';
+import { buildSpaceSlug, uniqueSlug } from '../utils/slug.js';
 
 export const router = Router();
 
@@ -12,6 +13,7 @@ export function serializeSpace(row) {
   if (!row) return row;
   return {
     ...row,
+    slug: row.slug || null,
     markdownStorageUrl: row.markdown_storage_url,
     diagramCommitSha: row.diagram_commit_sha,
     diagramRepo: row.diagram_repo,
@@ -43,16 +45,68 @@ router.post('/', async (req, res) => {
   const userId = req.user.sub;
   const { name, is_public, metadata } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      `INSERT INTO spaces (owner_id, name, is_public, metadata)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [userId, name, is_public || false, metadata || {}]
+    await client.query('BEGIN');
+
+    // Derive the URL slug from the owner's display name + the space name. The
+    // uniqueness check + insert share a transaction so two concurrent creates
+    // can't observe the same free slug (the unique index is the backstop).
+    const ownerResult = await client.query(
+      `SELECT display_name, email FROM users WHERE id = $1`,
+      [userId]
     );
+    const base = buildSpaceSlug(ownerResult.rows[0] || {}, name);
+    const slug = await uniqueSlug(base, async (candidate) => {
+      const hit = await client.query(
+        `SELECT 1 FROM spaces WHERE slug = $1`,
+        [candidate]
+      );
+      return hit.rows.length > 0;
+    });
+
+    const result = await client.query(
+      `INSERT INTO spaces (owner_id, name, is_public, metadata, slug)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [userId, name, is_public || false, metadata || {}, slug]
+    );
+    await client.query('COMMIT');
     res.status(201).json(serializeSpace(result.rows[0]));
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Create space error:', err);
     res.status(500).json({ error: 'Failed to create space' });
+  } finally {
+    client.release();
+  }
+});
+
+// Translate a human-readable slug into the canonical space UUID. Declared
+// before `/:id` so the literal path wins. Minimal, non-owner-scoped metadata:
+// the slug is the shareable capability, and the caller (browser) still needs
+// its own credentials for the space's actual data routes.
+router.get('/resolve/:slug', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, owner_id, name, is_public, metadata
+       FROM spaces WHERE slug = $1`,
+      [req.params.slug]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Space not found' });
+    }
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      ownerId: row.owner_id,
+      name: row.name,
+      isPublic: row.is_public,
+      metadata: row.metadata,
+      type: row.metadata?.type || 'diagram',
+    });
+  } catch (err) {
+    console.error('Resolve space error:', err);
+    res.status(500).json({ error: 'Failed to resolve space' });
   }
 });
 

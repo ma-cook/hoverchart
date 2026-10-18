@@ -198,7 +198,7 @@ export const SpacesTable = React.memo(
                           opacity: navigatingSpaceId === space.id ? 0.5 : 1,
                           pointerEvents: navigatingSpaceId ? 'none' : 'auto',
                         }}
-                        onClick={(e) => handleSpaceClick(e, space.id, undefined, space.type)}
+                        onClick={(e) => handleSpaceClick(e, space.slug || space.id, undefined, space.type)}
                       >
                         {navigatingSpaceId === space.id
                           ? 'Opening...'
@@ -271,7 +271,7 @@ export const SpacesTable = React.memo(
                           pointerEvents: navigatingSpaceId ? 'none' : 'auto',
                         }}
                         onClick={(e) =>
-                          handleSpaceClick(e, space.id, space.ownerId, space.type)
+                          handleSpaceClick(e, space.slug || space.id, space.ownerId, space.type)
                         }
                       >
                         {navigatingSpaceId === space.id
