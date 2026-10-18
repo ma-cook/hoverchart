@@ -94,16 +94,31 @@ export const useSpatialManager = ({
   useEffect(() => {
     if (!isInitialized || !currentSpaceId) return;
 
-    let cleanup = () => {};
+    let disposed = false;
+    let retryTimer = null;
     let retryCount = 0;
     const maxRetries = 10;
+    let controls = null;
+    let handleCameraMove = null;
+    let debounceTimer = null;
+
+    const removeCameraListeners = () => {
+      if (controls && handleCameraMove) {
+        controls.removeEventListener('change', handleCameraMove);
+      }
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+    };
 
     const setupCameraListeners = () => {
+      if (disposed) return;
       if (!cameraRef?.current?.camera || !cameraRef?.current?.orbitControls) {
         if (retryCount < maxRetries) {
           retryCount++;
 
-          setTimeout(setupCameraListeners, 100);
+          retryTimer = setTimeout(setupCameraListeners, 100);
         } else {
           console.error(
             '❌ Failed to set up camera listeners after max retries'
@@ -113,15 +128,14 @@ export const useSpatialManager = ({
       }
 
       const camera = cameraRef.current.camera;
-      const controls = cameraRef.current.orbitControls;
+      controls = cameraRef.current.orbitControls;
       let lastCellCoords = null;
-      let debounceTimer = null;
       let lastCellUpdateTime = 0;
       // Throttle: minimum ms between cell-boundary crossings.  Prevents
       // rapid-fire cascades when the camera pans quickly across many cells.
       const CELL_UPDATE_THROTTLE_MS = 200;
 
-      const handleCameraMove = () => {
+      handleCameraMove = () => {
         // BUGFIX: Use the orbit controls TARGET (the point being looked at)
         // instead of camera.position for cell determination.  During zoom,
         // camera.position moves through 3D space while the target stays fixed.
@@ -181,22 +195,19 @@ export const useSpatialManager = ({
 
       // Force initial position update
       handleCameraMove();
-
-      cleanup = () => {
-        if (controls) {
-          controls.removeEventListener('change', handleCameraMove);
-        }
-        if (debounceTimer) {
-          clearTimeout(debounceTimer);
-          debounceTimer = null;
-        }
-      };
     };
 
     // Start the setup process
     setupCameraListeners();
 
-    return () => cleanup();
+    return () => {
+      disposed = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      removeCameraListeners();
+    };
   }, [
     cameraRef,
     isInitialized,

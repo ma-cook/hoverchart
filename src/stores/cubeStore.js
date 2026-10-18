@@ -3,6 +3,23 @@ import { createWithEqualityFn } from 'zustand/traditional';
 // Selector cache to avoid creating new selector functions on every render
 const selectorCache = new Map();
 
+// Drop all cached selector functions for a cube id (both the bare id and every
+// `${id}-...` variant) so the selector cache doesn't grow without bound as
+// cubes are created and deleted across space switches.
+const pruneCubeSelectors = (cubeId) => {
+  const prefix = `${cubeId}-`;
+  for (const key of selectorCache.keys()) {
+    if (key === cubeId || key.startsWith(prefix)) {
+      selectorCache.delete(key);
+    }
+  }
+};
+
+// Clear the entire selector cache (used on space switch).
+const clearCubeSelectorCache = () => {
+  selectorCache.clear();
+};
+
 // Get or create a cached selector for a specific cube
 export const getCubeSelector = (cubeId) => {
   if (!selectorCache.has(cubeId)) {
@@ -188,6 +205,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
   },
 
   deleteCube: (cubeId) => {
+    pruneCubeSelectors(cubeId);
     set((state) => {
       const newCubes = new Map(state.cubes);
       newCubes.delete(cubeId);
@@ -329,3 +347,4 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
 }));
 
 export default useCubeStore;
+export { clearCubeSelectorCache };

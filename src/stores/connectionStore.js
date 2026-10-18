@@ -219,6 +219,11 @@ const useConnectionStore = create((set, get) => ({
           state.showLineTextStyleUI === connectionId
             ? null
             : state.showLineTextStyleUI,
+        lineUIMenuState: Object.fromEntries(
+          Object.entries(state.lineUIMenuState).filter(
+            ([id]) => id !== connectionId
+          )
+        ),
       };
 
       // Log state after update
@@ -947,6 +952,11 @@ const useConnectionStore = create((set, get) => ({
         )
           ? null
           : state.selectedConnection,
+        lineUIMenuState: Object.fromEntries(
+          Object.entries(state.lineUIMenuState).filter(
+            ([id]) => !connectionIdsToDelete.includes(id)
+          )
+        ),
       };
 
       return newState;

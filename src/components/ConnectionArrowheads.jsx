@@ -74,6 +74,9 @@ function resolveEndpointPosition(endpointData, objectsById, objects) {
  */
 function ConnectionArrowheads({ connections, objects }) {
   const meshRef = useRef();
+  // Track the memoised arrow list identity so the per-frame matrix rebuild can
+  // be skipped while nothing about the arrows changed.
+  const lastArrowsRef = useRef(null);
 
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const lodVersion = useLODStore((s) => s._lodVersion);
@@ -165,6 +168,12 @@ function ConnectionArrowheads({ connections, objects }) {
   useFrame(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
+
+    // Arrowheads are camera-independent (fixed world-space cones), so their
+    // matrices only need rebuilding when the visible set actually changes —
+    // not every frame.
+    if (lastArrowsRef.current === visibleArrows) return;
+    lastArrowsRef.current = visibleArrows;
 
     const count = visibleArrows.length;
     // three (r152+) resizes instanceMatrix automatically in setMatrixAt, and

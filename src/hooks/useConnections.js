@@ -220,9 +220,13 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
           window._unloadedConnections.delete(event.id);
         }
       } else if (event && event.type === 'removed') {
-        // Remove from connection tracking when deleted
-        connectionsByCellRef.current.forEach((cellConnections) => {
+        // Remove from connection tracking when deleted, dropping cell Sets
+        // that become empty so the map doesn't accumulate dead cell keys.
+        connectionsByCellRef.current.forEach((cellConnections, cellId) => {
           cellConnections.delete(event.id);
+          if (cellConnections.size === 0) {
+            connectionsByCellRef.current.delete(cellId);
+          }
         });
 
         // Handle the remove event normally
@@ -350,6 +354,19 @@ export function useConnections({ user, currentSpaceId, loadedCells = [] }) {
     // getCells callback, so no teardown/recreate is needed on cell changes.
     enhancedConnectionCallback,
   ]);
+
+  // Unmount-only safety net: the subscription effect above returns a cleanup
+  // only on some code paths (it early-returns when the initial subscription
+  // is created), so a poller created on an early-return path could otherwise
+  // survive unmount. Tear down whatever the ref currently holds on unmount.
+  useEffect(() => {
+    return () => {
+      if (typeof subscriptionCleanupRef.current === 'function') {
+        subscriptionCleanupRef.current();
+        subscriptionCleanupRef.current = null;
+      }
+    };
+  }, []);
 
   // When cells change, wake the connection poller so it picks up new/removed
   // cells immediately instead of waiting for the next scheduled poll.

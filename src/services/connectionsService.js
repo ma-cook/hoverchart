@@ -303,12 +303,14 @@ export const subscribeToConnections = (
       }
 
       const rawConnections = [];
+      let sawFreshBatch = false;
       for (const batch of cellBatches) {
         if (!isActive || document.hidden || _subscriptionsPaused) return;
         const response = await api.get(`/api/spaces/${spaceId}/connections`, {
           params: { cell_id: batch },
         });
         if (response == null) continue; // 304 - nothing changed for these cells
+        sawFreshBatch = true;
         if (Array.isArray(response)) {
           rawConnections.push(...response);
         } else if (Array.isArray(response.connections)) {
@@ -317,7 +319,6 @@ export const subscribeToConnections = (
       }
       const connections = rawConnections.map(normalizeConnectionRow);
       const seenKeys = new Set();
-
       // Process incoming connections
       for (const connection of connections) {
         if (!isActive) return;
@@ -347,18 +348,23 @@ export const subscribeToConnections = (
         }
       }
 
-      // Check for removed connections
-      for (const [key] of pollingCache.entries()) {
-        if (!isActive) return;
+      // Check for removed connections. Only diff removals when at least one
+      // batch returned a fresh list — an all-304 poll means "nothing changed",
+      // not "every cached connection was removed" (which would spuriously fire
+      // a removal storm and reset the poll backoff to fast forever).
+      if (sawFreshBatch) {
+        for (const [key] of pollingCache.entries()) {
+          if (!isActive) return;
 
-        if (!seenKeys.has(key)) {
-          pollingCache.delete(key);
-          const connId = key.replace(`${spaceId}_`, '');
-          anythingChanged = true;
-          callback({
-            type: 'removed',
-            id: connId,
-          });
+          if (!seenKeys.has(key)) {
+            pollingCache.delete(key);
+            const connId = key.replace(`${spaceId}_`, '');
+            anythingChanged = true;
+            callback({
+              type: 'removed',
+              id: connId,
+            });
+          }
         }
       }
     } catch {

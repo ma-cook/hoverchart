@@ -46,6 +46,17 @@ function getSharedMaterial(texture, side, depthWrite, depthTest, opacity) {
   return materialCache.get(key);
 }
 
+/**
+ * Dispose and clear all shared atlas materials. Must be called when the
+ * global text atlas is reset (space switch): the cached materials reference
+ * the disposed atlas textures and would otherwise leak forever because new
+ * atlas pages get fresh texture ids (hence fresh cache keys).
+ */
+export function clearAtlasMaterialCache() {
+  materialCache.forEach((mat) => mat.dispose());
+  materialCache.clear();
+}
+
 // Throttle intervals by text type (ms) - less critical text updates less often
 const THROTTLE_FACE_TEXT = 66;      // 15fps - face visibility doesn't need high refresh
 const THROTTLE_HEADER_TEXT = 16;    // ~60fps - headers follow objects
@@ -467,14 +478,95 @@ const DynamicBillboardMesh = React.memo(({
   pathPoints,
   lastUpdateTimeRef,
 }) => {
+  // Keep the latest props in a ref so the header billboard function can be
+  // registered ONCE (below) instead of being reallocated every frame.
+  const headerStateRef = useRef();
+  headerStateRef.current = { style, position, scale, followTarget, visible };
+
   // Register/unregister this mesh with the batched HeaderBillboardManager
   // so header texts and container headers share a single useFrame instead of
   // each owning one.
+  const isHeader =
+    (followTarget?.current && style.isHeaderText) || style.isContainerHeader;
   useEffect(() => {
-    const isHeader = (followTarget?.current && style.isHeaderText) || style.isContainerHeader;
-    if (!isHeader) return;
-    return registerHeaderBillboardMesh(meshRef);
-  }, [meshRef, followTarget, style.isHeaderText, style.isContainerHeader]);
+    if (!isHeader || !meshRef.current) return;
+
+    const mesh = meshRef.current;
+    const unregister = registerHeaderBillboardMesh(meshRef);
+    // Registered once per header mount (not per frame): the manager invokes
+    // this in its single batched useFrame, reading fresh values from the ref.
+    mesh.userData._headerBillboard = (cam, m) => {
+      const { style, position, scale, followTarget } = headerStateRef.current;
+      // Container headers — static position, just face the camera
+      if (style.isContainerHeader) {
+        m.quaternion.copy(cam.quaternion);
+        return;
+      }
+
+      if (!followTarget?.current) return;
+      const targetPos = followTarget.current.position;
+      const targetScale = followTarget.current.scale;
+
+      if (style.isDodecahedronHeader) {
+        const posX = Array.isArray(position) ? position[0] : (position?.x || 0);
+        const posY = Array.isArray(position) ? position[1] : (position?.y || 0);
+        const posZ = Array.isArray(position) ? position[2] : (position?.z || 0);
+
+        tempVec3A.set(posX, posY, posZ);
+        const distanceToCamera = cam.position.distanceTo(tempVec3A);
+        const baseScale = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 1.5);
+
+        m.position.set(posX, posY, posZ);
+        m.scale.setScalar(baseScale * scale);
+
+        if (distanceToCamera < 10000) {
+          m.quaternion.copy(cam.quaternion);
+        }
+      } else if (style.isHeaderText && style.isPlaneHeader) {
+        if (!style.fixedPosition) {
+          const [x, y, z] = position;
+          m.position.set(
+            targetPos.x + x,
+            targetPos.y + y,
+            targetPos.z + z
+          );
+        }
+
+        m.getWorldPosition(tempVec3A);
+        const distanceToCamera = cam.position.distanceTo(tempVec3A);
+
+        if (distanceToCamera < 10000) {
+          m.quaternion.copy(cam.quaternion);
+        }
+
+        const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
+        m.scale.setScalar(scaleValue * scale);
+      } else if (style.isHeaderText) {
+        const [x, y, z] = position;
+        const avgScale = (targetScale.x + targetScale.y + targetScale.z) / 3;
+
+        m.position.set(
+          targetPos.x + x * avgScale,
+          targetPos.y + y * avgScale,
+          targetPos.z + z * avgScale
+        );
+
+        m.getWorldPosition(tempVec3A);
+        const distanceToCamera = cam.position.distanceTo(tempVec3A);
+
+        if (distanceToCamera < 10000) {
+          m.quaternion.copy(cam.quaternion);
+        }
+
+        const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
+        m.scale.setScalar(scaleValue * scale * avgScale);
+      }
+    };
+    return () => {
+      mesh.userData._headerBillboard = null;
+      if (typeof unregister === 'function') unregister();
+    };
+  }, [isHeader, meshRef]);
 
   // Billboard and positioning effect using useFrame
   // PERFORMANCE OPTIMIZED: Uses reusable THREE objects and smart throttling
@@ -486,73 +578,7 @@ const DynamicBillboardMesh = React.memo(({
     // its single useFrame. This collapses N useFrame callbacks into 1.
     if ((followTarget?.current && style.isHeaderText) || style.isContainerHeader) {
       meshRef.current.visible = visible;
-      meshRef.current.userData._headerBillboard = (cam, mesh) => {
-        // Container headers — static position, just face the camera
-        if (style.isContainerHeader) {
-          mesh.quaternion.copy(cam.quaternion);
-          return;
-        }
-
-        if (!followTarget.current) return;
-        const targetPos = followTarget.current.position;
-        const targetScale = followTarget.current.scale;
-
-        if (style.isDodecahedronHeader) {
-          const posX = Array.isArray(position) ? position[0] : (position?.x || 0);
-          const posY = Array.isArray(position) ? position[1] : (position?.y || 0);
-          const posZ = Array.isArray(position) ? position[2] : (position?.z || 0);
-
-          tempVec3A.set(posX, posY, posZ);
-          const distanceToCamera = cam.position.distanceTo(tempVec3A);
-          const baseScale = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 1.5);
-
-          mesh.position.set(posX, posY, posZ);
-          mesh.scale.setScalar(baseScale * scale);
-
-          if (distanceToCamera < 10000) {
-            mesh.quaternion.copy(cam.quaternion);
-          }
-        } else if (style.isHeaderText && style.isPlaneHeader) {
-          if (!style.fixedPosition) {
-            const [x, y, z] = position;
-            mesh.position.set(
-              targetPos.x + x,
-              targetPos.y + y,
-              targetPos.z + z
-            );
-          }
-
-          mesh.getWorldPosition(tempVec3A);
-          const distanceToCamera = cam.position.distanceTo(tempVec3A);
-
-          if (distanceToCamera < 10000) {
-            mesh.quaternion.copy(cam.quaternion);
-          }
-
-          const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
-          mesh.scale.setScalar(scaleValue * scale);
-        } else if (style.isHeaderText) {
-          const [x, y, z] = position;
-          const avgScale = (targetScale.x + targetScale.y + targetScale.z) / 3;
-
-          mesh.position.set(
-            targetPos.x + x * avgScale,
-            targetPos.y + y * avgScale,
-            targetPos.z + z * avgScale
-          );
-
-          mesh.getWorldPosition(tempVec3A);
-          const distanceToCamera = cam.position.distanceTo(tempVec3A);
-
-          if (distanceToCamera < 10000) {
-            mesh.quaternion.copy(cam.quaternion);
-          }
-
-          const scaleValue = Math.min(Math.max(distanceToCamera * 0.01, 0.5), 2.0);
-          mesh.scale.setScalar(scaleValue * scale * avgScale);
-        }
-      };
-      return; // Skip — handled by batched manager
+      return; // Skip — handled by the batched HeaderBillboardManager
     }
 
     // FREEZE FIX: Skip non-header billboard updates when main thread is lagging

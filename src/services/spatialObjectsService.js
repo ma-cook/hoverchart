@@ -133,6 +133,7 @@ export const clearAllObjectCaches = () => {
   movingObjects.clear();
   objectCellMap.clear();
   deletingObjects.clear();
+  objectSubscriptionsByCell.clear();
   // Also clear any window-level tracking
   if (window._unloadedObjects) {
     window._unloadedObjects.clear();
@@ -142,6 +143,9 @@ export const clearAllObjectCaches = () => {
   }
   if (window._unloadedObjectsByCell) {
     window._unloadedObjectsByCell.clear();
+  }
+  if (window._matrixUpdateMap) {
+    window._matrixUpdateMap.clear();
   }
   console.log('🧹 Cleared all object caches');
 };

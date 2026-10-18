@@ -260,6 +260,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
   }, []);
 
   const cullingFrameCounterRef = useRef(0);
+  const lastCullCameraRef = useRef(null);
   const CULLING_FRAME_INTERVAL = 3;
 
   useFrame(() => {
@@ -286,7 +287,20 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
     // Defer full O(N) rebuilds during camera motion.
     if (needsInitialSetup && isPickingSuppressed()) return;
 
+    // Skip the periodic frustum sweep entirely while the camera is stationary.
     if (enableCulling && !hasActiveTransforms && !needsInitialSetup) {
+      const cam = camera.position;
+      const cq = camera.quaternion;
+      const last = lastCullCameraRef.current;
+      const cameraMoved =
+        !last ||
+        cam.x !== last.x || cam.y !== last.y || cam.z !== last.z ||
+        cq.x !== last.qx || cq.y !== last.qy || cq.z !== last.qz || cq.w !== last.qw;
+      if (!cameraMoved) return;
+      lastCullCameraRef.current = {
+        x: cam.x, y: cam.y, z: cam.z,
+        qx: cq.x, qy: cq.y, qz: cq.z, qw: cq.w,
+      };
       cullingFrameCounterRef.current++;
       if (cullingFrameCounterRef.current % CULLING_FRAME_INTERVAL !== 0) {
         return;

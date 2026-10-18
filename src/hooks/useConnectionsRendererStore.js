@@ -28,12 +28,17 @@ const getConnectionStateSelector = (connectionId) => {
 let lastCleanup = Date.now();
 const CLEANUP_INTERVAL = 60000; // 1 minute
 
-const cleanupStaleSelectors = (activeIds) => {
+// Cleanup selectors for connections that no longer exist to prevent the map
+// from growing without bound. Accepts a getter so the (potentially large)
+// active-id list is only materialised once the interval has elapsed.
+const cleanupStaleSelectors = (getActiveIds) => {
   const now = Date.now();
   if (now - lastCleanup < CLEANUP_INTERVAL) return;
-  
+
   lastCleanup = now;
-  const activeSet = new Set(activeIds);
+  const activeSet = new Set(
+    typeof getActiveIds === 'function' ? getActiveIds() : getActiveIds
+  );
   for (const id of connectionStateSelectors.keys()) {
     if (!activeSet.has(id)) {
       connectionStateSelectors.delete(id);
@@ -58,7 +63,7 @@ const actionsSelector = (state) => ({
  * This significantly reduces React overhead for 1000+ connections
  */
 export const useConnectionsRendererStore = () => {
-  return useConnectionStore(
+  const store = useConnectionStore(
     (state) => ({
       // Connection data
       connections: state.connections,
@@ -84,6 +89,11 @@ export const useConnectionsRendererStore = () => {
     }),
     shallow
   );
+
+  // Periodically drop selectors for connection IDs that no longer exist.
+  cleanupStaleSelectors(() => store.connections.map((c) => c.id));
+
+  return store;
 };
 
 /**

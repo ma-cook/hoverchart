@@ -279,6 +279,13 @@ const PageInstancedMesh = React.memo(
     const maxDistanceSq = maxDistance * maxDistance;
     const lastUpdateRef = useRef(0);
     const atlasVersionRef = useRef(atlas.version);
+    // Last camera pose + item count so billboard work is skipped entirely while
+    // the camera is stationary and no labels were added/removed.
+    const lastCameraRef = useRef({
+      x: Infinity, y: Infinity, z: Infinity,
+      qx: Infinity, qy: Infinity, qz: Infinity, qw: Infinity,
+      items: null,
+    });
 
     // ----- grow-only capacity (mirrors GlobalCubeEdgesRenderer) -----
     // The `items` array is rebuilt (append-ordered) on every progressive-mount
@@ -384,6 +391,31 @@ const PageInstancedMesh = React.memo(
       // toggling don't need 60 fps updates for static labels.
       if (now - lastUpdateRef.current < 100) return;
       lastUpdateRef.current = now;
+
+      // Skip the O(labels) billboard pass + GPU re-upload entirely when the
+      // camera is stationary and neither the atlas version nor the label set
+      // changed (the 100ms throttle alone still re-uploads matrices).
+      const camPos = camera.position;
+      const camQ = camera.quaternion;
+      const lc = lastCameraRef.current;
+      const cameraMoved =
+        camPos.x !== lc.x ||
+        camPos.y !== lc.y ||
+        camPos.z !== lc.z ||
+        camQ.x !== lc.qx ||
+        camQ.y !== lc.qy ||
+        camQ.z !== lc.qz ||
+        camQ.w !== lc.qw;
+      const versionChanged = atlas.version !== atlasVersionRef.current;
+      if (!cameraMoved && !versionChanged && items === lc.items) return;
+      lc.x = camPos.x;
+      lc.y = camPos.y;
+      lc.z = camPos.z;
+      lc.qx = camQ.x;
+      lc.qy = camQ.y;
+      lc.qz = camQ.z;
+      lc.qw = camQ.w;
+      lc.items = items;
 
       // ----- Atlas resize UV fixup -----
       const currentVersion = atlas.version;

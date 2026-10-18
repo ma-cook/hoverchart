@@ -1797,15 +1797,10 @@ const TextObject = React.memo(
         if (isFrameBudgetExhausted()) return;
 
         // Only update world matrix if this object has connections AND is not being transformed
-        // This is expensive so we minimize it
-        if (
-          !isMoving &&
-          !isActivelyEditing &&
-          connectionsFromStore?.some(
-            (conn) =>
-              conn.start.objectId === stringId || conn.end.objectId === stringId
-          )
-        ) {
+        // This is expensive so we minimize it. connectionsByObjectId already
+        // indexes only connections touching this object, so a length check is
+        // equivalent to the old per-frame O(connections) `.some` scan.
+        if (!isMoving && !isActivelyEditing && connectionsFromStore.length > 0) {
           // Throttle matrix updates - only update every few frames
           if (
             !groupRef.current._lastMatrixUpdate ||

@@ -56,6 +56,9 @@ import { checkPositionJitter } from './utils/positionUtils';
 import { throttle } from './utils/unifiedPerformanceUtils'; // Unified throttle utility
 import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkScheduler';
 import { resetGlobalTextAtlas } from './utils/textAtlas';
+import { clearAtlasMaterialCache } from './components/AtlasTextSprite';
+import { resetPathfindingCaches } from './utils/pathfindingUtils';
+import { clearCubeSelectorCache } from './stores/cubeStore';
 
 import { signInUser } from './services/authService';
 import { toggleTaskExpansion, repositionAllTasks } from './services/repoContainerService';
@@ -91,6 +94,7 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
   const cameraRef = useRef();
   const intentionalSpaceChangeRef = useRef(false);
   const previousSpaceIdRef = useRef(null); // Track space changes to clear stale state
+  const connectionSubscriptionTimeoutRef = useRef(null); // Adaptive-loading fallback timer
   const objectsFromStore = useObjectsStore((state) => state.objects);
   const objects = useMemo(() => {
     return Array.isArray(objectsFromStore) ? objectsFromStore : [];
@@ -547,6 +551,9 @@ const existingIdsRef = useRef(new Set());
       useConnectionStore.getState().resetConnections();
       useSpatialManagerStore.getState().resetSpatialManager();
       resetGlobalTextAtlas(); // Release the previous space's text atlas + worker
+      clearAtlasMaterialCache(); // Dispose shared atlas materials referencing the old atlas
+      resetPathfindingCaches(); // Drop per-object position cache for the old space
+      clearCubeSelectorCache(); // Drop cached cube selector closures
       existingIdsRef.current.clear(); // Reset persistent ID Set for new space
     }
     previousSpaceIdRef.current = effectiveSpaceId;
@@ -562,12 +569,19 @@ const existingIdsRef = useRef(new Set());
     const totalCells = loadedCells?.length || 0;
     const connectionTimeout = Math.max(2000, totalCells * 500); // 500ms per cell, minimum 2 seconds
 
+    // Clear any fallback timer left armed by a previous effect run that
+    // early-returned (those paths don't reach the cleanup below).
+    if (connectionSubscriptionTimeoutRef.current) {
+      clearTimeout(connectionSubscriptionTimeoutRef.current);
+    }
     connectionSubscriptionTimeoutId = setTimeout(() => {
+      connectionSubscriptionTimeoutRef.current = null;
       setGlobalInitialLoading(false);
       // Safety fallback: clear object loading state for empty spaces or when
       // the Firebase subscription didn't trigger scheduleLoadingComplete
       setIsInitialLoading(false);
     }, connectionTimeout);
+    connectionSubscriptionTimeoutRef.current = connectionSubscriptionTimeoutId;
 
     if (!canViewSpace) {
       return;
@@ -1122,8 +1136,9 @@ const existingIdsRef = useRef(new Set());
     return () => {
       unsubscribe();
       clearLoadingTimeout();
-      if (connectionSubscriptionTimeoutId) {
-        clearTimeout(connectionSubscriptionTimeoutId);
+      if (connectionSubscriptionTimeoutRef.current) {
+        clearTimeout(connectionSubscriptionTimeoutRef.current);
+        connectionSubscriptionTimeoutRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -78,6 +78,19 @@ export function checkObjectMovement(objectId, position) {
   objectPositionCache.set(objectId, roundedPos);
 }
 
+/**
+ * Fully reset every pathfinding cache including the per-object last-known
+ * position map. Safe to call on space switch: stale object ids from the
+ * previous space must not linger, otherwise the map grows without bound.
+ * Not called on every object move (that would defeat move detection).
+ */
+export function resetPathfindingCaches() {
+  intersectionCache.clear();
+  pathCache.clear();
+  objectPositionCache.clear();
+}
+
+
 // Clean old entries from caches periodically
 function cleanCaches() {
   const now = Date.now();
@@ -89,7 +102,6 @@ function cleanCaches() {
     }
   }
 }
-
 // Round positions for cache keys
 function roundForCache(pos) {
   if (!Array.isArray(pos)) return [0, 0, 0];

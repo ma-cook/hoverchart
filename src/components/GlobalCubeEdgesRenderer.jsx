@@ -364,6 +364,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
 
   // Frame counter for throttling frustum culling (runs every N frames when idle)
   const cullingFrameCounterRef = useRef(0);
+  const lastCullCameraRef = useRef(null);
   const CULLING_FRAME_INTERVAL = 3; // Check frustum every 3 frames when no transforms active
 
   // Use useFrame for real-time position sync during transforms
@@ -404,8 +405,21 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
     if (needsInitialSetup && isPickingSuppressed()) return;
 
     // Throttle frustum-culling-only frames (no transforms, no initial setup)
-    // to every N frames to reduce CPU cost.
+    // to every N frames to reduce CPU cost. Also skip entirely while the camera
+    // is stationary — a re-cull can only matter after the camera moved.
     if (enableCulling && !hasActiveTransforms && !needsInitialSetup) {
+      const cam = camera.position;
+      const cq = camera.quaternion;
+      const last = lastCullCameraRef.current;
+      const cameraMoved =
+        !last ||
+        cam.x !== last.x || cam.y !== last.y || cam.z !== last.z ||
+        cq.x !== last.qx || cq.y !== last.qy || cq.z !== last.qz || cq.w !== last.qw;
+      if (!cameraMoved) return;
+      lastCullCameraRef.current = {
+        x: cam.x, y: cam.y, z: cam.z,
+        qx: cq.x, qy: cq.y, qz: cq.z, qw: cq.w,
+      };
       cullingFrameCounterRef.current++;
       if (cullingFrameCounterRef.current % CULLING_FRAME_INTERVAL !== 0) {
         return;
