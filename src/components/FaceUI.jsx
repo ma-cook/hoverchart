@@ -240,7 +240,7 @@ const FaceUI = React.memo(
               gap: '4px',
               padding: '4px',
               borderRadius: '4px',
-              background: 'white',
+              background: 'var(--panel-bg)',
             }}
           >
             {tools.map((tool) => (

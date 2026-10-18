@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
 import useTextAtlasStore from '../stores/textAtlasStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveTextColor } from '../utils/themeColors';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import { registerHeaderBillboardMesh } from './HeaderBillboardManager';
 
@@ -109,6 +111,13 @@ const AtlasTextSprite = ({
   // the second call after version bump returns the cached entry).
   const atlasVersion = useTextAtlasStore((s) => s.atlasVersion);
 
+  // Theme-aware text color: black-like colors render white in dark mode.
+  const themeMode = useThemeStore((s) => s.mode);
+  const resolvedColor = useMemo(
+    () => resolveTextColor(style.color, themeMode),
+    [style.color, themeMode]
+  );
+
   // PERFORMANCE: Detect the GPU's max texture size on first render
   // so the atlas never grows beyond what the hardware supports.
   // R3F's `gl` is THREE.WebGLRenderer — use getContext() for the raw WebGL context.
@@ -213,7 +222,7 @@ const AtlasTextSprite = ({
     // Add text to atlas and get UV coordinates
     const entry = atlas.addText(text, {
       fontSize: fontSizeInPixels,
-      color: style.color || '#000000',
+      color: resolvedColor,
       fontFamily: style.fontFamily || 'Arial, sans-serif',
       bold: style.bold || false,
       italic: style.italic || false,
@@ -231,7 +240,7 @@ const AtlasTextSprite = ({
     atlasVersionRef.current = atlas.version;
     atlasEntryKeyRef.current = atlas._getKey(text, {
       fontSize: fontSizeInPixels,
-      color: style.color || '#000000',
+      color: resolvedColor,
       fontFamily: style.fontFamily || 'Arial, sans-serif',
       bold: style.bold || false,
       italic: style.italic || false,
@@ -280,7 +289,7 @@ const AtlasTextSprite = ({
   }, [
     text,
     style.fontSize,
-    style.color,
+    resolvedColor,
     style.fontFamily,
     style.bold,
     style.italic,

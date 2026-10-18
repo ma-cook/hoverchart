@@ -342,9 +342,10 @@ canvas {
   width: 28px;
   height: 28px;
   padding: 4px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--panel-border);
   border-radius: 4px;
-  background: white;
+  background: var(--panel-bg);
+  color: var(--panel-text);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -355,7 +356,7 @@ canvas {
 }
 
 .object-tool-button:hover {
-  background: #f0f0f0;
+  background: var(--panel-hover-bg);
 }
 
 .object-tool-button.active {
@@ -365,8 +366,8 @@ canvas {
 }
 
 .object-tool-button select {
-  background: white;
-  color: black;
+  background: var(--panel-bg);
+  color: var(--panel-text);
   border: none;
   width: 100%;
   height: 100%;
@@ -379,8 +380,8 @@ canvas {
 }
 
 .object-tool-button select option {
-  background: white;
-  color: black;
+  background: var(--panel-bg);
+  color: var(--panel-text);
 }
 
 .object-ui-container {
@@ -419,9 +420,10 @@ canvas {
   width: 28px;
   height: 28px;
   padding: 4px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--panel-border);
   border-radius: 4px;
-  background: white;
+  background: var(--panel-bg);
+  color: var(--panel-text);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -432,18 +434,19 @@ canvas {
 }
 
 .face-tool-button:hover {
-  background: #f0f0f0;
+  background: var(--panel-hover-bg);
 }
 
 .header-input {
   font-family: inherit;
   font-size: 14px;
   padding: 4px 8px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--panel-border);
   border-radius: 4px;
   outline: none;
   width: 200px;
-  background: white;
+  background: var(--panel-bg);
+  color: var(--panel-text);
 }
 
 .header-input:focus {
@@ -496,10 +499,10 @@ canvas {
   width: 28px; /* Match face-tool-button width */
   height: 28px; /* Match face-tool-button height */
   padding: 4px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--panel-border);
   border-radius: 4px;
-  background: white;
-  color: black;
+  background: var(--panel-bg);
+  color: var(--panel-text);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -509,7 +512,7 @@ canvas {
 }
 
 .border-menu-item:hover {
-  background: #f0f0f0;
+  background: var(--panel-hover-bg);
 }
 
 /* Connection status styles */
@@ -1939,13 +1942,13 @@ body {
 .runtime-scan-section {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid var(--panel-border);
 }
 
 .runtime-scan-label {
   font-size: 12px;
   font-weight: bold;
-  color: #555;
+  color: var(--panel-text-muted);
   margin: 0 0 6px 0;
 }
 
@@ -1953,7 +1956,9 @@ body {
   width: 100%;
   padding: 8px;
   font-size: 13px;
-  border: 2px solid #333;
+  border: 2px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--panel-text);
   border-radius: 4px;
   box-sizing: border-box;
   margin-bottom: 6px;
@@ -1961,7 +1966,7 @@ body {
 
 .runtime-scan-input:disabled {
   opacity: 0.6;
-  background: #f5f5f5;
+  background: var(--panel-hover-bg);
 }
 
 .runtime-scan-controls {
@@ -1973,9 +1978,10 @@ body {
 .runtime-scan-duration {
   padding: 8px 4px;
   font-size: 13px;
-  border: 2px solid #333;
+  border: 2px solid var(--panel-border);
   border-radius: 4px;
-  background: white;
+  background: var(--panel-bg);
+  color: var(--panel-text);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -1988,9 +1994,9 @@ body {
 .runtime-scan-button {
   flex: 1;
   padding: 8px;
-  background-color: white;
-  color: #333;
-  border: 2px solid #333;
+  background-color: var(--panel-bg);
+  color: var(--panel-text);
+  border: 2px solid var(--panel-border);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
@@ -2012,7 +2018,7 @@ body {
 
 .runtime-scan-last {
   font-size: 11px;
-  color: #888;
+  color: var(--panel-text-muted);
   margin: 4px 0 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2067,7 +2073,7 @@ body {
 
 .space-chat-repo-name {
   font-weight: 600;
-  color: #333;
+  color: var(--panel-text);
 }
 
 .space-chat-branch-name {
@@ -2077,15 +2083,16 @@ body {
 
 .space-chat-small-btn {
   padding: 2px 8px;
-  background: white;
-  border: 1px solid #ccc;
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border: 1px solid var(--panel-border);
   border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
 }
 
 .space-chat-small-btn:hover {
-  background: #f0f0f0;
+  background: var(--panel-hover-bg);
   border-color: #999;
 }
 
@@ -2098,9 +2105,9 @@ body {
 .space-chat-repo-list {
   max-height: 150px;
   overflow-y: auto;
-  border: 1px solid #ddd;
+  border: 1px solid var(--panel-border);
   border-radius: 4px;
-  background: white;
+  background: var(--panel-bg);
 }
 
 .space-chat-repo-item {
@@ -2109,14 +2116,15 @@ body {
   padding: 6px 8px;
   border: none;
   background: none;
+  color: var(--panel-text);
   text-align: left;
   cursor: pointer;
   font-size: 12px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--panel-border);
 }
 
 .space-chat-repo-item:hover {
-  background: #e8f0fe;
+  background: var(--panel-hover-bg);
 }
 
 .space-chat-repo-item:last-child {
@@ -2132,7 +2140,9 @@ body {
 .space-chat-new-repo input {
   flex: 1;
   padding: 4px 8px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--panel-text);
   border-radius: 4px;
   font-size: 12px;
 }
@@ -2149,19 +2159,20 @@ body {
 }
 
 .space-chat-modal {
-  background: white;
+  background: var(--panel-bg);
+  color: var(--panel-text);
   border-radius: 8px;
   padding: 20px;
   width: 280px;
   max-width: 90%;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 24px var(--panel-shadow);
 }
 
 .space-chat-modal-title {
   font-size: 16px;
   font-weight: 600;
   margin-bottom: 12px;
-  color: #333;
+  color: var(--panel-text);
 }
 
 .space-chat-modal-body {
@@ -2173,13 +2184,15 @@ body {
 .space-chat-modal-body p {
   margin: 0;
   font-size: 13px;
-  color: #555;
+  color: var(--panel-text-muted);
 }
 
 .space-chat-modal-input {
   width: 100%;
   padding: 8px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--panel-text);
   border-radius: 4px;
   font-size: 13px;
   box-sizing: border-box;
@@ -2194,15 +2207,16 @@ body {
 
 .space-chat-modal-btn {
   padding: 6px 14px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--panel-border);
   border-radius: 4px;
-  background: white;
+  background: var(--panel-bg);
+  color: var(--panel-text);
   cursor: pointer;
   font-size: 13px;
 }
 
 .space-chat-modal-btn:hover {
-  background: #f0f0f0;
+  background: var(--panel-hover-bg);
 }
 
 .space-chat-modal-btn.primary {

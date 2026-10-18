@@ -79,7 +79,7 @@ const HeaderInput = React.memo(
         <Html
           center
           style={{
-            background: 'white',
+            background: 'var(--panel-bg)',
             padding: '4px',
             borderRadius: '4px',
             boxShadow: '0 2px 4px rgba(0,0,0,0.1)',

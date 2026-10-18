@@ -11,6 +11,7 @@ import {
 } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
+import { isBlackLike } from '../utils/themeColors';
 import FaceIndicator from './FaceIndicator';
 import TextObjectUI from './TextObjectUI';
 import * as THREE from 'three';
@@ -1695,8 +1696,8 @@ const TextObject = React.memo(
       width: '100%',
       height: contentHeight,
       minHeight: '2em', // Start with small height, will expand
-      background: isPipelineTask && taskColor ? taskColor : 'rgb(255, 255, 255)',
-      color: textStyle.color || 'black',
+      background: isPipelineTask && taskColor ? taskColor : 'var(--panel-bg)',
+      color: isBlackLike(textStyle.color) ? 'var(--panel-text)' : textStyle.color,
       border: 'none',
       padding: '8px',
       margin: '0',

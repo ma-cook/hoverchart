@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore from '../stores/lodStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 import { isFullDetailByOwnLevel } from '../utils/lodVisibility';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
@@ -108,6 +110,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
   const parentIds = useLODStore((s) => s.parentIds);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
+  const themeMode = useThemeStore((s) => s.mode);
 
   const filteredOctahedronsRef = useRef(null);
   const filteredOctahedrons = useMemo(() => {
@@ -334,7 +337,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
         const realtimeTransform = octahedronTransformMap.get(octaId);
         const position = realtimeTransform?.position || octa.position || [0, 0, 0];
         const scale = realtimeTransform?.scale || octa.scale || [1, 1, 1];
-        const color = octa.color || '#000000';
+        const color = resolveEdgeColor(octa.color, themeMode) || '#000000';
 
         let isVisible = true;
         if (enableCulling) {
@@ -396,7 +399,7 @@ const GlobalOctahedronEdgesRenderer = React.memo(({
         const realtimeTransform = octahedronTransformMap.get(octaId);
         const position = realtimeTransform?.position || octa.position || [0, 0, 0];
         const scale = realtimeTransform?.scale || octa.scale || [1, 1, 1];
-        const color = octa.color || '#000000';
+        const color = resolveEdgeColor(octa.color, themeMode) || '#000000';
 
         let isVisible = true;
         let visibilityChanged = false;

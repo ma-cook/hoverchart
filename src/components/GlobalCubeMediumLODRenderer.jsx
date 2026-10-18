@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 import { visibleAtTier } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
@@ -56,6 +58,7 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
   const parentIds = useLODStore((s) => s.parentIds);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
+  const themeMode = useThemeStore((s) => s.mode);
 
   // Filter cubes to only those at MEDIUM LOD level
   // Grouping containers are excluded (they always render at full detail)
@@ -169,7 +172,7 @@ const GlobalCubeMediumLODRenderer = React.memo(({ cubes = [], onInstanceClick })
 
       // Every cube renders its own color — the previous parent-object grey
       // override was removed (single unified LOD regime, all components blue).
-      const color = cube.color || '#2a2a2a';
+      const color = resolveEdgeColor(cube.color, themeMode) || '#2a2a2a';
 
       // Check if this cube's data changed
       const lastKnown = lastDataRef.current.get(cubeId);

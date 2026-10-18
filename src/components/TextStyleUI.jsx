@@ -115,7 +115,7 @@ export const TextStyleUIContent = ({
         gap: '4px',
         alignItems: 'center',
         padding: '4px',
-        background: 'white',
+        background: 'var(--panel-bg)',
         borderRadius: '4px',
       }}
     >
@@ -128,8 +128,9 @@ export const TextStyleUIContent = ({
           style={{
             width: '36px',
             padding: '4px 8px',
-            background: 'white',
-            border: '1px solid #ccc',
+            background: 'var(--panel-bg)',
+            color: 'var(--panel-text)',
+            border: '1px solid var(--panel-border)',
             borderRadius: '4px',
             cursor: 'pointer',
           }}
@@ -154,9 +155,9 @@ export const TextStyleUIContent = ({
             width: '50px',
             padding: '4px 8px',
             fontSize: '12px',
-            background: 'white',
-            color: 'black',
-            border: '1px solid #ccc',
+            background: 'var(--panel-bg)',
+            color: 'var(--panel-text)',
+            border: '1px solid var(--panel-border)',
             borderRadius: '4px',
             cursor: 'pointer',
           }}

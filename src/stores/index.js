@@ -30,6 +30,7 @@ export { default as useLlmStore } from './llmStore.js';
 export { default as useWorkflowStore } from './workflowStore.js';
 export { default as usePlanStore } from './planStore.js';
 export { default as useChatArchiveStore } from './chatArchiveStore.js';
+export { default as useThemeStore } from './themeStore.js';
 
 // Export store utilities
 export * from './storeUtils.js';

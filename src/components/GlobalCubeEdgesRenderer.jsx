@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
 import useLODStore from '../stores/lodStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 import { isFullDetailVisible } from '../utils/lodVisibility';
 import { initWasmKernels, fillEdgeBuffers, getScratchStartView, getScratchEndView, getScratchColorView, isWasmReady } from '../utils/wasmKernels';
 import { bulkImportState, shouldDeferGlobalFilter } from '../utils/bulkImportState';
@@ -155,6 +157,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
   const parentIds = useLODStore((s) => s.parentIds);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
+  const themeMode = useThemeStore((s) => s.mode);
   
   // Filter cubes based on LOD level - only render edges for FULL LOD cubes.
   // Grouping containers are EXCLUDED here — they have no LOD and are rendered by
@@ -476,7 +479,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
         const realtimeTransform = cubeTransformMap.get(cubeId);
         const position = realtimeTransform?.position || cube.position || [0, 0, 0];
         const scale = realtimeTransform?.scale || cube.scale || [1, 1, 1];
-        const color = cube.color || '#000000';
+        const color = resolveEdgeColor(cube.color, themeMode) || '#000000';
 
         // Frustum visibility
         let isVisible = true;
@@ -546,7 +549,7 @@ const GlobalCubeEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1, 
         const realtimeTransform = cubeTransformMap.get(cubeId);
         const position = realtimeTransform?.position || cube.position || [0, 0, 0];
         const scale = realtimeTransform?.scale || cube.scale || [1, 1, 1];
-        const color = cube.color || '#000000';
+        const color = resolveEdgeColor(cube.color, themeMode) || '#000000';
 
         let isVisible = true;
         let visibilityChanged = false;

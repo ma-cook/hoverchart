@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 import { dodecahedronTransformMap } from './GlobalDodecahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
@@ -44,6 +46,7 @@ const GlobalDodecahedronLowLODRenderer = React.memo(({ dodecahedrons = [], onIns
   const parentIds = useLODStore((s) => s.parentIds);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
+  const themeMode = useThemeStore((s) => s.mode);
 
   // Filter to LOW-LOD dodecahedrons (excludes grouping containers)
   const lowDodecahedronsRef = useRef(null);
@@ -148,7 +151,7 @@ const GlobalDodecahedronLowLODRenderer = React.memo(({ dodecahedrons = [], onIns
       const position = realtimeTransform?.position || dodeca.position || [0, 0, 0];
       const scale = realtimeTransform?.scale || dodeca.scale || [1, 1, 1];
 
-      const color = dodeca.color || '#888888';
+      const color = resolveEdgeColor(dodeca.color, themeMode) || '#888888';
 
       const lastKnown = lastDataRef.current.get(dodecaId);
       const changed = !lastKnown ||

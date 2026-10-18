@@ -4,6 +4,8 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
 import useTextAtlasStore from '../stores/textAtlasStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveTextColor } from '../utils/themeColors';
 import { bulkImportState } from '../utils/bulkImportState';
 
 // =============================================================================
@@ -120,6 +122,9 @@ const InstancedAtlasText = ({
   // delivers rendered text bitmaps.
   const atlasVersion = useTextAtlasStore((s) => s.atlasVersion);
 
+  // Theme-aware text color: black-like colors render white in dark mode.
+  const themeMode = useThemeStore((s) => s.mode);
+
   // Detect GPU max texture size once
   useMemo(() => {
     if (!TextAtlas._gpuLimitDetected && gl) {
@@ -156,7 +161,7 @@ const InstancedAtlasText = ({
       const fontSizeRaw = label.textStyle?.fontSize || 1.5;
       const entry = atlas.addText(label.text, {
         fontSize: fontSizeRaw * 10,
-        color: label.textStyle?.color || 'black',
+        color: resolveTextColor(label.textStyle?.color, themeMode),
         underline: label.textStyle?.underline || false,
         bold: label.textStyle?.bold || false,
         italic: label.textStyle?.italic || false,
@@ -195,7 +200,7 @@ const InstancedAtlasText = ({
         // Store the key so we can re-read UVs after atlas resize
         atlasKey: atlas._getKey(label.text, {
           fontSize: fontSizeRaw * 10,
-          color: label.textStyle?.color || 'black',
+          color: resolveTextColor(label.textStyle?.color, themeMode),
           underline: label.textStyle?.underline || false,
           bold: label.textStyle?.bold || false,
           italic: label.textStyle?.italic || false,
@@ -206,7 +211,7 @@ const InstancedAtlasText = ({
 
     return Array.from(groupMap.values());
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
-  }, [labelFingerprint, atlas, scale, atlasVersion]);
+  }, [labelFingerprint, atlas, scale, atlasVersion, themeMode]);
 
   // Kick off one batched texture upload after all texts are added.
   // IMPORT FIX: while a bulk import is streaming, do NOT upload at all — the

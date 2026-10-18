@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 import { visibleAtTier } from '../utils/lodVisibility';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
@@ -36,6 +38,7 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
   const parentIds = useLODStore((s) => s.parentIds);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
+  const themeMode = useThemeStore((s) => s.mode);
 
   // Filter to LOW-LOD cubes (excludes grouping containers)
   const lowCubesRef = useRef(null);
@@ -140,7 +143,7 @@ const GlobalCubeLowLODRenderer = React.memo(({ cubes = [], onInstanceClick }) =>
       const position = realtimeTransform?.position || cube.position || [0, 0, 0];
       const scale = realtimeTransform?.scale || cube.scale || [1, 1, 1];
 
-      const color = cube.color || '#888888';
+      const color = resolveEdgeColor(cube.color, themeMode) || '#888888';
 
       const lastKnown = lastDataRef.current.get(cubeId);
       const changed = !lastKnown ||

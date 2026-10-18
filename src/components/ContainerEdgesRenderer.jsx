@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 import {
   BASE_CUBE_EDGES,
   EDGES_PER_CUBE,
@@ -54,6 +56,7 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   // Track last-known transform/color per container to detect in-place mutations.
   const lastStateRef = useRef(new Map());
   const { size } = useThree();
+  const themeMode = useThemeStore((s) => s.mode);
 
   // Filter to grouping / repo containers only.  Containers have no LOD, so this
   // memo deliberately does NOT depend on _lodVersion.  Referential identity is
@@ -172,7 +175,7 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
       const realtime = cubeTransformMap.get(cubeId);
       const position = realtime?.position || cube.position || [0, 0, 0];
       const scale = realtime?.scale || cube.scale || [1, 1, 1];
-      const color = cube.color || '#000000';
+      const color = resolveEdgeColor(cube.color, themeMode) || '#000000';
 
       const last = lastStateRef.current.get(cubeId);
       const changed =

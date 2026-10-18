@@ -1,3 +1,26 @@
+/* Theme tokens for light panels floating over the canvas.
+   The top bar / side modals are permanently dark-styled and do not use these. */
+:root,
+html[data-theme='light'] {
+  --canvas-bg: #f0f2f5;
+  --panel-bg: #ffffff;
+  --panel-text: #000000;
+  --panel-text-muted: #666666;
+  --panel-border: #cccccc;
+  --panel-hover-bg: #f0f0f0;
+  --panel-shadow: rgba(0, 0, 0, 0.15);
+}
+
+html[data-theme='dark'] {
+  --canvas-bg: #000000;
+  --panel-bg: #1e1e22;
+  --panel-text: #e6e6e6;
+  --panel-text-muted: #999999;
+  --panel-border: #3a3a40;
+  --panel-hover-bg: #2a2a30;
+  --panel-shadow: rgba(0, 0, 0, 0.5);
+}
+
 html,
 body {
   height: 100%;

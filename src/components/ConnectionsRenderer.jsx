@@ -32,6 +32,8 @@ import {
 import { useFrustumCulledConnections } from '../hooks/useFrustumCulling';
 import useConnectionStore from '../stores/connectionStore';
 import useDiagramStore from '../stores/diagramStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 
 // PERFORMANCE: Hoisted pointer handlers — identical for every connection,
 // avoids creating new closures on each render.
@@ -267,6 +269,7 @@ const Connection = React.memo(
     // PERFORMANCE: Use batched state hook instead of 7+ individual subscriptions
     const connectionState = useConnectionState(connection?.id);
     const actions = useConnectionActions();
+    const themeMode = useThemeStore((s) => s.mode);
     
     // Destructure for easier access
     const { isSelected, isFlowPathHighlighted, isDeleting, lineText, showTextInput, showStyleUI } = connectionState;
@@ -746,7 +749,7 @@ const Connection = React.memo(
                 color={
                   isSelected ? '#ffff00' :
                   isFlowPathHighlighted ? '#FF9800' :
-                  (connection.color || 'black')
+                  (resolveEdgeColor(connection.color, themeMode) || 'black')
                 }
                 lineWidth={getLineWidth()}
                 glowWidth={1}
@@ -769,7 +772,7 @@ const Connection = React.memo(
               color={
                 isSelected ? '#ffff00' :
                 isFlowPathHighlighted ? '#FF9800' :
-                (connection.color || 'black')
+                (resolveEdgeColor(connection.color, themeMode) || 'black')
               }
               lineWidth={getLineWidth()}
               lineStyle={effectiveLineStyle}

@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 import { tetrahedronTransformMap } from './GlobalTetrahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { createBillboardLowLodMaterial } from './LowLodBillboardMaterial';
@@ -45,6 +47,7 @@ const GlobalTetrahedronLowLODRenderer = React.memo(({ tetrahedrons = [], onInsta
   const parentIds = useLODStore((s) => s.parentIds);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
+  const themeMode = useThemeStore((s) => s.mode);
 
   // Filter to LOW-LOD tetrahedrons (excludes grouping containers)
   const lowTetrahedronsRef = useRef(null);
@@ -149,7 +152,7 @@ const GlobalTetrahedronLowLODRenderer = React.memo(({ tetrahedrons = [], onInsta
       const position = realtimeTransform?.position || tetra.position || [0, 0, 0];
       const scale = realtimeTransform?.scale || tetra.scale || [1, 1, 1];
 
-      const color = tetra.color || '#808080';
+      const color = resolveEdgeColor(tetra.color, themeMode) || '#808080';
 
       const lastKnown = lastDataRef.current.get(tetraId);
       const changed = !lastKnown ||

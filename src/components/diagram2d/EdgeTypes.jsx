@@ -71,7 +71,7 @@ function getMarkerEnd(connectionType) {
 const LABEL_CSS_CLASS = 'merfolk-edge-label';
 if (typeof document !== 'undefined') {
   const tag = document.createElement('style');
-  tag.textContent = `.${LABEL_CSS_CLASS}{position:absolute;pointer-events:all;background:#fff;border:1px solid #ccc;border-radius:3px;padding:2px 6px;font-size:10px;color:#333;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}`;
+  tag.textContent = `.${LABEL_CSS_CLASS}{position:absolute;pointer-events:all;background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:3px;padding:2px 6px;font-size:10px;color:var(--panel-text);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}`;
   document.head.appendChild(tag);
 }
 

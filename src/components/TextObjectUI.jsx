@@ -160,7 +160,7 @@ const TextObjectUI = forwardRef(
               gap: '4px',
               alignItems: 'center',
               padding: '4px',
-              background: 'white',
+              background: 'var(--panel-bg)',
               borderRadius: '4px',
             }}
           >

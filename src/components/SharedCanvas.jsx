@@ -22,7 +22,7 @@ const SharedCanvas = ({ children, style, onPointerMissed }) => (
       left: 0,
       width: '100vw',
       height: '100vh',
-      background: '#f0f2f5',
+      background: 'var(--canvas-bg)',
       ...style,
     }}
     gl={GL_SETTINGS}

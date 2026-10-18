@@ -179,7 +179,7 @@ function minimapNodeColor(node) {
 
 const PRO_OPTIONS = { hideAttribution: true };
 
-const OVERLAY_STYLE = { position: 'fixed', inset: 0, zIndex: 100, background: '#fff', contain: 'strict' };
+const OVERLAY_STYLE = { position: 'fixed', inset: 0, zIndex: 100, background: 'var(--canvas-bg)', contain: 'strict' };
 
 const LOADING_OVERLAY_STYLE = {
   position: 'absolute', inset: 0, zIndex: 110,
@@ -505,22 +505,23 @@ function DiagramOverlay2D() {
 // ---------------------------------------------------------------------------
 
 const panelStyle = {
-  background: '#fff',
+  background: 'var(--panel-bg)',
+  color: 'var(--panel-text)',
   borderRadius: '8px',
   padding: '12px',
-  boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
+  boxShadow: '0 2px 12px var(--panel-shadow)',
   fontSize: '13px',
 };
 
 const backButtonStyle = {
   padding: '6px 14px',
   borderRadius: '6px',
-  border: '1px solid #ccc',
-  background: '#fff',
+  border: '1px solid var(--panel-border)',
+  background: 'var(--panel-bg)',
   cursor: 'pointer',
   fontSize: '13px',
   fontWeight: 500,
-  color: '#333',
+  color: 'var(--panel-text)',
   transition: 'background 0.15s ease',
 };
 
@@ -530,17 +531,17 @@ const filterLabelStyle = {
   padding: '3px 0',
   cursor: 'pointer',
   fontSize: '13px',
-  color: '#444',
+  color: 'var(--panel-text-muted)',
 };
 
 const selectStyle = {
   width: '100%',
   padding: '4px 8px',
   borderRadius: '4px',
-  border: '1px solid #ccc',
+  border: '1px solid var(--panel-border)',
   fontSize: '12px',
-  color: '#333',
-  background: '#fff',
+  color: 'var(--panel-text)',
+  background: 'var(--panel-bg)',
   cursor: 'pointer',
 };
 

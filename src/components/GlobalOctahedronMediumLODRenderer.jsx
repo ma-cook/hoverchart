@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import useLODStore, { LOD_LEVELS } from '../stores/lodStore';
+import useThemeStore from '../stores/themeStore';
+import { resolveEdgeColor } from '../utils/themeColors';
 import { octahedronTransformMap } from './GlobalOctahedronEdgesRenderer';
 import { isPickingSuppressed } from './PickGate';
 import { shouldDeferGlobalFilter } from '../utils/bulkImportState';
@@ -52,6 +54,7 @@ const GlobalOctahedronMediumLODRenderer = React.memo(({ octahedrons = [], onInst
 const lodLevels = useLODStore((s) => s.lodLevels);
   const lodEnabled = useLODStore((s) => s.lodEnabled);
   const _lodVersion = useLODStore((s) => s._lodVersion);
+  const themeMode = useThemeStore((s) => s.mode);
 
   const mediumOctahedronsRef = useRef(null);
   const mediumOctahedrons = useMemo(() => {
@@ -156,7 +159,7 @@ const lodLevels = useLODStore((s) => s.lodLevels);
       const position = realtimeTransform?.position || octa.position || [0, 0, 0];
       const scale = realtimeTransform?.scale || octa.scale || [1, 1, 1];
 
-      const color = octa.color || '#808080';
+      const color = resolveEdgeColor(octa.color, themeMode) || '#808080';
 
       const lastKnown = lastDataRef.current.get(octaId);
       const changed = !lastKnown ||

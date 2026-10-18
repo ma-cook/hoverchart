@@ -1,4 +1,4 @@
-import { useUIOverlayStore, useDiagramStore, useSpatialManagerStore } from '../stores';
+import { useUIOverlayStore, useDiagramStore, useSpatialManagerStore, useThemeStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
@@ -313,6 +313,21 @@ const ProgressToast = memo(({ scanProgress }) => {
   );
 });
 ProgressToast.displayName = 'ProgressToast';
+
+function ThemeToggleButton() {
+  const mode = useThemeStore((state) => state.mode);
+  const toggleTheme = useThemeStore((state) => state.toggleTheme);
+  return (
+    <button
+      className="top-bar-btn"
+      onClick={toggleTheme}
+      title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      {mode === 'dark' ? '☀' : '☾'}
+    </button>
+  );
+}
 
 const UIOverlay = ({
   onCreateObject,
@@ -2053,6 +2068,7 @@ const UIOverlay = ({
         onOpenOrgManager={() => setShowOrgManager(true)}
         actions={
           <>
+          <ThemeToggleButton />
           {(user || trialMode) && (
             <>
               <button
