@@ -26,12 +26,16 @@ const tempFlipMatrix = new THREE.Matrix4().makeRotationY(Math.PI);
 const materialCache = new Map();
 
 /**
- * Get a shared material keyed by (texture, side, depthWrite, depthTest, opacity).
+ * Get a shared material keyed by (texture, side, depthWrite, depthTest, opacity, alphaTest).
  * Multi-page atlas: each page has its own texture, so materials must be per-texture.
+ *
+ * alphaTest mirrors the hard `discard` in InstancedAtlasText's fragment shader so
+ * the densely-packed atlas does not bleed neighbouring cells' faint pixels into a
+ * label (visible as trailing "ghost" strokes at the end of long headers).
  */
-function getSharedMaterial(texture, side, depthWrite, depthTest, opacity) {
+function getSharedMaterial(texture, side, depthWrite, depthTest, opacity, alphaTest) {
   const texId = texture.id; // THREE.js unique id per texture object
-  const key = `${texId}-${side}-${depthWrite}-${depthTest}-${opacity}`;
+  const key = `${texId}-${side}-${depthWrite}-${depthTest}-${opacity}-${alphaTest}`;
   
   if (!materialCache.has(key)) {
     const mat = new THREE.MeshBasicMaterial({
@@ -41,11 +45,50 @@ function getSharedMaterial(texture, side, depthWrite, depthTest, opacity) {
       depthWrite: depthWrite,
       depthTest: depthTest,
       opacity: opacity,
+      alphaTest: alphaTest,
     });
     materialCache.set(key, mat);
   }
   
   return materialCache.get(key);
+}
+
+// Matches InstancedAtlasText's `texColor.a < 0.01` discard threshold.
+const ATLAS_ALPHA_TEST = 0.01;
+
+/**
+ * Write an atlas entry's UVs into a plane's uv attribute, inset by half a texel
+ * on every side.  The inset guarantees bilinear filtering can never sample the
+ * neighbouring atlas cell (which causes "ghost" glyph fragments at the edge of
+ * long labels after a dense import).
+ *
+ * `fallbackTexture` supplies the page texture when the entry has no `.texture`
+ * (single-page sync atlas) so the page's pixel dimensions are always known.
+ */
+function writeEntryUVs(uvAttr, entry, fallbackTexture) {
+  const tex = entry.texture || fallbackTexture;
+  const img = tex && tex.image;
+  const texW = (img && img.width) || entry.width || 1;
+  const texH = (img && img.height) || entry.height || 1;
+
+  const du = 0.5 / texW;
+  const dv = 0.5 / texH;
+
+  const { u, v, uWidth, vHeight } = entry.uvs;
+
+  // Only inset when the entry is large enough that the inset cannot invert it.
+  const u0 = uWidth > 2 * du ? u + du : u;
+  const u1 = uWidth > 2 * du ? u + uWidth - du : u + uWidth;
+  const vTopRaw = 1 - (v + vHeight); // smaller V value (top of entry)
+  const vBotRaw = 1 - v; // larger V value (bottom of entry)
+  const vTop = vHeight > 2 * dv ? vTopRaw + dv : vTopRaw;
+  const vBot = vHeight > 2 * dv ? vBotRaw - dv : vBotRaw;
+
+  uvAttr.setXY(0, u0, vBot); // Bottom-left (flip V)
+  uvAttr.setXY(1, u1, vBot); // Bottom-right (flip V)
+  uvAttr.setXY(2, u0, vTop); // Top-left (flip V)
+  uvAttr.setXY(3, u1, vTop); // Top-right (flip V)
+  uvAttr.needsUpdate = true;
 }
 
 /**
@@ -258,26 +301,20 @@ const AtlasTextSprite = ({
 
     const geo = new THREE.PlaneGeometry(baseWidth, baseHeight);
 
-    // Update UVs to match atlas coordinates
-    const uvAttr = geo.attributes.uv;
-    const { u, v, uWidth, vHeight } = entry.uvs;
-
-    // Set UV coordinates for each vertex
+    // Update UVs to match atlas coordinates.
     // Three.js PlaneGeometry vertices order: bottom-left, bottom-right, top-left, top-right
-    // Canvas Y goes down, Three.js texture Y goes up, so we need to flip V
-    uvAttr.setXY(0, u, 1 - v); // Bottom-left (flip V)
-    uvAttr.setXY(1, u + uWidth, 1 - v); // Bottom-right (flip V)
-    uvAttr.setXY(2, u, 1 - (v + vHeight)); // Top-left (flip V)
-    uvAttr.setXY(3, u + uWidth, 1 - (v + vHeight)); // Top-right (flip V)
-    uvAttr.needsUpdate = true;
+    // Canvas Y goes down, Three.js texture Y goes up, so V is flipped inside the helper.
+    const uvAttr = geo.attributes.uv;
 
     // PERFORMANCE: Use shared material from cache instead of creating new one per instance
     // Multi-page atlas: entry.texture points to the correct page's texture
     const entryTexture = entry.texture || atlas.getTexture();
+    writeEntryUVs(uvAttr, entry, entryTexture);
+
     const depthWriteValue = style.depthWrite !== undefined ? style.depthWrite : false;
     const depthTestValue = style.depthTest !== undefined ? style.depthTest : true;
     const opacityValue = style.opacity !== undefined ? style.opacity : 1;
-    const mat = getSharedMaterial(entryTexture, side, depthWriteValue, depthTestValue, opacityValue);
+    const mat = getSharedMaterial(entryTexture, side, depthWriteValue, depthTestValue, opacityValue, ATLAS_ALPHA_TEST);
 
     // Note: `style` is captured only by the console.warn diagnostic further up;
     // every field that actually determines geometry/material is listed below.
@@ -314,13 +351,7 @@ const AtlasTextSprite = ({
         if (atlasVersionRef.current !== atlas.version && atlasEntryKeyRef.current) {
           const entry = atlas.entries.get(atlasEntryKeyRef.current);
           if (entry && geometry.attributes.uv) {
-            const uvAttr = geometry.attributes.uv;
-            const { u, v, uWidth, vHeight } = entry.uvs;
-            uvAttr.setXY(0, u, 1 - v);
-            uvAttr.setXY(1, u + uWidth, 1 - v);
-            uvAttr.setXY(2, u, 1 - (v + vHeight));
-            uvAttr.setXY(3, u + uWidth, 1 - (v + vHeight));
-            uvAttr.needsUpdate = true;
+            writeEntryUVs(geometry.attributes.uv, entry);
             atlasVersionRef.current = atlas.version;
           }
         }
@@ -340,13 +371,7 @@ const AtlasTextSprite = ({
 
     const entry = atlas.entries.get(atlasEntryKeyRef.current);
     if (entry && geometry.attributes.uv) {
-      const uvAttr = geometry.attributes.uv;
-      const { u, v, uWidth, vHeight } = entry.uvs;
-      uvAttr.setXY(0, u, 1 - v);
-      uvAttr.setXY(1, u + uWidth, 1 - v);
-      uvAttr.setXY(2, u, 1 - (v + vHeight));
-      uvAttr.setXY(3, u + uWidth, 1 - (v + vHeight));
-      uvAttr.needsUpdate = true;
+      writeEntryUVs(geometry.attributes.uv, entry);
       atlasVersionRef.current = atlas.version;
       // Also ensure texture is uploaded
       atlas.updateTexture();
