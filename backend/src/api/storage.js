@@ -13,11 +13,17 @@ router.get('/:path(*)', async (req, res) => {
     const file = storage.bucket(bucketName).file(path);
     const [exists] = await file.exists();
     if (!exists) return res.status(404).json({ error: 'File not found' });
-    const [stream] = await file.getStream();
+    const stream = file.getStream();
+    stream.on('error', (streamErr) => {
+      console.error('File stream error:', streamErr);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to read file' });
+      else res.destroy(streamErr);
+    });
     stream.pipe(res);
   } catch (err) {
     console.error('File read error:', err);
-    res.status(500).json({ error: 'Failed to read file' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to read file' });
+    else res.destroy(err);
   }
 });
 
