@@ -12,8 +12,9 @@ import {
 import { screenRecorder } from '../services/screenRecordingService';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { populateContentStoreWorker } from '../services/zenService';
-import { saveRepoFileContents } from '../services/context/contentStorePersistence';
+import { saveRepoFileContents, saveSpaceMeta, loadSpaceMeta, removeSpaceMeta } from '../services/context/contentStorePersistence';
 import { saveDiagramDigest, rehydrateFromDigest } from '../services/graphPersistence';
+import { renderMerfolkMarkdownToScene } from '../services/sceneRenderService';
 import { safeSetItem, safeGetItem, safeRemoveItem } from '../utils/safeLocalStorage';
 import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
@@ -369,6 +370,7 @@ const UIOverlay = ({
       setLastGeneratedMarkdownUrl(null);
       if (spaceId) {
         try { localStorage.removeItem(`diagramMarkdownText_${spaceId}`); } catch { /* ignore */ }
+        removeSpaceMeta(spaceId, 'diagramMarkdownText');
       }
       return;
     }
@@ -378,7 +380,10 @@ const UIOverlay = ({
     lastGeneratedMarkdownBlobRef.current = url;
     setLastGeneratedMarkdownUrl(url);
     if (spaceId) {
-      try { safeSetItem(`diagramMarkdownText_${spaceId}`, markdown); } catch { /* ignore */ }
+      // IndexedDB: full markdown copies (hundreds of KB per space) were a top
+      // localStorage quota consumer. Remove any legacy copy so it is reclaimed.
+      saveSpaceMeta(spaceId, 'diagramMarkdownText', markdown);
+      try { localStorage.removeItem(`diagramMarkdownText_${spaceId}`); } catch { /* ignore */ }
     }
   }, []);
 
@@ -490,15 +495,27 @@ const UIOverlay = ({
     const localSha = localStorage.getItem(`diagramCommitSha_${currentSpaceId}`) || null;
     setLastCommitSha(localSha);
     const localMd = localStorage.getItem(`diagramMarkdownText_${currentSpaceId}`) || null;
-    if (localMd) {
-      lastGeneratedMarkdownTextRef.current = localMd;
-      const blob = new Blob([localMd], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      lastGeneratedMarkdownBlobRef.current = url;
-      setLastGeneratedMarkdownUrl(url);
-    } else {
-      storeGeneratedMarkdown(null);
-    }
+    let cancelled = false;
+    (async () => {
+      // IndexedDB first (current storage); the legacy localStorage copy is the
+      // migration source for spaces saved before the move.
+      let md = await loadSpaceMeta(currentSpaceId, 'diagramMarkdownText');
+      if (!md && localMd) {
+        md = localMd;
+        saveSpaceMeta(currentSpaceId, 'diagramMarkdownText', localMd);
+        try { localStorage.removeItem(`diagramMarkdownText_${currentSpaceId}`); } catch { /* ignore */ }
+      }
+      if (cancelled) return;
+      if (md) {
+        lastGeneratedMarkdownTextRef.current = md;
+        const blob = new Blob([md], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        lastGeneratedMarkdownBlobRef.current = url;
+        setLastGeneratedMarkdownUrl(url);
+      } else {
+        storeGeneratedMarkdown(null);
+      }
+    })();
 
     // Hydrate any missing pieces from Firestore (cross-device support)
     const needsBackendFetch = !localUrl || !localSha || !stored;
@@ -519,6 +536,9 @@ const UIOverlay = ({
         })
         .catch(() => {});
     }
+    return () => {
+      cancelled = true;
+    };
   }, [currentSpaceId, user, storeGeneratedMarkdown]);
 
   // Hydrator shared by every durable-scan entry point (BG button, rescan
@@ -547,6 +567,14 @@ const UIOverlay = ({
         }
         diagramIsBeingGenerated.current = true;
         await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
+        // hydrateStoreFromMarkdown only rebuilds the 2D graph — materialize
+        // the 3D objects/connections (and persist them) from the same
+        // markdown, otherwise a server scan leaves the canvas empty.
+        try {
+          await renderMerfolkMarkdownToScene(markdown, currentSpaceId, user);
+        } catch (sceneErr) {
+          console.warn('[durableScan] 3D scene build from server markdown failed:', sceneErr.message);
+        }
         setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
         setNotification({
           show: true,
@@ -559,7 +587,7 @@ const UIOverlay = ({
         clearDurablePoll(doneJob.id);
       }
     };
-  }, [currentSpaceId, storeGeneratedMarkdown, clearDurablePoll]);
+  }, [currentSpaceId, user, storeGeneratedMarkdown, clearDurablePoll]);
 
   const buildDurableFailed = useCallback(() => (doneJob) => {
     try {

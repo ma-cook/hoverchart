@@ -11,7 +11,9 @@ const internalKey = process.env.SCAN_INTERNAL_KEY;
 
 function countMerfolk(markdown) {
   const body = markdown.match(/```merfolk\n([\s\S]*?)```/)?.[1] || markdown;
-  const nodes = (body.match(/%%\s+\S.*\[\[/g) || []).length;
+  // Node definitions look like `Name{Component: Name}` at the start of a line
+  // (the `%%` lines are section headers, not nodes).
+  const nodes = (body.match(/^[\w.]+\{\w+:/gm) || []).length;
   const edges = (body.match(/-->|-.->/g) || []).length;
   return { nodes, edges };
 }

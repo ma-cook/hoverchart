@@ -19,8 +19,8 @@ import useLlmStore from '../stores/llmStore';
 import useChatArchiveStore from '../stores/chatArchiveStore';
 import useDiagramStore from '../stores/diagramStore';
 import { PROVIDERS, fetchModels, isFreeUsageLimit } from '../services/llmProviders';
-import { getMarkdownLayoutWorker } from '../workers/markdownLayoutWorkerClient';
 import { markdownDiagramService } from '../services/markdownDiagramService';
+import { renderMerfolkMarkdownToScene } from '../services/sceneRenderService';
 import {
   getGithubToken,
   isGithubAuthenticated,
@@ -86,77 +86,7 @@ async function renderMerfolkToScene(merfolkBlocks, spaceId, user) {
     .map(block => '```merfolk\n' + block + '\n```')
     .join('\n\n');
 
-  const basePosition = markdownDiagramService.getCameraBasedPosition();
-
-  let workerResult = null;
-  try {
-    const layoutWorker = getMarkdownLayoutWorker();
-    workerResult = await layoutWorker.computeLayout(markdown, basePosition);
-  } catch (err) {
-    console.warn('[SpaceChat] Layout worker failed:', err.message);
-    return false;
-  }
-
-  if (!workerResult || !workerResult.diagramLayouts || workerResult.diagramLayouts.length === 0) {
-    return false;
-  }
-
-  const diagrams = workerResult.diagramLayouts.map((layout) => ({
-    graph: {
-      nodes: new Map(layout.graphNodes),
-      connections: new Map(
-        layout.rawConnections.map((c, i) => [
-          `hc-${i}`,
-          { source: c.source, target: c.target, label: c.label, type: c.connectionType, visual: c.visual || null },
-        ])
-      ),
-    },
-    errors: layout.errors || [],
-  }));
-
-  const connectionTags = new Map(
-    workerResult.connectionTags.map(([key, tags]) => [key, new Set(tags)])
-  );
-
-  const nodeToObjectIdMap = new Map();
-  const allConnectionsToSave = [];
-  const allObjectsToSave = [];
-  const currentSpaceId = spaceId;
-
-  window._faceDistributionCounters = window._faceDistributionCounters || new Map();
-
-  for (const diagram of diagrams) {
-    if (diagram.errors && diagram.errors.length > 0) continue;
-
-    await markdownDiagramService.createObjectsFromDiagram(
-      diagram,
-      () => {},
-      nodeToObjectIdMap,
-      basePosition,
-      user,
-      currentSpaceId,
-      allObjectsToSave,
-      null
-    );
-
-    markdownDiagramService.createConnectionsFromDiagram(
-      diagram,
-      nodeToObjectIdMap,
-      allConnectionsToSave,
-      connectionTags
-    );
-  }
-
-  if (allConnectionsToSave.length > 0) {
-    await markdownDiagramService.saveConnections(
-      allConnectionsToSave,
-      currentSpaceId,
-      user,
-      allObjectsToSave
-    );
-  }
-
-  return allConnectionsToSave.length > 0 || allObjectsToSave.length > 0;
+  return renderMerfolkMarkdownToScene(markdown, spaceId, user);
 }
 
 async function associateCodeWithScene(codeBlocks, _spaceId, _user) {
@@ -1365,6 +1295,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               setLatestMarkdownUrl: () => {},
             });
             await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
+            // hydrateStoreFromMarkdown only rebuilds the 2D graph — materialize
+            // the 3D objects/connections (and persist them) from the same
+            // markdown, otherwise a server scan leaves the canvas empty.
+            try {
+              await renderMerfolkMarkdownToScene(markdown, spaceId, user);
+            } catch (sceneErr) {
+              console.warn('[scan] 3D scene build from server markdown failed:', sceneErr.message);
+            }
             setTimeout(() => saveDiagramDigest(spaceId), 0);
             onDiagramGenerated?.({
               markdown,

@@ -278,6 +278,44 @@ export async function loadRepoFileContents(spaceId) {
 }
 
 /**
+ * Generic per-space meta blob persistence (IndexedDB). Used for payloads that
+ * used to live in localStorage and were a major quota contributor — diagram
+ * digests and full generated-markdown copies.
+ */
+export async function saveSpaceMeta(spaceId, name, value) {
+  try {
+    await txPut(STORE_META, `${name}:${spaceId || ''}`, value);
+    return true;
+  } catch (err) {
+    console.warn(`[contentStorePersistence] save ${name} failed:`, err.message);
+    return false;
+  }
+}
+
+export async function loadSpaceMeta(spaceId, name) {
+  try {
+    return (await txGet(STORE_META, `${name}:${spaceId || ''}`)) || null;
+  } catch (err) {
+    console.warn(`[contentStorePersistence] load ${name} failed:`, err.message);
+    return null;
+  }
+}
+
+export async function removeSpaceMeta(spaceId, name) {
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_META, 'readwrite');
+      tx.objectStore(STORE_META).delete(`${name}:${spaceId || ''}`);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn(`[contentStorePersistence] remove ${name} failed:`, err.message);
+  }
+}
+
+/**
  * Persist the per-file symbol index (serialized Map<filePath, entry>) for a
  * space. Moved out of localStorage because it is one of the largest per-space
  * payloads and was a major contributor to localStorage quota exhaustion.

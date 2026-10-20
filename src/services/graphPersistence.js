@@ -12,6 +12,7 @@
 
 import useDiagramStore from '../stores/diagramStore';
 import { safeGetItem, safeRemoveItem, safeSetItem } from '../utils/safeLocalStorage';
+import { saveSpaceMeta, loadSpaceMeta, removeSpaceMeta } from './context/contentStorePersistence';
 
 const STORAGE_PREFIX = 'diagramDigest_';
 const MAX_DIGEST_CHARS = 4800000;
@@ -80,6 +81,16 @@ export async function saveDiagramDigest(spaceId) {
         : null,
     };
 
+    // Primary: IndexedDB (structured clone — no JSON size cap and no fights
+    // over the ~5MB localStorage quota with markdown/other per-space keys).
+    const storedToIdb = await saveSpaceMeta(spaceId, 'diagramDigest', digest);
+    if (storedToIdb) {
+      // Reclaim the legacy localStorage copy so old spaces free up quota.
+      safeRemoveItem(`${STORAGE_PREFIX}${spaceId}`);
+      return;
+    }
+
+    // Fallback: legacy localStorage path when IndexedDB is unavailable/full.
     const serialized = JSON.stringify(digest);
     if (serialized.length > MAX_DIGEST_CHARS) {
       if (typeof CompressionStream === 'undefined' || typeof DecompressionStream === 'undefined') {
@@ -114,6 +125,11 @@ export async function saveDiagramDigest(spaceId) {
 export async function loadDiagramDigest(spaceId) {
   if (!spaceId) return null;
   try {
+    // Primary: IndexedDB copy written by saveDiagramDigest.
+    const idbDigest = await loadSpaceMeta(spaceId, 'diagramDigest');
+    if (idbDigest?.graphs) return idbDigest;
+
+    // Legacy localStorage copy (pre-IDB spaces).
     const raw = safeGetItem(`${STORAGE_PREFIX}${spaceId}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
@@ -130,6 +146,7 @@ export async function loadDiagramDigest(spaceId) {
 export function clearDiagramDigest(spaceId) {
   if (!spaceId) return;
   safeRemoveItem(`${STORAGE_PREFIX}${spaceId}`);
+  removeSpaceMeta(spaceId, 'diagramDigest');
 }
 
 /**

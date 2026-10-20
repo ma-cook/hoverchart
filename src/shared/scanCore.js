@@ -3226,11 +3226,36 @@ const pkgContent = await options.fetchFile('package.json');
     await Promise.all(Array.from({ length: poolSize }, () => fetchWorker()));
 
     const PROCESS_YIELD_EVERY = 10;
+    // Best-effort watchdog: a tree-sitter worker that never settles (WASM load
+    // failure, worker crash) used to hang the whole scan silently at the last
+    // "Processing files" progress tick. Abandon the file after this long and
+    // keep going — a lost symbol is better than a frozen scan.
+    const PROCESS_FILE_TIMEOUT_MS = 60000;
+    const withTimeout = (promise, ms, label) => {
+      let timer;
+      const guarded = promise.finally(() => clearTimeout(timer));
+      guarded.catch(() => {}); // late rejection after the race is already settled
+      return Promise.race([
+        guarded,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+        }),
+      ]);
+    };
     for (let idx = 0; idx < fetched.length; idx++) {
       const entry = fetched[idx];
       if (!entry) continue;
       const { file, fileContent } = entry;
-      await processSingleFile(file, fileContent, ctx);
+      const fileStart = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+      try {
+        await withTimeout(processSingleFile(file, fileContent, ctx), PROCESS_FILE_TIMEOUT_MS, `processSingleFile(${file.path})`);
+      } catch (fileErr) {
+        console.warn(`⚠️  Skipping ${file.path}:`, fileErr?.message || fileErr);
+      }
+      const fileMs = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - fileStart;
+      if (fileMs > 5000) {
+        console.warn(`[scan] slow file parse (${Math.round(fileMs)}ms): ${file.path}`);
+      }
       if (onProgress) {
         const pct = 35 + Math.round(((idx + 1) / fetched.length) * 5);
         onProgress(pct, `Processing files (${idx + 1}/${fetched.length})...`);
@@ -3242,6 +3267,8 @@ const pkgContent = await options.fetchFile('package.json');
         reportMemoryPressureOnce('repo scan');
       }
     }
+
+    if (onProgress) onProgress(42, 'Resolving imports and modules...');
 
     // ── L1 Post-scan: Resolve path aliases and barrel chains ───────────────
     // Reclassify aliased imports that were misclassified as external libraries
@@ -3410,6 +3437,7 @@ const pkgContent = await options.fetchFile('package.json');
         }
 
         if (tsSourceFiles.size > 0) {
+          if (onProgress) onProgress(45, `TypeScript analysis (${tsSourceFiles.size} files)...`);
           // Get tsconfig content (already fetched for module resolver, or fetch again)
           let tsconfigForTS = null;
           if (moduleResolver) {
@@ -3559,10 +3587,12 @@ const pkgContent = await options.fetchFile('package.json');
             console.log(`🔍 L2 Semantic analysis: ${tsImportDefinitions.size} resolved imports, ${tsModuleExports.size} resolved exports, ${tsCallGraph.size} call graph entries`);
           }
         }
-      } catch (err) {
-        console.warn(`⚠️  L2 TypeScript analysis failed (non-fatal):`, err.message);
-      }
+    } catch (err) {
+      console.warn(`⚠️  L2 TypeScript analysis failed (non-fatal):`, err.message);
     }
+    }
+
+    if (onProgress) onProgress(65, 'Building diagram graph...');
 
     // Capture raw file contents so the ContentStore can be populated with the
     // full repo corpus — this also lets markdown emission attach per-symbol
@@ -3598,6 +3628,7 @@ const pkgContent = await options.fetchFile('package.json');
     }
 
     // Generate Merfolk markdown
+    if (onProgress) onProgress(70, 'Generating diagram markdown...');
     const merfolkResult = generateMerfolkMarkdown({
       repoName,
       repoFileContents,
