@@ -344,8 +344,13 @@ export const connectionMethods = {
           color: connection.visual?.color || '#888888',
           thickness: connection.visual?.thickness || 2,
           textStyle: { fontSize: 4, color: 'black' },
+          // Store under the SOURCE OBJECT's center cell so the connection's
+          // cell_id matches the object's cell_id (objects use data.position).
+          // Deriving this from the face point (sourceWorldPosition) rounded
+          // boundary connections into a neighbouring cell that never loads,
+          // so their lines were never hydrated or polled back.
           cellId: (() => {
-            const coords = getCellCoordinates(sourceWorldPosition);
+            const coords = getCellCoordinates(sourceObject.position);
             return getCellId(coords.x, coords.y, coords.z);
           })(),
           merfolkData: {
@@ -674,7 +679,12 @@ export const connectionMethods = {
           continue;
         }
 
-        const startCellCoords = getCellCoordinates(startPosition);
+        // Group under the source object's center cell (matching how objects
+        // are stored) so the connection hydrates whenever its object loads.
+        // Fall back to the face position only when the center isn't carried.
+        const startCenter =
+          connectionData.start?.cube?.position || startPosition;
+        const startCellCoords = getCellCoordinates(startCenter);
         const startCellId = getCellId(
           startCellCoords.x,
           startCellCoords.y,

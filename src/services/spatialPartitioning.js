@@ -1018,19 +1018,20 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
       return false;
     }
 
-    // Get start and end positions
-    const startPosition = connectionData.start?.position;
-    const endPosition = connectionData.end?.position;
+    // Connections are stored under the SOURCE OBJECT's center cell so the
+    // connection's cell_id matches the object's cell_id. Deriving this from the
+    // face point (start.position) rounded boundary connections into a
+    // neighbouring cell that never loads. Fall back to the face position only
+    // when the source center isn't carried on the endpoint.
+    const startPosition =
+      connectionData.start?.cube?.position || connectionData.start?.position;
 
-    if (!startPosition || !endPosition) {
+    if (!startPosition) {
       return false;
     }
 
-    // Get cell coordinates for both endpoints
+    // Add connection to the source object's cell
     const startCellCoords = getCellCoordinates(startPosition);
-    const endCellCoords = getCellCoordinates(endPosition);
-
-    // Add connection to start cell
     const startCellId = getCellId(
       startCellCoords.x,
       startCellCoords.y,
@@ -1038,16 +1039,6 @@ export const addConnectionToCells = async (userId, spaceId, connectionData) => {
     );
 
     await addConnectionToCell(userId, spaceId, startCellId, connectionData);
-
-    // Add connection to end cell if different from start cell
-    const endCellId = getCellId(
-      endCellCoords.x,
-      endCellCoords.y,
-      endCellCoords.z
-    );
-    if (startCellId !== endCellId) {
-      await addConnectionToCell(userId, spaceId, endCellId, connectionData);
-    }
 
     return true;
   } catch {
@@ -1288,14 +1279,16 @@ export const removeConnectionFromCells = async (
   }
 
   try {
-    const rawStartPosition = connectionData?.start?.position;
-    const rawEndPosition = connectionData?.end?.position;
+    // Connections are stored under the SOURCE OBJECT's center cell
+    // (start.cube.position). Fall back to the face position only when the
+    // source center isn't carried on the endpoint.
+    const rawStartPosition =
+      connectionData?.start?.cube?.position || connectionData?.start?.position;
 
     // Normalize positions to handle both array and object formats
     const startPosition = normalizePosition(rawStartPosition);
-    const endPosition = normalizePosition(rawEndPosition);
 
-    if (!startPosition || !endPosition) {
+    if (!startPosition) {
       // Fallback: search all cells for this connection
       const fallbackResult = await removeConnectionFromAllCells(
         userId,
@@ -1306,11 +1299,8 @@ export const removeConnectionFromCells = async (
       return fallbackResult;
     }
 
-    // Get cell coordinates for both endpoints
+    // Remove connection from the source object's cell
     const startCellCoords = getCellCoordinates(startPosition);
-    const endCellCoords = getCellCoordinates(endPosition);
-
-    // Remove connection from start cell
     const startCellId = getCellId(
       startCellCoords.x,
       startCellCoords.y,
@@ -1324,23 +1314,7 @@ export const removeConnectionFromCells = async (
       connectionId
     );
 
-    // Remove connection from end cell if different from start cell
-    const endCellId = getCellId(
-      endCellCoords.x,
-      endCellCoords.y,
-      endCellCoords.z
-    );
-    let endResult = true;
-    if (startCellId !== endCellId) {
-      endResult = await removeConnectionFromCell(
-        userId,
-        spaceId,
-        endCellId,
-        connectionId
-      );
-    }
-
-    const success = startResult && endResult;
+    const success = startResult;
 
     // If the position-based approach failed, try the all-cells fallback
     if (!success) {

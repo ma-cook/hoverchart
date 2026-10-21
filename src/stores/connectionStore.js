@@ -245,9 +245,14 @@ const useConnectionStore = create((set, get) => ({
     set((state) => {
       const connectionsToRemove = new Set();
 
-      // Find connections that belong to unloaded cells
+      // Find connections that belong to unloaded cells. Connections are stored
+      // under their SOURCE OBJECT's center cell (start.cube.position), so only
+      // that cell determines whether the connection is still in range. Using
+      // the face position (start.position) would misjudge cells near boundaries.
       state.connections.forEach((connection) => {
-        if (!connection.start?.position || !connection.end?.position) {
+        const sourceCenter =
+          connection.start?.cube?.position || connection.start?.position;
+        if (!sourceCenter) {
           return;
         }
 
@@ -264,25 +269,16 @@ const useConnectionStore = create((set, get) => ({
 
           const getCellIdFromCoords = (x, y, z) => `${x},${y},${z}`;
 
-          const startCellCoords = getCellCoords(connection.start.position);
-          const endCellCoords = getCellCoords(connection.end.position);
+          const startCellCoords = getCellCoords(sourceCenter);
 
           const startCellId = getCellIdFromCoords(
             startCellCoords.x,
             startCellCoords.y,
             startCellCoords.z
           );
-          const endCellId = getCellIdFromCoords(
-            endCellCoords.x,
-            endCellCoords.y,
-            endCellCoords.z
-          );
 
-          // Remove connection if either endpoint is in an unloaded cell
-          if (
-            unloadedCellIds.includes(startCellId) ||
-            unloadedCellIds.includes(endCellId)
-          ) {
+          // Remove connection if its source cell is unloaded
+          if (unloadedCellIds.includes(startCellId)) {
             connectionsToRemove.add(connection.id);
           }
         } catch {

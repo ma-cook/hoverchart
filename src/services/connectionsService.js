@@ -41,6 +41,7 @@ export const wakeConnectionPolling = () => {
 import { api } from '../api-client';
 import useConnectionStore from '../stores/connectionStore';
 import { cleanObject } from '../utils/unifiedValidationUtils';
+import { getCellCoordinates, getCellId } from './spatialPartitioning';
 
 // Connection caching and unloading system
 const connectionCache = new Map();
@@ -175,9 +176,24 @@ const connectionDataChanged = (cached, incoming) => {
 
 // Serialize connection for storage - uses cleanObject from unified validation utils
 const serializeConnection = (connection) => {
+  // Persist under the SOURCE OBJECT's center cell so this matches the object's
+  // own cell_id (objects are stored by center position). Falls back to the
+  // face position only when the object center isn't carried on the endpoint.
+  // Without an explicit cellId the backend rejects the row (400) and the
+  // connection is never fetched back by the cell-scoped poller.
+  let cellId = connection.cellId || connection.cell_id;
+  if (!cellId) {
+    const sourceCenter =
+      connection.start?.cube?.position || connection.start?.position;
+    if (sourceCenter) {
+      const coords = getCellCoordinates(sourceCenter);
+      cellId = getCellId(coords.x, coords.y, coords.z);
+    }
+  }
 
   return {
     id: connection.id,
+    ...(cellId && { cellId }),
     start: cleanObject(connection.start),
     end: cleanObject(connection.end),
     lineStyle: connection.lineStyle || connection.styleType || 'straight',
@@ -304,6 +320,10 @@ export const subscribeToConnections = (
 
       const rawConnections = [];
       let sawFreshBatch = false;
+      // Cells whose connections were actually returned fresh this poll. A 304
+      // (response == null) means the batch was not re-fetched, so cached
+      // connections in those cells must NOT be treated as removed.
+      const freshCells = new Set();
       for (const batch of cellBatches) {
         if (!isActive || document.hidden || _subscriptionsPaused) return;
         const response = await api.get(`/api/spaces/${spaceId}/connections`, {
@@ -311,6 +331,7 @@ export const subscribeToConnections = (
         });
         if (response == null) continue; // 304 - nothing changed for these cells
         sawFreshBatch = true;
+        for (const c of batch) freshCells.add(String(c));
         if (Array.isArray(response)) {
           rawConnections.push(...response);
         } else if (Array.isArray(response.connections)) {
@@ -329,7 +350,12 @@ export const subscribeToConnections = (
 
         if (!cachedData) {
           // New connection
-          pollingCache.set(cacheKey, { ...connection });
+          pollingCache.set(cacheKey, {
+            ...connection,
+            // Track the cell so the removal diff can be scoped to cells that
+            // were actually queried fresh.
+            _cellId: connection.cellId != null ? String(connection.cellId) : null,
+          });
           anythingChanged = true;
           callback({
             type: 'added',
@@ -338,7 +364,10 @@ export const subscribeToConnections = (
           });
         } else if (connectionDataChanged(cachedData, connection)) {
           // Modified connection
-          pollingCache.set(cacheKey, { ...connection });
+          pollingCache.set(cacheKey, {
+            ...connection,
+            _cellId: connection.cellId != null ? String(connection.cellId) : null,
+          });
           anythingChanged = true;
           callback({
             type: 'modified',
@@ -348,23 +377,26 @@ export const subscribeToConnections = (
         }
       }
 
-      // Check for removed connections. Only diff removals when at least one
-      // batch returned a fresh list — an all-304 poll means "nothing changed",
-      // not "every cached connection was removed" (which would spuriously fire
-      // a removal storm and reset the poll backoff to fast forever).
+      // Check for removed connections. Only diff removals for connections whose
+      // cell was actually returned fresh this poll (freshCells). A connection
+      // cached from a cell that got a 304 — or from a locally-added/manual
+      // connection whose cell wasn't queried — must not be removed just because
+      // it's absent from a partial fresh batch.
       if (sawFreshBatch) {
-        for (const [key] of pollingCache.entries()) {
+        for (const [key, cached] of pollingCache.entries()) {
           if (!isActive) return;
 
-          if (!seenKeys.has(key)) {
-            pollingCache.delete(key);
-            const connId = key.replace(`${spaceId}_`, '');
-            anythingChanged = true;
-            callback({
-              type: 'removed',
-              id: connId,
-            });
-          }
+          if (seenKeys.has(key)) continue;
+          const cachedCell = cached?._cellId != null ? String(cached._cellId) : null;
+          if (cachedCell != null && !freshCells.has(cachedCell)) continue;
+
+          pollingCache.delete(key);
+          const connId = key.replace(`${spaceId}_`, '');
+          anythingChanged = true;
+          callback({
+            type: 'removed',
+            id: connId,
+          });
         }
       }
     } catch {
@@ -468,15 +500,15 @@ export const deleteConnection = async (
     // Clear from cache immediately
     clearConnectionCache(spaceId, connectionId);
 
-    // Determine cell ID from connection data
+    // Determine cell ID from connection data. Prefer the source object's
+    // center (start.cube.position) — that is the cell the connection is stored
+    // under — falling back to the face position.
     let cellId = '';
     const connData = connectionData || useConnectionStore.getState().connections.find(c => c.id === connectionId);
-    if (connData?.start?.position) {
-      const CELL_SIZE = 15000;
-      const x = Math.floor(connData.start.position[0] / CELL_SIZE);
-      const y = Math.floor(connData.start.position[1] / CELL_SIZE);
-      const z = Math.floor(connData.start.position[2] / CELL_SIZE);
-      cellId = `${x},${y},${z}`;
+    const sourceCenter = connData?.start?.cube?.position || connData?.start?.position;
+    if (sourceCenter) {
+      const coords = getCellCoordinates(sourceCenter);
+      cellId = getCellId(coords.x, coords.y, coords.z);
     }
 
     await api.delete(`/api/spaces/${spaceId}/connections/${connectionId}?cell_id=${cellId}`);
@@ -501,15 +533,15 @@ export const deleteConnectionEnhanced = async (
     // Clear from cache immediately
     clearConnectionCache(spaceId, connectionId);
 
-    // Determine cell ID from connection data
+    // Determine cell ID from connection data. Prefer the source object's
+    // center (start.cube.position) — that is the cell the connection is stored
+    // under — falling back to the face position.
     let cellId = '';
     const connData = connectionData || useConnectionStore.getState().connections.find(c => c.id === connectionId);
-    if (connData?.start?.position) {
-      const CELL_SIZE = 15000;
-      const x = Math.floor(connData.start.position[0] / CELL_SIZE);
-      const y = Math.floor(connData.start.position[1] / CELL_SIZE);
-      const z = Math.floor(connData.start.position[2] / CELL_SIZE);
-      cellId = `${x},${y},${z}`;
+    const sourceCenter = connData?.start?.cube?.position || connData?.start?.position;
+    if (sourceCenter) {
+      const coords = getCellCoordinates(sourceCenter);
+      cellId = getCellId(coords.x, coords.y, coords.z);
     }
 
     await api.delete(`/api/spaces/${spaceId}/connections/${connectionId}?cell_id=${cellId}`);
