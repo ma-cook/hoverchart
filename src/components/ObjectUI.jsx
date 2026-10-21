@@ -4,6 +4,7 @@ import ColorPicker from './ColorPicker';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useColorPickerStore } from '../stores';
+import useCameraFollowStore from '../stores/cameraFollowStore';
 
 // Pre-allocated temp vector to avoid GC pressure in useFrame
 const _tempVec3 = new THREE.Vector3();
@@ -37,6 +38,13 @@ const ObjectUI = React.memo(
     const showColorPicker = useColorPickerStore((state) =>
       state.isColorPickerOpen(pickerId)
     );
+
+    // Camera follow: is THIS object currently being followed?
+    const isFollowingThis = useCameraFollowStore(
+      (state) =>
+        state.isFollowing && state.activeObjectId === String(objectId)
+    );
+    const toggleFollow = useCameraFollowStore((state) => state.toggleFollow);
 
     // Initialize position immediately on mount to avoid 1-frame flash at origin
     const { camera } = useThree();
@@ -139,6 +147,12 @@ const ObjectUI = React.memo(
         name: 'eye',
         icon: '👁', // <-- Eye icon
         onClick: handleEyeClick, // <-- Added eye tool handler
+      },
+      {
+        name: 'follow',
+        icon: '🎥',
+        active: isFollowingThis,
+        onClick: () => toggleFollow(objectId),
       },
       {
         name: 'delete',

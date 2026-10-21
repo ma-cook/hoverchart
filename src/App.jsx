@@ -47,6 +47,7 @@ import {
 
 // PERFORMANCE: Global animation manager for connection lines
 import { ConnectionAnimationManager } from './hooks/useConnectionAnimationManager';
+import CameraFollowController from './components/CameraFollowController';
 
 // Utility imports
 import {
@@ -1756,6 +1757,7 @@ const existingIdsRef = useRef(new Set());
       <LODManager enabled={useLOD} />
       <HeaderBillboardManager />
       {viewMode === '3d' && <ConnectionAnimationManager />}
+      {viewMode === '3d' && <CameraFollowController />}
       <CustomCamera ref={cameraRef} />
       <group>
         {viewMode === '3d' && <RealTimeConnectionUpdater />}
