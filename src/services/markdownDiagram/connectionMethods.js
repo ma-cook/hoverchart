@@ -1,6 +1,6 @@
 import { api } from '../../api-client';
 import useConnectionStore from '../../stores/connectionStore';
-import { useObjectsStore, useSpatialManagerStore } from '../../stores';
+import { useObjectsStore } from '../../stores';
 import {
   pauseConnectionListeners,
   resumeConnectionListeners,
@@ -387,18 +387,17 @@ export const connectionMethods = {
 
     try {
       const _tBulk = performance.now();
-      // Only hydrate connections whose cell is currently loaded.  Connections
-      // in distant cells are still persisted to the DB (allConnectionsToSave)
-      // and are fetched + added by the per-cell subscription when the user
-      // navigates to them — matching the refresh path and avoiding mounting
-      // the whole connection set in one go.
-      const loadedCellIds = useSpatialManagerStore.getState().loadedCells;
-      const storeConnections =
-        loadedCellIds && loadedCellIds.size > 0
-          ? allConnectionsToSave.filter((conn) => conn.cellId && loadedCellIds.has(conn.cellId))
-          : allConnectionsToSave;
-      if (storeConnections.length > 0) {
-        connectionStore.bulkAddConnections(storeConnections);
+      // Hydrate ALL scanned connections into the store — matching how scanned
+      // objects are pushed (objectMethods.js deliberately pushes every created
+      // object, no loaded-cell cap, "so all groups render during the scan").
+      // The earlier loadedCells filter here left only the ~27-cell camera
+      // neighborhood's connections in the store, so a scanned diagram showed
+      // its objects but almost no connection lines.  Rendering cost is still
+      // contained by progressive mounting + frustum culling + batched
+      // instancing, and expensive pathfinding stays suppressed during the scan
+      // via the bulkImportState / _connectionUpdateSkip gates.
+      if (allConnectionsToSave.length > 0) {
+        connectionStore.bulkAddConnections(allConnectionsToSave);
       }
     } catch (error) {
       console.error('Failed to bulk add connections to store:', error);
