@@ -9,6 +9,7 @@ import CustomCamera from './components/CustomCamera';
 import UIOverlay from './components/UIOverlay';
 import RealTimeConnectionUpdater from './components/RealTimeConnectionUpdater';
 import ObjectsRenderer from './components/ObjectsRenderer';
+import LlmEditHighlight from './components/LlmEditHighlight';
 import ConnectionsRenderer from './components/ConnectionsRenderer';
 import CellBoundaryRenderer from './components/CellBoundaryRenderer';
 import LODManager from './components/LODManager';
@@ -30,6 +31,7 @@ import { useIndicators } from './hooks/useIndicators';
 import { useSpatialManager } from './hooks/useSpatialManager';
 import { useCentralizedBroadcastManager } from './hooks/useCentralizedBroadcastManager';
 import { useConnections } from './hooks/useConnections';
+import { useObjectsEditedByLlm } from './hooks/useObjectsEditedByLlm';
 import useTimeoutManager from './hooks/useTimeoutManager';
 import { getCellCoordinates } from './services/spatialPartitioning';
 import {
@@ -1515,6 +1517,8 @@ const existingIdsRef = useRef(new Set());
     selectedIndicatorsRef,
   ]); // Virtualized object rendering with LOD
   const [visibleObjectIds, setVisibleObjectIds] = useState(new Set());
+  // Objects whose source file the LLM is actively editing (highlighted red).
+  const llmActiveObjectIds = useObjectsEditedByLlm();
 
   // LOD: Use a ref for camera distance to avoid triggering App re-renders on
   // every camera movement.  Only store the derived boolean `useLOD` in state —
@@ -1797,6 +1801,7 @@ const existingIdsRef = useRef(new Set());
           useLOD={useLOD}
           onCodeToggle={handleCodeToggle}
         />
+        <LlmEditHighlight llmActiveObjectIds={llmActiveObjectIds} />
         <RepoGrid />
         <CellBoundaryRenderer visible={cellBoundariesVisible} />
       </group>
@@ -1812,6 +1817,7 @@ const existingIdsRef = useRef(new Set());
   ), [
     useLOD, viewMode, spaceTypeProp, canvasQuality,
     objects, visibleObjectIds, selectedId,
+    llmActiveObjectIds,
     handleObjectClick, handleObjectMoveCallback, handleObjectUpdateCallback,
     disableOrbitControls, enableOrbitControls,
     handleFaceIndicatorClickCallback, handleFaceClick,

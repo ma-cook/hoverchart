@@ -12,6 +12,7 @@ import { RagPipeline } from './ragPipeline';
 import { buildSearchReplaceBlock } from './diffUtils';
 import { joinChunks } from './chunkIndex';
 import { recordFileRead } from './toolState';
+import useLlmEditActivityStore from '../../stores/llmEditActivityStore';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
@@ -897,6 +898,8 @@ export async function sendWithRetrieval({
   let currentToolNames = new Set();
 
   resetEditTracker();
+  // Mark the run active so the scene can highlight files as they're edited.
+  useLlmEditActivityStore.getState().beginRun();
   initializeDefaultSkills({
     fileTree,
     fileSizes: _fileSizes,
@@ -1599,7 +1602,11 @@ export async function sendWithRetrieval({
           }
         }
         console.log(`[ToolRound] Executing: ${tc.name}(${JSON.stringify(tc.arguments)})`);
-        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing' });
+        const _progressFilePath =
+          (tc.name === 'edit' || tc.name === 'write') && tc.arguments?.filePath
+            ? normalizePath(tc.arguments.filePath)
+            : undefined;
+        onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'executing', filePath: _progressFilePath });
         try {
           const result = await executeWithRetry(tc, () => executeTool(tc.name, tc.arguments, githubContext, fileTree, { runSubAgent, depth: 0 }));
           if (tc.name === 'read_file' && result._fullContent) {
@@ -1637,7 +1644,7 @@ export async function sendWithRetrieval({
             duration: toolDuration,
             error: result.success ? null : new Error(result.content?.slice(0, 100)),
           });
-          onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done' });
+          onToolProgress?.({ tool: tc.name, index: idx + 1, total: totalTools, status: 'done', filePath: _progressFilePath });
           toolResults.push({ tc, result: { success: result.success, content: result.content }, error: null });
         } catch (error) {
           const toolDuration = Math.round(performance.now() - toolStart);
@@ -1660,6 +1667,8 @@ export async function sendWithRetrieval({
           originalFileContents.delete(fp);
           originalFileSource.delete(fp);
           fileLastEditRound.set(fp, rounds);
+          // Highlight this file's scene objects red while the agent works on it.
+          useLlmEditActivityStore.getState().markFileEditing(fp, rounds);
         }
       }
 
@@ -1895,6 +1904,9 @@ export async function sendWithRetrieval({
 
     onToolProgress?.({ tool: 'done', index: totalTools, total: totalTools, status: 'complete' });
     globalMonitor.endInvocation({ output: finalText, tokens: toolResults.length });
+    // A file is "active" only while it keeps being edited; drop files not touched
+    // for a couple of rounds so their highlight clears once the agent moves on.
+    useLlmEditActivityStore.getState().pruneIdleFiles(rounds, 2);
     rounds++;
   }
 
@@ -1986,6 +1998,9 @@ export async function sendWithRetrieval({
     output: finalText,
     tokens: rounds,
   });
+
+  // Run finished — clear all "actively editing" highlights.
+  useLlmEditActivityStore.getState().endRun();
 
   return stripRetrievalMarkers(finalText);
 }

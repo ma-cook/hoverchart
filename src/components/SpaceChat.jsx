@@ -18,6 +18,7 @@ import useCodeStore from '../stores/codeStore';
 import useLlmStore from '../stores/llmStore';
 import useChatArchiveStore from '../stores/chatArchiveStore';
 import useDiagramStore from '../stores/diagramStore';
+import useLlmEditActivityStore from '../stores/llmEditActivityStore';
 import { PROVIDERS, fetchModels, isFreeUsageLimit } from '../services/llmProviders';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { renderMerfolkMarkdownToScene } from '../services/sceneRenderService';
@@ -1104,6 +1105,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       setStreaming(false);
       streamingRef.current = '';
       abortControllerRef.current = null;
+      // Safety: clear any lingering "LLM is editing this file" highlights even
+      // if the run exited early (abort, error) before its own endRun().
+      useLlmEditActivityStore.getState().endRun();
     }
   }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack, windowLlm, markSignificant]);
 
