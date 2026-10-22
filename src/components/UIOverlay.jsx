@@ -570,17 +570,24 @@ const UIOverlay = ({
         // hydrateStoreFromMarkdown only rebuilds the 2D graph — materialize
         // the 3D objects/connections (and persist them) from the same
         // markdown, otherwise a server scan leaves the canvas empty.
+        let sceneCounts = null;
         try {
-          await renderMerfolkMarkdownToScene(markdown, currentSpaceId, user);
+          sceneCounts = await renderMerfolkMarkdownToScene(markdown, currentSpaceId, user);
         } catch (sceneErr) {
           console.warn('[durableScan] 3D scene build from server markdown failed:', sceneErr.message);
         }
         setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
+        // Prefer the counts from the scene that was actually materialized —
+        // the server-side estimate is only a fallback.
+        const nodesCreated =
+          sceneCounts?.objectsCreated ?? doneJob.objects_created ?? 0;
+        const connectionsCreated =
+          sceneCounts?.connectionsCreated ?? doneJob.connections_created ?? 0;
         setNotification({
           show: true,
           message: kind === 'rescan'
-            ? `Rescan complete: ${doneJob.objects_created ?? 0} nodes, ${doneJob.connections_created ?? 0} connections`
-            : `Background scan complete: ${doneJob.objects_created ?? 0} nodes, ${doneJob.connections_created ?? 0} connections`,
+            ? `Rescan complete: ${nodesCreated} nodes, ${connectionsCreated} connections`
+            : `Background scan complete: ${nodesCreated} nodes, ${connectionsCreated} connections`,
         });
         setTimeout(() => setNotification({ show: false, message: '' }), 4000);
       } finally {

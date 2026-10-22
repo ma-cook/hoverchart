@@ -18,11 +18,16 @@ import useDiagramStore from '../stores/diagramStore';
  * @param {string} markdown - full markdown document containing merfolk blocks
  * @param {string} spaceId
  * @param {object|null} user
- * @returns {Promise<boolean>} true when objects or connections were created
+ * @returns {Promise<{success: boolean, objectsCreated: number, connectionsCreated: number}>}
+ *          `objectsCreated`/`connectionsCreated` describe the diagram that was
+ *          materialized (not just the newly inserted rows), so a re-scan still
+ *          reports the full diagram size.
  */
 export async function renderMerfolkMarkdownToScene(markdown, spaceId, user) {
   const blocks = extractMerfolkBlocks(markdown);
-  if (!blocks || blocks.length === 0) return false;
+  if (!blocks || blocks.length === 0) {
+    return { success: false, objectsCreated: 0, connectionsCreated: 0 };
+  }
 
   const normalized = blocks
     .map((block) => '```merfolk\n' + block + '\n```')
@@ -36,11 +41,11 @@ export async function renderMerfolkMarkdownToScene(markdown, spaceId, user) {
     workerResult = await layoutWorker.computeLayout(normalized, basePosition);
   } catch (err) {
     console.warn('[sceneRender] Layout worker failed:', err.message);
-    return false;
+    return { success: false, objectsCreated: 0, connectionsCreated: 0 };
   }
 
   if (!workerResult || !workerResult.diagramLayouts || workerResult.diagramLayouts.length === 0) {
-    return false;
+    return { success: false, objectsCreated: 0, connectionsCreated: 0 };
   }
 
   const diagrams = workerResult.diagramLayouts.map((layout) => ({
@@ -75,6 +80,7 @@ export async function renderMerfolkMarkdownToScene(markdown, spaceId, user) {
   const nodeDataMap = new Map();
   const allConnectionsToSave = [];
   const allObjectsToSave = [];
+  let connectionsCreated = 0;
   window._faceDistributionCounters = window._faceDistributionCounters || new Map();
 
   for (let diagramIndex = 0; diagramIndex < diagrams.length; diagramIndex++) {
@@ -100,13 +106,18 @@ export async function renderMerfolkMarkdownToScene(markdown, spaceId, user) {
       nodeDataMap
     );
 
-    markdownDiagramService.createConnectionsFromDiagram(
+    // MUST be awaited: createConnectionsFromDiagram is async (it yields every
+    // 100 connections), so without the await only the first connection was
+    // pushed before saveConnections() ran — the scene ended up with a single
+    // connection line after every server scan.
+    const connectionSummary = await markdownDiagramService.createConnectionsFromDiagram(
       diagram,
       nodeToObjectIdMap,
       allConnectionsToSave,
       connectionTags,
       nodeDataMap
     );
+    connectionsCreated += connectionSummary?.total || 0;
   }
 
   if (allConnectionsToSave.length > 0 || allObjectsToSave.length > 0) {
@@ -125,5 +136,11 @@ export async function renderMerfolkMarkdownToScene(markdown, spaceId, user) {
     useDiagramStore.getState().setNodeToObjectIdMap(nodeToObjectIdMap);
   }
 
-  return allObjectsToSave.length > 0 || allConnectionsToSave.length > 0;
+  const objectsCreated = nodeToObjectIdMap.size;
+
+  return {
+    success: allObjectsToSave.length > 0 || allConnectionsToSave.length > 0,
+    objectsCreated,
+    connectionsCreated,
+  };
 }

@@ -691,7 +691,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           );
         }
         const rendered = await renderMerfolkToScene(enrichedBlocks, spaceId, user);
-        if (rendered) {
+        if (rendered?.success) {
           setPlanMessages((prev) =>
             prev.map(m =>
               m.key === currentStreamKey
@@ -1302,8 +1302,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             // hydrateStoreFromMarkdown only rebuilds the 2D graph — materialize
             // the 3D objects/connections (and persist them) from the same
             // markdown, otherwise a server scan leaves the canvas empty.
+            let sceneCounts = null;
             try {
-              await renderMerfolkMarkdownToScene(markdown, spaceId, user);
+              sceneCounts = await renderMerfolkMarkdownToScene(markdown, spaceId, user);
             } catch (sceneErr) {
               console.warn('[scan] 3D scene build from server markdown failed:', sceneErr.message);
             }
@@ -1316,9 +1317,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             });
             setScanProgress(null);
             window._connectionUpdateSkip = false;
+            // Prefer the counts from the scene that was actually materialized —
+            // the server-side estimate is only a fallback.
+            const objectsCreated =
+              sceneCounts?.objectsCreated ?? doneJob.objects_created ?? 0;
+            const connectionsCreated =
+              sceneCounts?.connectionsCreated ?? doneJob.connections_created ?? 0;
             setPushNotification({
               type: 'success',
-              message: `Diagram created via server scan: ${doneJob.objects_created ?? 0} objects, ${doneJob.connections_created ?? 0} connections`,
+              message: `Diagram created via server scan: ${objectsCreated} objects, ${connectionsCreated} connections`,
             });
             setTimeout(() => setPushNotification(null), 5000);
           },

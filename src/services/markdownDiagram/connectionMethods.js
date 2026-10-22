@@ -61,6 +61,14 @@ export const connectionMethods = {
     return content.replace(/^[ \t]*flowpath\b[^\n]*/gm, '');
   },
 
+  /**
+   * Create the 3D connections for a parsed diagram.
+   *
+   * @returns {Promise<{total: number, added: number}>} `total` is the number of
+   *          distinct diagram connections whose endpoints both resolve to real
+   *          objects (independent of whether they already exist in the store),
+   *          `added` is how many were actually appended to `allConnectionsToSave`.
+   */
   async createConnectionsFromDiagram(
     diagram,
     nodeToObjectIdMap,
@@ -70,7 +78,7 @@ export const connectionMethods = {
   ) {
     const graph = diagram.graph;
     if (!graph || !graph.connections) {
-      return;
+      return { total: 0, added: 0 };
     }
 
     const existingConnections = useConnectionStore.getState().connections;
@@ -90,6 +98,11 @@ export const connectionMethods = {
 
     const connectionsArray = Array.from(graph.connections.values());
     const CONN_YIELD_EVERY = 100;
+    // Distinct diagram connections (keyed by node pair) that resolve to two
+    // real objects. Tracked separately from the store so a re-scan reports the
+    // full diagram size instead of "0 new connections".
+    const resolvedPairs = new Set();
+    let added = 0;
 
     for (let ci = 0; ci < connectionsArray.length; ci++) {
       const connection = connectionsArray[ci];
@@ -104,6 +117,23 @@ export const connectionMethods = {
         targetObjectId &&
         sourceObjectId !== targetObjectId
       ) {
+        let sourceObject, targetObject;
+        if (nodeDataMap && nodeDataMap.has(sourceNodeId) && nodeDataMap.has(targetNodeId)) {
+          sourceObject = nodeDataMap.get(sourceNodeId);
+          targetObject = nodeDataMap.get(targetNodeId);
+        } else {
+          sourceObject = objectsById.get(sourceObjectId);
+          targetObject = objectsById.get(targetObjectId);
+        }
+
+        if (!sourceObject || !targetObject) {
+          continue;
+        }
+
+        // Count every connection that resolves to two real objects, even when
+        // it already exists in the store (re-scan) — this is the diagram size.
+        resolvedPairs.add(`${sourceNodeId}|${targetNodeId}`);
+
         if (existingConnectionPairs.has(`${sourceObjectId}|${targetObjectId}`)) {
           continue;
         }
@@ -120,19 +150,6 @@ export const connectionMethods = {
         const connectionId = `merfolk-conn-${Date.now()}-${Math.random()
           .toString(36)
           .substr(2, 9)}`;
-
-        let sourceObject, targetObject;
-        if (nodeDataMap && nodeDataMap.has(sourceNodeId) && nodeDataMap.has(targetNodeId)) {
-          sourceObject = nodeDataMap.get(sourceNodeId);
-          targetObject = nodeDataMap.get(targetNodeId);
-        } else {
-          sourceObject = objectsById.get(sourceObjectId);
-          targetObject = objectsById.get(targetObjectId);
-        }
-
-        if (!sourceObject || !targetObject) {
-          continue;
-        }
 
         const CUBE_FACES = ['front', 'back', 'left', 'right', 'top', 'bottom'];
         const TETRAHEDRON_FACES = ['front', 'left', 'right', 'bottom'];
@@ -366,12 +383,15 @@ export const connectionMethods = {
         };
 
         allConnectionsToSave.push(connectionData);
+        added++;
       }
 
       if (ci % CONN_YIELD_EVERY === 0) {
         await new Promise(r => setTimeout(r, 0));
       }
     }
+
+    return { total: resolvedPairs.size, added };
   },
 
   async saveConnections(

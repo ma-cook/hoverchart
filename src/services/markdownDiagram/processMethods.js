@@ -237,6 +237,7 @@ export const processMethods = {
     useDiagramStore.getState().setConnectionTags(connectionTags);
 
     let totalObjectsCreated = 0;
+    let totalConnectionsCreated = 0;
     const nodeToObjectIdMap = new Map();
     const nodeDataMap = new Map();
     const allConnectionsToSave = [];
@@ -270,13 +271,17 @@ export const processMethods = {
 
       totalObjectsCreated += objectsCreated;
 
-      await this.createConnectionsFromDiagram(
+      const connectionSummary = await this.createConnectionsFromDiagram(
         diagram,
         nodeToObjectIdMap,
         allConnectionsToSave,
         connectionTags,
         nodeDataMap
       );
+      // Distinct source→target pairs. The same pair can appear more than once
+      // in the markdown (e.g. a dashed containment edge AND a solid dataflow
+      // edge) — those are separate rendered lines but a single relationship.
+      totalConnectionsCreated += connectionSummary?.total || 0;
     }
 
     // Persist the node-to-object mapping so the 2D view can cross-reference.
@@ -351,7 +356,7 @@ export const processMethods = {
     return {
       diagramCount: validDiagrams.length,
       objectsCreated: totalObjectsCreated,
-      connectionsCreated: allConnectionsToSave.length,
+      connectionsCreated: totalConnectionsCreated,
       success: totalObjectsCreated > 0,
       savePromise: savePromise,
     };

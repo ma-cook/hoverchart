@@ -9,18 +9,61 @@ const bucketName = process.env.GCS_BUCKET;
 const storage = bucketName ? new Storage() : null;
 const internalKey = process.env.SCAN_INTERNAL_KEY;
 
+// Node definitions emitted by the scan generator. The 3d-ast parser accepts
+// `id` characters followed by a type bracket, so the counting rule has to
+// match it exactly or the reported counts drift from what the client builds:
+//   id{Component: X}  id[Function: X]  id[Hook: X]  id((Service: X))
+//   id<Library: X>    id[[Store: X]]    id[[Class: X]]  id[[Interface: X]]
+//   id[Endpoint: GET /path]
+const MERFOLK_NODE_RE = /^[A-Za-z0-9_/.-]+[[{(<~]/;
+// Connection lines: `src --> tgt : "label"` / `src -.-> tgt : "label"`.
+const MERFOLK_EDGE_RE = /^\s*(\S+)\s*(-->|-\.->|---|==>|==|\*-->|\.\.>|<--)\s*(\S+)/;
+
 function countMerfolk(markdown) {
   const body = markdown.match(/```merfolk\n([\s\S]*?)```/)?.[1] || markdown;
-  // Node definitions are emitted as `id[[Type: Name]]{...}` — count the `[[`
-  // brackets on lines that are not `%%` section headers. The previous regex
-  // matched a node shape that does not exist (`Name{Component: Name}`) and
-  // undercounted objects by ~19x, which is why the scan toast reported 139
-  // objects instead of the real ~2600.
-  const nodes = body
-    .split('\n')
-    .filter((line) => !line.trimStart().startsWith('%%') && line.includes('[['))
-    .length;
-  const edges = (body.match(/-->|-.->/g) || []).length;
+  const lines = body.split('\n');
+
+  let nodes = 0;
+  const nodeIds = new Set();
+  const edgePairs = new Set();
+  let inPropertyBlock = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('%%')) continue;
+
+    // Node properties are emitted as a `{ ... }` block on the lines AFTER the
+    // node definition — they are not nodes.
+    if (inPropertyBlock) {
+      if (line === '}') inPropertyBlock = false;
+      continue;
+    }
+    if (line === '{') {
+      inPropertyBlock = true;
+      continue;
+    }
+
+    const edge = line.match(MERFOLK_EDGE_RE);
+    if (edge) {
+      edgePairs.add(`${edge[1]}|${edge[3]}`);
+      continue;
+    }
+
+    if (MERFOLK_NODE_RE.test(line)) {
+      nodes++;
+      nodeIds.add(line.match(/^[A-Za-z0-9_/.-]+/)[0]);
+    }
+  }
+
+  // Only count connections whose endpoints are both real nodes — a connection
+  // to an undefined node is never materialised in the 3D scene.
+  let edges = 0;
+  for (const pair of edgePairs) {
+    const [source, target] = pair.split('|');
+    if (source === target) continue;
+    if (nodeIds.has(source) && nodeIds.has(target)) edges++;
+  }
+
   return { nodes, edges };
 }
 
