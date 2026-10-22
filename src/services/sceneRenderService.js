@@ -67,12 +67,26 @@ export async function renderMerfolkMarkdownToScene(markdown, spaceId, user) {
   );
 
   const nodeToObjectIdMap = new Map();
+  // Per-node object data captured while objects are created. createConnections-
+  // FromDiagram resolves endpoints from this map (falling back to a store
+  // lookup that misses objects not yet flushed to useObjectsStore, which is why
+  // only a single connection rendered after a server scan). Mirrors the
+  // main-thread scan path (processMethods.processMarkdownFile).
+  const nodeDataMap = new Map();
   const allConnectionsToSave = [];
   const allObjectsToSave = [];
   window._faceDistributionCounters = window._faceDistributionCounters || new Map();
 
-  for (const diagram of diagrams) {
+  for (let diagramIndex = 0; diagramIndex < diagrams.length; diagramIndex++) {
+    const diagram = diagrams[diagramIndex];
     if (diagram.errors && diagram.errors.length > 0) continue;
+
+    // Pass the worker-computed layout so positions/scales and the hierarchy
+    // maps come straight from the layout worker — matching the main-thread
+    // scan path (processMethods.processMarkdownFile). Passing null here forced
+    // a main-thread recompute that produced an inconsistent hierarchy, so most
+    // connections failed to resolve to objects and never rendered.
+    const precomputedLayout = workerResult.diagramLayouts[diagramIndex] ?? null;
 
     await markdownDiagramService.createObjectsFromDiagram(
       diagram,
@@ -82,14 +96,16 @@ export async function renderMerfolkMarkdownToScene(markdown, spaceId, user) {
       user,
       spaceId,
       allObjectsToSave,
-      null
+      precomputedLayout,
+      nodeDataMap
     );
 
     markdownDiagramService.createConnectionsFromDiagram(
       diagram,
       nodeToObjectIdMap,
       allConnectionsToSave,
-      connectionTags
+      connectionTags,
+      nodeDataMap
     );
   }
 

@@ -11,9 +11,15 @@ const internalKey = process.env.SCAN_INTERNAL_KEY;
 
 function countMerfolk(markdown) {
   const body = markdown.match(/```merfolk\n([\s\S]*?)```/)?.[1] || markdown;
-  // Node definitions look like `Name{Component: Name}` at the start of a line
-  // (the `%%` lines are section headers, not nodes).
-  const nodes = (body.match(/^[\w.]+\{\w+:/gm) || []).length;
+  // Node definitions are emitted as `id[[Type: Name]]{...}` — count the `[[`
+  // brackets on lines that are not `%%` section headers. The previous regex
+  // matched a node shape that does not exist (`Name{Component: Name}`) and
+  // undercounted objects by ~19x, which is why the scan toast reported 139
+  // objects instead of the real ~2600.
+  const nodes = body
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('%%') && line.includes('[['))
+    .length;
   const edges = (body.match(/-->|-.->/g) || []).length;
   return { nodes, edges };
 }
