@@ -1,8 +1,12 @@
 import { Router } from 'express';
+import { Storage } from '@google-cloud/storage';
 import pool from '../db.js';
 import { buildSpaceSlug, uniqueSlug } from '../utils/slug.js';
 
 export const router = Router();
+
+const bucketName = process.env.GCS_BUCKET;
+const storage = bucketName ? new Storage() : null;
 
 /**
  * API-shape mapping: the frontend reads/writes camelCase for the diagram
@@ -15,6 +19,7 @@ export function serializeSpace(row) {
     ...row,
     slug: row.slug || null,
     markdownStorageUrl: row.markdown_storage_url,
+    repoContentsStorageUrl: row.repo_contents_storage_url,
     diagramCommitSha: row.diagram_commit_sha,
     diagramRepo: row.diagram_repo,
   };
@@ -166,13 +171,19 @@ router.delete('/:id', async (req, res) => {
     await client.query('BEGIN');
 
     const auth = await client.query(
-      `SELECT id FROM spaces WHERE id = $1 AND owner_id = $2`,
+      `SELECT id, markdown_storage_url, repo_contents_storage_url
+       FROM spaces WHERE id = $1 AND owner_id = $2`,
       [req.params.id, userId]
     );
     if (auth.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Space not found or not owner' });
     }
+
+    const storedFiles = [
+      auth.rows[0].markdown_storage_url,
+      auth.rows[0].repo_contents_storage_url,
+    ].filter((filePath) => filePath?.startsWith('uploads/'));
 
     const spaceId = req.params.id;
     await client.query(`DELETE FROM user_presence WHERE space_id = $1`, [spaceId]);
@@ -183,6 +194,19 @@ router.delete('/:id', async (req, res) => {
     await client.query(`DELETE FROM spaces WHERE id = $1`, [spaceId]);
 
     await client.query('COMMIT');
+
+    if (storage && storedFiles.length > 0) {
+      await Promise.all(
+        storedFiles.map((filePath) =>
+          storage.bucket(bucketName).file(filePath).delete().catch((cleanupErr) => {
+            if (cleanupErr.code !== 404) {
+              console.warn(`[spaces] failed to delete ${filePath}: ${cleanupErr.message}`);
+            }
+          })
+        )
+      );
+    }
+
     res.json({ deleted: true });
   } catch (err) {
     await client.query('ROLLBACK');

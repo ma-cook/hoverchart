@@ -18,8 +18,10 @@ import useCodeStore from '../stores/codeStore';
 import useDiagramStore from '../stores/diagramStore';
 import { getContentStore } from './context/contentStore';
 import { joinChunks } from './context/chunkIndex';
+import { fetchFileContent } from './githubRepoService';
 
 const CONTENT_ID_PREFIX = 'repo:';
+const inFlightCodeFetches = new Map();
 
 /** Slice `{line, col}`-agnostic text by 1-based inclusive line range. */
 const sliceRange = (text, startLine, endLine) => {
@@ -95,24 +97,76 @@ export function getCodeForObject(objectData) {
   return null;
 }
 
+function resolveRepoCoordinates(repoContext) {
+  const store = useCodeStore.getState();
+  const repo = repoContext?.repo || store.selectedRepo;
+  const owner =
+    repo?.owner?.login ??
+    (typeof repo?.owner === 'string' ? repo.owner : repo?.full_name?.split('/')[0]) ??
+    store.repoOwner;
+  const repoName =
+    repo?.name ??
+    repo?.full_name?.split('/')[1] ??
+    store.repoName;
+  const branch =
+    repo?.default_branch ??
+    repo?.branch ??
+    store.selectedBranch;
+  return { owner, repoName, branch };
+}
+
+export async function ensureObjectCodeAvailable(objectData, repoContext) {
+  if (!objectData) return null;
+
+  const available = getCodeForObject(objectData);
+  if (available != null) return available;
+
+  const {
+    filePath,
+    startLine,
+    endLine,
+  } = resolveCodeInfo(objectData);
+  if (!filePath) return null;
+
+  const { owner, repoName, branch } = resolveRepoCoordinates(repoContext);
+  if (!owner || !repoName) {
+    throw new Error('Repository context is unavailable');
+  }
+
+  const ref = repoContext?.commitSha || branch || undefined;
+  const key = `${owner}/${repoName}@${ref || 'default'}:${filePath}`;
+  if (inFlightCodeFetches.has(key)) return inFlightCodeFetches.get(key);
+
+  const task = (async () => {
+    const text = await fetchFileContent(owner, repoName, filePath, undefined, ref);
+    if (typeof text === 'string') {
+      useCodeStore.getState().cacheRepoFileContent(filePath, text);
+      return sliceRange(
+        text,
+        startLine ?? objectData.merfolkData?.startLine,
+        endLine ?? objectData.merfolkData?.endLine
+      );
+    }
+    throw new Error('Code content is unavailable');
+  })();
+
+  inFlightCodeFetches.set(key, task);
+  try {
+    return await task;
+  } finally {
+    inFlightCodeFetches.delete(key);
+  }
+}
+
 /**
- * Reactive boolean: does this object have any code available to view?
- * Subscribes to the code store's repoFileContents so objects light up as soon
- * as a scan lands (or as soon as persistence hydration finishes). Pass
- * `nodeCodeIndex` (from useDiagramStore) so objects whose own codeFilePath is
- * empty still resolve through their graph node's association.
+ * True whenever the object has inline code or a resolvable source file path.
+ * The file body is fetched lazily by the code window, so the button does not
+ * wait for the repository corpus to be hydrated.
  */
 export function objectHasCode(objectData, codeStoreState) {
   if (!objectData) return false;
   if (typeof objectData.metadata?.code === 'string' && objectData.metadata.code.length > 0) {
     return true;
   }
-  const filePath = resolveCodeInfo(objectData, codeStoreState?.nodeCodeIndex).filePath;
-  if (!filePath) return false;
-  const contents = codeStoreState?.repoFileContents;
-  if (contents && typeof contents[filePath] === 'string' && contents[filePath].length > 0) {
-    return true;
-  }
-  const contentStore = getContentStore();
-  return !!contentStore.getEntry(`${CONTENT_ID_PREFIX}${filePath}`);
+  return !!resolveCodeInfo(objectData, codeStoreState?.nodeCodeIndex).filePath;
 }

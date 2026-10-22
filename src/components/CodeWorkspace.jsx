@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import useCodeStore from '../stores/codeStore';
 import { useObjectsStore } from '../stores';
-import { getCodeForObject } from '../services/objectCodeService';
+import { getCodeForObject, resolveCodeInfo, ensureObjectCodeAvailable } from '../services/objectCodeService';
 import {
   SPACE_CHAT_DEFAULT_WIDTH,
   SPACE_CHAT_DEFAULT_HEIGHT,
@@ -32,7 +32,7 @@ const DEFAULT_WINDOW_LAYOUT = {
   height: SPACE_CHAT_DEFAULT_HEIGHT,
 };
 
-const CodeWindow = ({ windowId, objectId, zIndex }) => {
+const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
   const layout = useCodeStore((s) => s.codeWindowLayouts?.[windowId]);
   const setCodeWindowLayout = useCodeStore((s) => s.setCodeWindowLayout);
   const closeCodeWindow = useCodeStore((s) => s.closeCodeWindow);
@@ -134,16 +134,40 @@ const CodeWindow = ({ windowId, objectId, zIndex }) => {
     )
   );
 
-  const code = getCodeForObject(objectData);
-  if (code == null) return null;
+  const repoFileContents = useCodeStore((s) => s.repoFileContents);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadState, setLoadState] = useState({ loading: false, error: null });
 
-  const filePath = objectData?.merfolkData?.codeFilePath || objectData?.metadata?.codeFilePath || '';
+  const codeInfo = resolveCodeInfo(objectData);
+  const filePath = codeInfo.filePath || '';
+  const code = getCodeForObject(objectData);
+
+  useEffect(() => {
+    if (!objectData || code != null || !filePath) {
+      setLoadState({ loading: false, error: null });
+      return;
+    }
+    let active = true;
+    setLoadState({ loading: true, error: null });
+    ensureObjectCodeAvailable(objectData, { repo, commitSha })
+      .then(() => {
+        if (active) setLoadState({ loading: false, error: null });
+      })
+      .catch((err) => {
+        if (active) setLoadState({ loading: false, error: err?.message || 'Failed to load code' });
+      });
+    return () => {
+      active = false;
+    };
+  }, [objectData, code, filePath, repo, commitSha, loadAttempt, repoFileContents]);
+
   const language = objectData?.metadata?.language || getLanguage(filePath);
   const title =
     objectData?.headerText ||
     objectData?.merfolkData?.nodeId ||
     objectData?.id ||
     'Code';
+  const showLoading = code == null && !!filePath && !loadState.error;
 
   return (
     <div
@@ -181,11 +205,33 @@ const CodeWindow = ({ windowId, objectId, zIndex }) => {
       <div className="space-chat-resize-handle space-chat-resize-corner" onMouseDown={(e) => handleResizeStart('corner', e)} />
 
       <div className="code-workspace-body code-window-body">
-        <pre className="code-workspace-pre">
-          <code className={`code-workspace-code language-${language}`}>
-            {code}
-          </code>
-        </pre>
+        {code != null ? (
+          <pre className="code-workspace-pre">
+            <code className={`code-workspace-code language-${language}`}>
+              {code}
+            </code>
+          </pre>
+        ) : showLoading ? (
+          <div style={{ padding: '18px', color: '#b8c0cc', fontFamily: 'monospace', fontSize: '13px' }}>
+            Loading code...
+          </div>
+        ) : (
+          <div style={{ padding: '18px', color: '#b8c0cc', fontFamily: 'monospace', fontSize: '13px' }}>
+            <p style={{ margin: '0 0 12px' }}>
+              {loadState.error || (filePath
+                ? 'Code unavailable'
+                : 'No source file is associated with this object')}
+            </p>
+            {filePath && loadState.error && (
+              <button
+                onClick={() => setLoadAttempt((value) => value + 1)}
+                style={{ cursor: 'pointer' }}
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -196,7 +242,7 @@ const CodeWindow = ({ windowId, objectId, zIndex }) => {
  * draggable/resizable panel positioned by the cascade effect in UIOverlay;
  * the reader falls back to a stacked offset while those layouts are applied.
  */
-const CodeWorkspace = () => {
+const CodeWorkspace = ({ repo, commitSha }) => {
   const codeWindows = useCodeStore((s) => s.codeWindows);
   const closeCodeWindow = useCodeStore((s) => s.closeCodeWindow);
 
@@ -222,6 +268,8 @@ const CodeWorkspace = () => {
           windowId={w.id}
           objectId={w.objectId}
           zIndex={1100 + i}
+          repo={repo}
+          commitSha={commitSha}
         />
       ))}
     </>

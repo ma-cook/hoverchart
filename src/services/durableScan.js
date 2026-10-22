@@ -13,7 +13,7 @@
  *  - rescan jobs are diff-only (the server compares base..head and merges).
  */
 
-import { fetchStoredMarkdown } from './storageService';
+import { fetchStoredMarkdown, fetchStoredRepoContents } from './storageService';
 import { populateContentStoreWorker } from './zenService';
 import { saveRepoFileContents, loadRepoFileContents } from './context/contentStorePersistence';
 import useCodeStore from '../stores/codeStore';
@@ -214,15 +214,84 @@ export const pollScanJob = ({ api, session, spaceId, onProgress, hydrate, onFail
   return cancel;
 };
 
-async function repopulateRepoContext(spaceId, markdown) {
+const artifactHydrations = new Map();
+
+function hasRepoContents(contents) {
+  return !!contents && typeof contents === 'object' && Object.keys(contents).length > 0;
+}
+
+export async function hydrateRepoContentsFromArtifact({
+  storageUrl,
+  spaceId,
+  markdown = null,
+  force = false,
+}) {
+  if (!storageUrl) return false;
+  if (spaceId && useCodeStore.getState()._spaceId !== spaceId) return false;
+  if (!force && hasRepoContents(useCodeStore.getState().repoFileContents)) return false;
+
+  if (artifactHydrations.has(storageUrl)) {
+    try {
+      return await artifactHydrations.get(storageUrl);
+    } catch {
+      return false;
+    }
+  }
+
+  const task = (async () => {
+    const artifact = await fetchStoredRepoContents(storageUrl);
+    if (!artifact) throw new Error('Empty repo contents artifact');
+    if (spaceId && useCodeStore.getState()._spaceId !== spaceId) return false;
+
+    const artifactContents = artifact.fileContents || {};
+    const existing = useCodeStore.getState().repoFileContents;
+    const fileContents = force || !hasRepoContents(existing)
+      ? artifactContents
+      : { ...existing, ...artifactContents };
+    const fileTree = Array.from(new Set([
+      ...(Array.isArray(artifact.fileTree) ? artifact.fileTree : []),
+      ...Object.keys(fileContents),
+    ]));
+
+    useCodeStore.getState().setRepoContext(fileTree, fileContents);
+    try {
+      await populateContentStoreWorker(fileContents, markdown);
+    } catch (err) {
+      console.warn('[durableScan] content-store repopulation failed:', err.message);
+    }
+    return true;
+  })();
+
+  artifactHydrations.set(storageUrl, task);
+  try {
+    return await task;
+  } catch (err) {
+    console.warn('[durableScan] repo contents artifact hydration failed:', err.message);
+    return false;
+  } finally {
+    artifactHydrations.delete(storageUrl);
+  }
+}
+
+async function repopulateRepoContext(job, spaceId, markdown) {
+  if (job?.repo_contents_storage_url) {
+    const hydrated = await hydrateRepoContentsFromArtifact({
+      storageUrl: job.repo_contents_storage_url,
+      spaceId,
+      markdown,
+      force: true,
+    });
+    if (hydrated) return;
+  }
+
   let contents = useCodeStore.getState().repoFileContents;
-  if (!contents || typeof contents !== 'object' || Object.keys(contents).length === 0) {
+  if (!hasRepoContents(contents)) {
     contents = await loadRepoFileContents(spaceId);
   }
-  if (!contents || typeof contents !== 'object' || Object.keys(contents).length === 0) return;
+  if (!hasRepoContents(contents)) return;
   useCodeStore.getState().setRepoFileContents(contents);
   saveRepoFileContents(spaceId, contents).catch(() => {});
-  populateContentStoreWorker(contents, markdown);
+  await populateContentStoreWorker(contents, markdown);
 }
 
 /**
@@ -241,7 +310,7 @@ export async function hydrateServerResult({ job, spaceId, storeMarkdown, setLate
   if (!markdown) throw new Error('Scan finished but produced no markdown');
   if (storeMarkdown) storeMarkdown(markdown, spaceId);
   if (setLatestMarkdownUrl && job.markdown_storage_url) setLatestMarkdownUrl(job.markdown_storage_url);
-  repopulateRepoContext(spaceId, markdown).catch((err) =>
+  repopulateRepoContext(job, spaceId, markdown).catch((err) =>
     console.warn('[durableScan] content-store repopulation failed:', err.message)
   );
   return markdown;

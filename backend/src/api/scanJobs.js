@@ -39,8 +39,8 @@ const RESCAN_NEEDED = 'No previous scan to increment against — run a full scan
 
 const JOB_COLUMNS = `id, space_id, repo_owner, repo_name, branch, is_rescan,
        base_commit_sha, changed_file_count, status, progress, stage,
-       error, markdown_storage_url, objects_created, connections_created,
-       created_at, updated_at, sha`;
+       error, markdown_storage_url, repo_contents_storage_url,
+       objects_created, connections_created, created_at, updated_at, sha`;
 
 // GET /api/scan-jobs?spaceId=&status= — recent scan jobs for the user
 router.get('/', async (req, res) => {

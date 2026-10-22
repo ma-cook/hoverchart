@@ -37,6 +37,7 @@ import {
   fetchScanJob,
   pollScanJob,
   hydrateServerResult,
+  hydrateRepoContentsFromArtifact,
   isLocalFallbackError,
   getErrorStatus,
 } from '../services/durableScan';
@@ -517,25 +518,29 @@ const UIOverlay = ({
       }
     })();
 
-    // Hydrate any missing pieces from Firestore (cross-device support)
-    const needsBackendFetch = !localUrl || !localSha || !stored;
-    if (needsBackendFetch) {
-      api.get(`/api/spaces/${currentSpaceId}`)
-        .then((space) => {
-          if (!space) return;
-          if (!localUrl && space.markdownStorageUrl) {
-            setLatestMarkdownUrl(space.markdownStorageUrl);
-            safeSetItem(`diagramMarkdownUrl_${currentSpaceId}`, space.markdownStorageUrl);
-          }
-          if (!localSha && space.diagramCommitSha) {
-            setLastCommitSha(space.diagramCommitSha);
-          }
-          if (!stored && space.diagramRepo) {
-            setCurrentDiagramRepo(space.diagramRepo);
-          }
-        })
-        .catch(() => {});
-    }
+    // Hydrate any missing pieces from the backend (cross-device support)
+    api.get(`/api/spaces/${currentSpaceId}`)
+      .then((space) => {
+        if (!space || cancelled) return;
+        if (!localUrl && space.markdownStorageUrl) {
+          setLatestMarkdownUrl(space.markdownStorageUrl);
+          safeSetItem(`diagramMarkdownUrl_${currentSpaceId}`, space.markdownStorageUrl);
+        }
+        if (!localSha && space.diagramCommitSha) {
+          setLastCommitSha(space.diagramCommitSha);
+        }
+        if (!stored && space.diagramRepo) {
+          setCurrentDiagramRepo(space.diagramRepo);
+        }
+        if (space.repoContentsStorageUrl) {
+          hydrateRepoContentsFromArtifact({
+            storageUrl: space.repoContentsStorageUrl,
+            spaceId: currentSpaceId,
+            markdown: lastGeneratedMarkdownTextRef.current || null,
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -559,6 +564,7 @@ const UIOverlay = ({
           setLatestMarkdownUrl,
         });
         if (doneJob.sha) setLastCommitSha(doneJob.sha);
+        if (repo) setCurrentDiagramRepo(repo);
         if (currentSpaceId) {
           const payload = { diagramRepo: repo };
           if (doneJob.markdown_storage_url) payload.markdownStorageUrl = doneJob.markdown_storage_url;
@@ -2405,7 +2411,7 @@ const UIOverlay = ({
         show={showOrgManager}
         onClose={() => setShowOrgManager(false)}
       />
-      <CodeWorkspace />
+      <CodeWorkspace repo={currentDiagramRepo} commitSha={lastCommitSha} />
       <div className={`sidebar-menu ${menuOpen ? 'open' : ''}`}>
         <div className="menu-content">
          

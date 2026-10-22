@@ -13,6 +13,11 @@ router.get('/:path(*)', async (req, res) => {
     const file = storage.bucket(bucketName).file(path);
     const [exists] = await file.exists();
     if (!exists) return res.status(404).json({ error: 'File not found' });
+    if (path.endsWith('-repo-contents.json.gz')) {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Cache-Control', 'no-cache');
+    }
     const stream = file.createReadStream();
     stream.on('error', (streamErr) => {
       console.error('File stream error:', streamErr);

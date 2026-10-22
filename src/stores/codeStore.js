@@ -289,6 +289,18 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setRepoFileContents: (fileContents) => set({ repoFileContents: fileContents }),
 
+  cacheRepoFileContent: (filePath, content) => {
+    if (!filePath || typeof content !== 'string') return;
+    const spaceId = get()._spaceId;
+    const next = { ...(get().repoFileContents || {}), [filePath]: content };
+    set({ repoFileContents: next });
+    if (spaceId) {
+      import('../services/context/contentStorePersistence.js')
+        .then((m) => m.saveRepoFileContents(spaceId, next))
+        .catch(() => {});
+    }
+  },
+
   setContentIndex: (contentIndex) => {
     const spaceId = get()._spaceId;
     set({ contentIndex });

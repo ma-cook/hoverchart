@@ -104,3 +104,22 @@ export const fetchStoredMarkdown = async (urlOrPath) => {
   if (!resp.ok) throw new Error(`Markdown fetch failed: ${resp.status}`);
   return resp.text();
 };
+
+export const fetchStoredRepoContents = async (urlOrPath) => {
+  if (!urlOrPath) return null;
+  let url = urlOrPath;
+  if (url.startsWith('uploads/')) {
+    url = `${API_BASE}/api/storage/${url}`;
+  }
+  const ourEndpoint = url.includes('/api/storage/uploads/');
+  const { accessToken } = loadTokens();
+  const resp = await fetch(url, {
+    headers: ourEndpoint && accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  });
+  if (!resp.ok) throw new Error(`Repo contents fetch failed: ${resp.status}`);
+  const payload = await resp.json();
+  if (!payload || payload.version !== 1 || typeof payload.fileContents !== 'object') {
+    throw new Error('Invalid repo contents artifact');
+  }
+  return payload;
+};

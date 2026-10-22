@@ -4,10 +4,17 @@ import { fileURLToPath } from 'node:url';
 import pool from '../db.js';
 import { decryptSecret } from '../security/crypto.js';
 import { runBackgroundScan, runBackgroundRescan, DiffTooLargeError } from './runScan.js';
+import {
+  buildRepoContentsArtifact,
+  mergeRepoFileContents,
+  parseRepoContentsArtifact,
+  serializeRepoContentsArtifact,
+} from './repoContentsArtifact.js';
 
 const bucketName = process.env.GCS_BUCKET;
 const storage = bucketName ? new Storage() : null;
 const internalKey = process.env.SCAN_INTERNAL_KEY;
+const GCS_SIMPLE_UPLOAD_LIMIT = 5 * 1024 * 1024;
 
 // Node definitions emitted by the scan generator. The 3d-ast parser accepts
 // `id` characters followed by a type bracket, so the counting rule has to
@@ -87,6 +94,31 @@ async function uploadMarkdown(relPath, markdown) {
   });
 }
 
+function repoContentsPath(job) {
+  return `uploads/${job.owner_id}/${job.space_id}-repo-contents.json.gz`;
+}
+
+async function uploadRepoContents(relPath, artifact) {
+  if (!storage) throw new Error('GCS_BUCKET not configured');
+  const body = await serializeRepoContentsArtifact(artifact);
+  await storage.bucket(bucketName).file(relPath).save(body, {
+    contentType: 'application/gzip',
+    resumable: body.length > GCS_SIMPLE_UPLOAD_LIMIT,
+    metadata: { cacheControl: 'no-cache' },
+  });
+}
+
+async function loadRepoContents(relPath) {
+  if (!storage || !relPath) return null;
+  try {
+    const [body] = await storage.bucket(bucketName).file(relPath).download();
+    return await parseRepoContentsArtifact(body);
+  } catch (err) {
+    console.warn(`[repo contents] unreadable ${relPath}: ${err.message}`);
+    return null;
+  }
+}
+
 /**
  * Loads a queued job, decrypts the owner's GitHub token, and runs the shared
  * scan core end-to-end: fetch structure/files -> parse (tree-sitter + TS) ->
@@ -122,44 +154,80 @@ export async function runJob(jobId) {
 
     let result;
     let escalatedToFull = false;
+    let rescanSpace = null;
+    let previousContents = null;
 
     if (job.is_rescan) {
       const spaceRows = await pool.query(
-        'SELECT markdown_storage_url, diagram_commit_sha FROM spaces WHERE id = $1',
+        `SELECT markdown_storage_url, diagram_commit_sha, repo_contents_storage_url
+         FROM spaces WHERE id = $1`,
         [job.space_id]
       );
-      const space = spaceRows.rows[0];
+      rescanSpace = spaceRows.rows[0];
 
-      let existingMarkdown = null;
-      if (storage && space?.markdown_storage_url) {
-        try {
-          const [file] = await storage.bucket(bucketName).file(space.markdown_storage_url).download();
-          existingMarkdown = file.toString('utf8');
-        } catch (e) {
-          console.warn(`[rescan ${job.id}] existing markdown unreadable: ${e.message}`);
+      const artifactUrl = rescanSpace?.repo_contents_storage_url || job.repo_contents_storage_url;
+      const previousArtifact = await loadRepoContents(artifactUrl);
+
+      if (!previousArtifact) {
+        console.warn(`[rescan ${job.id}] repo contents artifact missing; escalating to full scan`);
+        escalatedToFull = true;
+        await setJob(job.id, { stage: 'Full rescan (repo contents unavailable)', progress: 1 });
+        result = await runBackgroundScan(options);
+      } else {
+        previousContents = previousArtifact.fileContents || {};
+
+        let existingMarkdown = null;
+        if (storage && rescanSpace?.markdown_storage_url) {
+          try {
+            const [file] = await storage.bucket(bucketName).file(rescanSpace.markdown_storage_url).download();
+            existingMarkdown = file.toString('utf8');
+          } catch (e) {
+            console.warn(`[rescan ${job.id}] existing markdown unreadable: ${e.message}`);
+          }
         }
-      }
 
-      try {
-        result = await runBackgroundRescan({
-          ...options,
-          baseCommitSha: job.base_commit_sha || space?.diagram_commit_sha,
-          existingMarkdown,
-        });
-      } catch (err) {
-        // Diff un-computable or no previous diagram — rebuild from HEAD.
-        if (err instanceof DiffTooLargeError) {
-          console.warn(`[rescan ${job.id}] escalated to full scan: ${err.message}`);
-          escalatedToFull = true;
-          await setJob(job.id, { stage: 'Full rescan (diff too large)', progress: 1 });
-          result = await runBackgroundScan(options);
-        } else {
-          throw err;
+        try {
+          result = await runBackgroundRescan({
+            ...options,
+            baseCommitSha: job.base_commit_sha || rescanSpace?.diagram_commit_sha,
+            existingMarkdown,
+          });
+        } catch (err) {
+          // Diff un-computable or no previous diagram — rebuild from HEAD.
+          if (err instanceof DiffTooLargeError) {
+            console.warn(`[rescan ${job.id}] escalated to full scan: ${err.message}`);
+            escalatedToFull = true;
+            previousContents = null;
+            await setJob(job.id, { stage: 'Full rescan (diff too large)', progress: 1 });
+            result = await runBackgroundScan(options);
+          } else {
+            throw err;
+          }
         }
       }
 
       if (result.noChanges) {
         const newSha = result.commitSha;
+        let contentsUrl =
+          rescanSpace?.repo_contents_storage_url || job.repo_contents_storage_url || null;
+
+        if (previousContents && result.deletedFiles?.length > 0) {
+          const artifact = buildRepoContentsArtifact({
+            repoOwner: job.repo_owner,
+            repoName: job.repo_name,
+            branch: job.branch,
+            commitSha: newSha,
+            fileContents: mergeRepoFileContents(previousContents, {}, result.deletedFiles),
+          });
+          const artifactPath = repoContentsPath(job);
+          try {
+            await uploadRepoContents(artifactPath, artifact);
+            contentsUrl = artifactPath;
+          } catch (artifactErr) {
+            console.warn(`[rescan ${job.id}] repo contents update failed: ${artifactErr.message}`);
+          }
+        }
+
         await setJob(job.id, {
           status: 'done',
           stage: 'Complete',
@@ -167,11 +235,13 @@ export async function runJob(jobId) {
           sha: newSha,
           base_commit_sha: newSha,
           changed_file_count: result.changedFileCount ?? 0,
+          markdown_storage_url: rescanSpace?.markdown_storage_url || null,
+          repo_contents_storage_url: contentsUrl,
         });
-        await pool.query(`UPDATE spaces SET diagram_commit_sha = $1, updated_at = NOW() WHERE id = $2`, [
-          newSha,
-          job.space_id,
-        ]);
+        await pool.query(
+          `UPDATE spaces SET diagram_commit_sha = $1, repo_contents_storage_url = $2, updated_at = NOW() WHERE id = $3`,
+          [newSha, contentsUrl, job.space_id]
+        );
         console.log(`[rescan ${job.repo_owner}/${job.repo_name}] no changes at ${newSha.slice(0, 8)}`);
         return { ok: true, noChanges: true, counts: { nodes: job.objects_created ?? 0, edges: job.connections_created ?? 0 } };
       }
@@ -186,11 +256,40 @@ export async function runJob(jobId) {
 
     const counts = countMerfolk(result.markdown);
     const headSha = result.commitSha || null;
+    const mergedContents = previousContents
+      ? mergeRepoFileContents(previousContents, result.repoFileContents, result.deletedFiles)
+      : (result.repoFileContents || {});
+    let contentsUrl =
+      job.is_rescan
+        ? rescanSpace?.repo_contents_storage_url || job.repo_contents_storage_url || null
+        : null;
+
+    if (Object.keys(mergedContents).length > 0) {
+      const artifactPath = repoContentsPath(job);
+      try {
+        await setJob(job.id, { stage: 'Uploading repo context', progress: 98 });
+        await uploadRepoContents(
+          artifactPath,
+          buildRepoContentsArtifact({
+            repoOwner: job.repo_owner,
+            repoName: job.repo_name,
+            branch: job.branch,
+            commitSha: headSha,
+            fileContents: mergedContents,
+          })
+        );
+        contentsUrl = artifactPath;
+      } catch (artifactErr) {
+        console.warn(`[scan ${job.id}] repo contents artifact upload failed: ${artifactErr.message}`);
+      }
+    }
+
     await setJob(job.id, {
       status: 'done',
       stage: 'Complete',
       progress: 100,
       markdown_storage_url: relPath,
+      repo_contents_storage_url: contentsUrl,
       sha: headSha,
       base_commit_sha: headSha,
       changed_file_count: job.is_rescan ? result.changedFileCount ?? null : null,
@@ -210,8 +309,9 @@ export async function runJob(jobId) {
       branch: job.branch || null,
     };
     await pool.query(
-      `UPDATE spaces SET markdown_storage_url = $1, diagram_commit_sha = $2, diagram_repo = $3, updated_at = NOW() WHERE id = $4`,
-      [relPath, headSha, diagramRepo, job.space_id]
+      `UPDATE spaces SET markdown_storage_url = $1, repo_contents_storage_url = $2,
+       diagram_commit_sha = $3, diagram_repo = $4, updated_at = NOW() WHERE id = $5`,
+      [relPath, contentsUrl, headSha, diagramRepo, job.space_id]
     );
 
     console.log(`[scan ${job.repo_owner}/${job.repo_name}]${job.is_rescan ? ' (rescan)' : ''} done: ${counts.nodes} nodes, ${counts.edges} edges -> ${relPath}`);

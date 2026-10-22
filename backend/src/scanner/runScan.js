@@ -113,7 +113,15 @@ export async function runBackgroundRescan({
   const headSha = await client.latestCommitSha();
 
   if (headSha === baseCommitSha) {
-    return { noChanges: true, commitSha: headSha, changedFileCount: 0, addedFiles: [], modifiedFiles: [], removedFiles: [] };
+    return {
+      noChanges: true,
+      commitSha: headSha,
+      changedFileCount: 0,
+      addedFiles: [],
+      modifiedFiles: [],
+      removedFiles: [],
+      deletedFiles: [],
+    };
   }
 
   if (!existingMarkdown) {
@@ -123,6 +131,9 @@ export async function runBackgroundRescan({
   emit(5, `Comparing ${baseCommitSha.slice(0, 8)}...${headSha.slice(0, 8)} (git compare API)...`);
   const changedFiles = await client.compare(baseCommitSha, headSha);
   const removedFiles = changedFiles.filter((f) => f.status === 'removed').map((f) => f.filename);
+  const deletedFiles = changedFiles
+    .filter((f) => f.status === 'removed' || f.previous_filename)
+    .map((f) => f.previous_filename || f.filename);
   const scannableChanges = changedFiles
     .filter((f) => SOURCE_KINDS.has(f.status))
     .map(toScannableChange)
@@ -134,8 +145,9 @@ export async function runBackgroundRescan({
       commitSha: headSha,
       changedFileCount: changedFiles.length,
       addedFiles: [],
-      modifiedFiles: scannableChanges.length ? [] : [],
+      modifiedFiles: [],
       removedFiles,
+      deletedFiles,
     };
   }
 
@@ -167,6 +179,7 @@ export async function runBackgroundRescan({
     addedFiles: scannableChanges.filter((c) => c.status === 'added').map((c) => c.path),
     modifiedFiles: scannableChanges.filter((c) => SOURCE_KINDS.has(c.status) && c.status !== 'added').map((c) => c.path),
     removedFiles,
+    deletedFiles,
     scannedAt: new Date().toISOString(),
   };
 }

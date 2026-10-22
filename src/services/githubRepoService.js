@@ -190,6 +190,7 @@ export const fetchFileContent = async (owner, repoName, filePath, _token, ref) =
       `/repos/${owner}/${repoName}/contents/${filePath}`,
       {
         accept: 'application/vnd.github.v3.raw', // Get raw content directly
+        query: targetRef ? { ref: targetRef } : undefined,
         signal: apiT.signal,
       }
     );
