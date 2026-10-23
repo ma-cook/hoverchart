@@ -116,9 +116,7 @@ const CameraFollowController = () => {
     phaseRef.current = 'OUTBOUND';
     pauseUntilRef.current = 0;
     lastFollowPairRef.current = null;
-    try {
-      useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
-    } catch {}
+    useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
     useCameraFollowStore.getState().stopFollow();
   };
 
@@ -134,9 +132,7 @@ const CameraFollowController = () => {
         phaseRef.current = 'OUTBOUND';
         pauseUntilRef.current = 0;
         lastFollowPairRef.current = null;
-        try {
-          useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
-        } catch {}
+        useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
       }
       return;
     }
@@ -174,9 +170,7 @@ const CameraFollowController = () => {
     controlsEnabledRef.current = controls.enabled;
     controls.enabled = false;
 
-    try {
-      useCodeStore.getState().startFollowSession();
-    } catch {}
+    useCodeStore.getState().startFollowSession();
 
     activeRef.current = { objectId: activeObjectId, paths: prepared };
     pathIndexRef.current = 0;
@@ -184,9 +178,7 @@ const CameraFollowController = () => {
     phaseRef.current = 'OUTBOUND';
     pauseUntilRef.current = 0;
     lastFollowPairRef.current = null;
-    try {
-      if (prepared[0]?.meta) syncFollowCodeWindows(prepared[0].meta);
-    } catch {}
+    if (prepared[0]?.meta) syncFollowCodeWindows(prepared[0].meta);
     invalidate();
   }, [activeObjectId, gl, invalidate]);
 
@@ -220,9 +212,7 @@ const CameraFollowController = () => {
         phaseRef.current = 'OUTBOUND';
         pauseUntilRef.current = 0;
         lastFollowPairRef.current = null;
-        try {
-          useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
-        } catch {}
+        useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
         useCameraFollowStore.getState().stopFollow();
       }
     },
@@ -274,9 +264,7 @@ const CameraFollowController = () => {
       phaseRef.current = 'PAUSED';
       pauseUntilRef.current = now + PAUSE_DURATION_MS;
       // Ensure windows are synced for this connection at pause point
-      try {
-        if (meta) syncFollowCodeWindows(meta);
-      } catch {}
+      if (meta) syncFollowCodeWindows(meta);
       const point = samplePathAt(resampled, distanceRef.current, lookAtRef.current);
       controls.target.set(point[0], point[1], point[2]);
       camera.position.set(
@@ -297,9 +285,7 @@ const CameraFollowController = () => {
       phaseRef.current = 'OUTBOUND';
       resampled = active.paths[pathIndexRef.current];
       if (resampled?.meta) {
-        try {
-          syncFollowCodeWindows(resampled.meta);
-        } catch {}
+        syncFollowCodeWindows(resampled.meta);
       }
     }
 
