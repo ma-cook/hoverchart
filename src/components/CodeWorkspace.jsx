@@ -359,6 +359,32 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
     ? SOURCE_LINE_STYLE
     : DESTINATION_LINE_STYLE;
 
+  const preRef = useRef(null);
+  const lastScrolledKey = useRef('');
+
+  useEffect(() => {
+    if (!highlight || !preRef.current) return;
+    const lineIndices = [...highlight.lines];
+    if (lineIndices.length === 0) return;
+    const key = `${followActiveConnectionId}:${objectId}:${lineIndices.join(',')}`;
+    if (lastScrolledKey.current === key) return;
+    lastScrolledKey.current = key;
+
+    const container = preRef.current;
+    const firstIdx = lineIndices[0];
+    const codeEl = container.querySelector('.code-workspace-code');
+    const target = codeEl?.children?.[firstIdx] || container.querySelector(`[data-code-highlight="${highlight.direction}"]`);
+    if (!target) return;
+
+    requestAnimationFrame(() => {
+      try {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      } catch {
+        // Fallback for environments without smooth scroll
+      }
+    });
+  }, [highlight, followActiveConnectionId, objectId]);
+
   return (
     <div
       className="space-chat-window code-window"
@@ -384,7 +410,7 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
             onClick={() => closeCodeWindow(windowId)}
             title="Close code window"
           >
-            ✕
+            ?
           </button>
         </div>
       </div>
@@ -396,7 +422,7 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
 
       <div className="code-workspace-body code-window-body">
         {code != null ? (
-          <pre className="code-workspace-pre">
+          <pre ref={preRef} className="code-workspace-pre">
             <code className={`code-workspace-code language-${language}`}>
               {highlight && typeof code === 'string' ? (
                 code.split('\n').map((line, idx) => (
