@@ -36,6 +36,7 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
   const layout = useCodeStore((s) => s.codeWindowLayouts?.[windowId]);
   const setCodeWindowLayout = useCodeStore((s) => s.setCodeWindowLayout);
   const closeCodeWindow = useCodeStore((s) => s.closeCodeWindow);
+  const followActiveConnectionId = useCodeStore((s) => s.followActiveConnectionId);
 
   const currentLayout = layout && layout.x != null && layout.y != null
     ? layout
@@ -169,6 +170,29 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
     'Code';
   const showLoading = code == null && !!filePath && !loadState.error;
 
+  // Try to find relationship highlight range from active follow connection
+  const [highlightRange, setHighlightRange] = useState(null);
+  useEffect(() => {
+    setHighlightRange(null);
+    if (!followActiveConnectionId || !objectData) return;
+    try {
+      const connStore = require('../stores/connectionStore').default;
+      const conn = connStore.getState().connections?.find((c) => String(c.id) === String(followActiveConnectionId));
+      if (!conn) return;
+      const connObjId = conn.start?.objectId || conn.start?.cube?.id || conn.start?.id;
+      const connObjId2 = conn.end?.objectId || conn.end?.cube?.id || conn.end?.id;
+      if (String(connObjId) !== String(objectId) && String(connObjId2) !== String(objectId)) return;
+      const md = conn.merfolkData || {};
+      const relStart = md.relStartLine || md.relationshipStartLine || md.startLine;
+      const relEnd = md.relEndLine || md.relationshipEndLine || md.endLine;
+      const relFile = md.relFilePath || md.relationshipFilePath || md.codeFilePath;
+      if (relFile && filePath && relFile !== filePath) return;
+      if (relStart != null && relEnd != null) {
+        setHighlightRange({ start: Number(relStart), end: Number(relEnd) });
+      }
+    } catch {}
+  }, [followActiveConnectionId, objectId, objectData, filePath]);
+
   return (
     <div
       className="space-chat-window code-window"
@@ -208,7 +232,26 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
         {code != null ? (
           <pre className="code-workspace-pre">
             <code className={`code-workspace-code language-${language}`}>
-              {code}
+              {highlightRange && typeof code === 'string' ? (
+                code.split('\n').map((line, idx) => {
+                  const lineNum = idx + 1;
+                  const isHighlighted = lineNum >= highlightRange.start && lineNum <= highlightRange.end;
+                  return (
+                    <div
+                      key={idx}
+                      style={
+                        isHighlighted
+                          ? { background: 'rgba(255, 215, 0, 0.15)', display: 'block' }
+                          : { display: 'block' }
+                      }
+                    >
+                      {line}
+                    </div>
+                  );
+                })
+              ) : (
+                code
+              )}
             </code>
           </pre>
         ) : showLoading ? (

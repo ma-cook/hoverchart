@@ -83,7 +83,7 @@ function resolveEndpoint(endpoint, objectsById, allObjects) {
 
 /**
  * Build round-trip follow paths for every connection incident to objectId.
- * @returns {Array<{ connectionId: string, points: number[][] }>}
+ * @returns {Array<{ connectionId: string, startObjectId: string, endObjectId: string, points: number[][], turnaroundDistance: number }>}
  */
 export function buildFollowPaths(objectId) {
   const idStr = objectId != null ? String(objectId) : null;
@@ -108,6 +108,8 @@ export function buildFollowPaths(objectId) {
       conn.end?.objectId ?? conn.end?.cube?.id ?? conn.end?.id
     )?.toString();
 
+    if (!startObjId || !endObjId) continue;
+
     const startPos = resolveEndpoint(conn.start, objectsById, allObjects);
     const endPos = resolveEndpoint(conn.end, objectsById, allObjects);
     if (!startPos || !endPos) continue;
@@ -123,9 +125,26 @@ export function buildFollowPaths(objectId) {
       ? pathPoints
       : [startPos, endPos];
 
+    // Compute turnaround distance (arc length of outbound leg)
+    let turnaroundDistance = 0;
+    for (let i = 1; i < out.length; i++) {
+      const a = out[i - 1];
+      const b = out[i];
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const dz = b[2] - a[2];
+      turnaroundDistance += Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
     // Round trip: out along the line, then back along it.
     const roundTrip = out.concat(out.slice(0, -1).reverse());
-    paths.push({ connectionId: String(conn.id), points: roundTrip });
+    paths.push({
+      connectionId: String(conn.id),
+      startObjectId: startObjId,
+      endObjectId: endObjId,
+      points: roundTrip,
+      turnaroundDistance,
+    });
   }
   return paths;
 }

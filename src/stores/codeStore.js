@@ -363,6 +363,65 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   setActiveCodeObjectId: (id) => set({ activeCodeObjectId: id }),
 
+  // Follow-session tracking (runtime only, not persisted)
+  followSessionId: null,
+  followOpenedWindowIds: new Set(),
+  followWindowByObjectId: {},
+  followActiveConnectionId: null,
+
+  startFollowSession: () => {
+    set({
+      followSessionId: `fs-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      followOpenedWindowIds: new Set(),
+      followWindowByObjectId: {},
+      followActiveConnectionId: null,
+    });
+  },
+
+  markFollowWindowOpened: (windowId, objectId) => {
+    const state = get();
+    const nextSet = new Set(state.followOpenedWindowIds);
+    nextSet.add(windowId);
+    set({
+      followOpenedWindowIds: nextSet,
+      followWindowByObjectId: {
+        ...(state.followWindowByObjectId || {}),
+        ...(objectId != null ? { [objectId]: windowId } : {}),
+      },
+    });
+  },
+
+  setFollowActiveConnectionId: (connectionId) => set({ followActiveConnectionId: connectionId }),
+
+  endFollowSession: ({ closeFollowOpened = true } = {}) => {
+    const state = get();
+    if (closeFollowOpened && state.followOpenedWindowIds && state.followOpenedWindowIds.size > 0) {
+      const currentWindows = state.codeWindows || [];
+      const remainingWindows = currentWindows.filter((w) => !state.followOpenedWindowIds.has(w.id));
+      const remainingLayouts = {};
+      for (const [wid, layout] of Object.entries(state.codeWindowLayouts || {})) {
+        if (!state.followOpenedWindowIds.has(wid)) {
+          remainingLayouts[wid] = layout;
+        }
+      }
+      set({
+        codeWindows: remainingWindows,
+        codeWindowLayouts: remainingLayouts,
+        followSessionId: null,
+        followOpenedWindowIds: new Set(),
+        followWindowByObjectId: {},
+        followActiveConnectionId: null,
+      });
+      return;
+    }
+    set({
+      followSessionId: null,
+      followOpenedWindowIds: new Set(),
+      followWindowByObjectId: {},
+      followActiveConnectionId: null,
+    });
+  },
+
   openCodeWindow: (objectId) => {
     const state = get();
     // If a code window for this object is already open, just re-open it on
