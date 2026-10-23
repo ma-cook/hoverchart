@@ -353,8 +353,14 @@ export class MermaidParser {
         if (inlinePropsMatch) {
           properties = this.parseInlineBlockProps(inlinePropsMatch[1]);
         } else {
-          // Check if next line starts a property block
-          properties = this.parseMultiLineProperties();
+          // The opening brace may be on the declaration line while the block
+          // itself continues on the following lines, e.g.
+          //   helper_file[Function: helper]{
+          //     codeFilePath: "src/utils/helper.js"
+          //   }
+          // which is what the scanner emits for utility/hook/store/worker file
+          // containers (the props block is concatenated without a newline).
+          properties = this.parseMultiLineProperties(remainingText.startsWith('{'));
         }
 
         // Explicit containment: `Node[...] in <parentId>` (or ` in parentId`).
@@ -716,17 +722,25 @@ export class MermaidParser {
   /**
    * Parse multi-line property block
    */
-  private parseMultiLineProperties(): Record<string, any> {
+  private parseMultiLineProperties(openingBraceOnCurrentLine = false): Record<string, any> {
     const properties: Record<string, any> = {};
 
-    // Check if the next line starts with '{'
-    if (
+    // Either the declaration line already ended with '{' or the next line is
+    // the opening '{' on its own.
+    let hasBlock = false;
+    if (openingBraceOnCurrentLine) {
+      this.currentLine++; // Move to first property line
+      hasBlock = true;
+    } else if (
       this.currentLine + 1 < this.lines.length &&
       this.lines[this.currentLine + 1].trim() === '{'
     ) {
       this.currentLine++; // Skip the opening '{'
       this.currentLine++; // Move to first property line
+      hasBlock = true;
+    }
 
+    if (hasBlock) {
       // Parse properties until we hit the closing '}'
       while (this.currentLine < this.lines.length) {
         const line = this.lines[this.currentLine].trim();
