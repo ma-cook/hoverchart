@@ -58,6 +58,7 @@ const CameraFollowController = () => {
     const last = lastFollowPairRef.current;
     if (last && last.connectionId === pathMeta.connectionId && last.farId === farId) {
       codeStore.setFollowActiveConnectionId(pathMeta.connectionId);
+      layoutFollowWindows(activeId, farId);
       return;
     }
 
@@ -109,6 +110,11 @@ const CameraFollowController = () => {
 
     codeStore.setFollowActiveConnectionId(pathMeta.connectionId);
     lastFollowPairRef.current = { connectionId: pathMeta.connectionId, activeId, farId };
+    try {
+      requestAnimationFrame(() => layoutFollowWindows(activeId, farId));
+    } catch {
+      layoutFollowWindows(activeId, farId);
+    }
   };
 
   const ensureLookAtMarker = () => {
@@ -132,6 +138,37 @@ const CameraFollowController = () => {
   const hideLookAtMarker = () => {
     const marker = lookAtMarkerRef.current;
     if (marker) marker.visible = false;
+  };
+
+  const layoutFollowWindows = (activeId, farId) => {
+    const codeStore = useCodeStore.getState();
+    const margin = 16;
+    const width = Math.min(560, Math.max(420, window.innerWidth * 0.3));
+    const headerHeight = 60;
+    const totalH = Math.max(200, window.innerHeight - headerHeight - 80);
+    const gap = 10;
+    const halfH = Math.floor((totalH - gap) / 2);
+    const rightX = window.innerWidth - width - margin;
+    const topY = headerHeight;
+
+    const getWinId = (oid) => {
+      if (!oid) return null;
+      const mapped = codeStore.followWindowByObjectId?.[oid];
+      if (mapped && (codeStore.codeWindows || []).some((w) => w.id === mapped)) return mapped;
+      const w = (codeStore.codeWindows || []).find((cw) => String(cw.objectId) === String(oid));
+      return w?.id || null;
+    };
+
+    const srcWinId = getWinId(activeId);
+    const dstWinId = getWinId(farId);
+    if (srcWinId) {
+      codeStore.setCodeWindowLayout(srcWinId, { x: rightX, y: topY, width, height: halfH });
+    }
+    if (dstWinId && dstWinId !== srcWinId) {
+      codeStore.setCodeWindowLayout(dstWinId, { x: rightX, y: topY + halfH + gap, width, height: halfH });
+    } else if (dstWinId && dstWinId === srcWinId && srcWinId) {
+      codeStore.setCodeWindowLayout(srcWinId, { x: rightX, y: topY, width, height: totalH });
+    }
   };
 
   const stop = () => {
