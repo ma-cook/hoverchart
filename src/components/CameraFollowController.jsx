@@ -29,6 +29,7 @@ const PAUSE_DURATION_MS = 2000;
 
 const CameraFollowController = () => {
   const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
   const invalidate = useThree((s) => s.invalidate);
 
   // Traversal state lives in refs to avoid per-frame store/render churn.
@@ -41,6 +42,7 @@ const CameraFollowController = () => {
   const phaseRef = useRef('OUTBOUND'); // OUTBOUND | PAUSED | RETURNING
   const pauseUntilRef = useRef(0);
   const lastFollowPairRef = useRef(null);
+  const lookAtMarkerRef = useRef(null);
 
   const syncFollowCodeWindows = (pathMeta) => {
     if (!pathMeta) return;
@@ -109,9 +111,33 @@ const CameraFollowController = () => {
     lastFollowPairRef.current = { connectionId: pathMeta.connectionId, activeId, farId };
   };
 
+  const ensureLookAtMarker = () => {
+    if (lookAtMarkerRef.current && scene.getObjectById(lookAtMarkerRef.current.id)) return lookAtMarkerRef.current;
+    const geometry = new THREE.BoxGeometry(6, 6, 6);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x3b82f6,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = 'camera-follow-lookat-marker';
+    mesh.renderOrder = 10000;
+    scene.add(mesh);
+    lookAtMarkerRef.current = mesh;
+    return mesh;
+  };
+
+  const hideLookAtMarker = () => {
+    const marker = lookAtMarkerRef.current;
+    if (marker) marker.visible = false;
+  };
+
   const stop = () => {
     const controls = window.orbitControls;
     if (controls) controls.enabled = controlsEnabledRef.current;
+    hideLookAtMarker();
     activeRef.current = null;
     phaseRef.current = 'OUTBOUND';
     pauseUntilRef.current = 0;
@@ -128,6 +154,7 @@ const CameraFollowController = () => {
       if (activeRef.current) {
         const controls = window.orbitControls;
         if (controls) controls.enabled = controlsEnabledRef.current;
+        hideLookAtMarker();
         activeRef.current = null;
         phaseRef.current = 'OUTBOUND';
         pauseUntilRef.current = 0;
@@ -178,6 +205,7 @@ const CameraFollowController = () => {
     phaseRef.current = 'OUTBOUND';
     pauseUntilRef.current = 0;
     lastFollowPairRef.current = null;
+    hideLookAtMarker();
     if (prepared[0]?.meta) syncFollowCodeWindows(prepared[0].meta);
     invalidate();
   }, [activeObjectId, gl, invalidate]);
@@ -208,6 +236,7 @@ const CameraFollowController = () => {
       if (activeRef.current) {
         const controls = window.orbitControls;
         if (controls) controls.enabled = controlsEnabledRef.current;
+        hideLookAtMarker();
         activeRef.current = null;
         phaseRef.current = 'OUTBOUND';
         pauseUntilRef.current = 0;
@@ -215,6 +244,7 @@ const CameraFollowController = () => {
         useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
         useCameraFollowStore.getState().stopFollow();
       }
+      hideLookAtMarker();
     },
     []
   );
@@ -274,6 +304,9 @@ const CameraFollowController = () => {
       );
       camera.lookAt(controls.target);
       controls.update();
+      const markerPause = ensureLookAtMarker();
+      markerPause.position.set(point[0], point[1], point[2]);
+      markerPause.visible = true;
       invalidate();
       return;
     }
@@ -306,6 +339,9 @@ const CameraFollowController = () => {
     );
     camera.lookAt(controls.target);
     controls.update();
+    const marker = ensureLookAtMarker();
+    marker.position.set(point[0], point[1], point[2]);
+    marker.visible = true;
 
     // Keep demand-driven frameloops alive while following.
     invalidate();
