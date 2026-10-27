@@ -151,11 +151,29 @@ const workerApi = {
    *
    * @param {string} markdownContent  - Raw markdown text from the file
    * @param {number[]} basePosition   - [x, y, z] camera-based spawn position
+   * @param {object} [options]        - Layout options
+   * @param {Array<[string, object]>|Map<string, object>} [options.existingPositions] - Existing positions to pin
    * @returns {object}                - Serialisable layout result
    */
-  async computeLayout(markdownContent, basePosition) {
+  async computeLayout(markdownContent, basePosition, options = {}) {
     engine.scaleCache.clear();
     engine.boundingBoxCache.clear();
+
+    // Build pinned positions map for incremental layout
+    const pinnedPositions = new Map();
+    if (options && options.existingPositions) {
+      const entries = Array.isArray(options.existingPositions)
+        ? options.existingPositions
+        : Array.from(options.existingPositions.entries ? options.existingPositions.entries() : []);
+      for (const [nodeId, data] of entries) {
+        if (nodeId && data && data.position) {
+          pinnedPositions.set(nodeId, {
+            position: data.position,
+            scale: data.scale,
+          });
+        }
+      }
+    }
 
     if (!engine.processor) {
       engine.initializeProcessor();
@@ -232,6 +250,8 @@ const workerApi = {
         nodeScales,
         processedNodes,
         alignments: graph.metadata?.alignments || [],
+        pinnedPositions,
+        pinnedSet: new Set(pinnedPositions.keys()),
       };
 
       const rootArray = Array.from(rootNodes);
@@ -257,7 +277,8 @@ const workerApi = {
       // relative ordering — big distances still map to larger positions,
       // but no node ends up hundreds of thousands of units away.
       const CLAMP_BOUNDARY = 50000;
-      for (const [, pos] of nodePositions) {
+      for (const [nodeId, pos] of nodePositions) {
+        if (pinnedPositions.has(nodeId)) continue; // Don't clamp pinned positions
         for (const axis of [0, 1, 2]) {
           if (Math.abs(pos[axis]) > CLAMP_BOUNDARY) {
             const sign = Math.sign(pos[axis]);

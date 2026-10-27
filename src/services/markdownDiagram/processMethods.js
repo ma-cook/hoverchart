@@ -166,7 +166,16 @@ export const processMethods = {
     let workerResult = null;
     try {
       const layoutWorker = getMarkdownLayoutWorker();
-      workerResult = await layoutWorker.computeLayout(content, basePosition);
+      const existingPositions = [];
+      try {
+        const objects = useObjectsStore.getState().objects || [];
+        for (const obj of objects) {
+          if (obj && obj.merfolkData && obj.merfolkData.nodeId) {
+            existingPositions.push([obj.merfolkData.nodeId, { position: obj.position, scale: obj.scale, objectId: obj.id }]);
+          }
+        }
+      } catch (e) {}
+      workerResult = await layoutWorker.computeLayout(content, basePosition, existingPositions.length > 0 ? { existingPositions } : {});
     } catch (workerError) {
       console.warn(
         '[MarkdownDiagramService] Layout worker failed – falling back to main thread:',

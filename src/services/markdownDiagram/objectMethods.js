@@ -44,7 +44,7 @@ export const objectMethods = {
     let context;
 
     if (precomputedLayout) {
-      // ── Worker-computed layout ───────────────────────────────────────────
+      // �� Worker-computed layout �������������������������������������������
       // Reconstruct ES6 Maps / Sets from the serialised arrays returned by
       // markdownLayoutWorker so container methods receive the types they expect.
       parentChildMap = new Map(
@@ -59,6 +59,16 @@ export const objectMethods = {
       nodeScales = new Map(
         precomputedLayout.nodes.map((n) => [n.nodeId, n.scale])
       );
+      // Build pinned maps from existing objects for safety
+      const pinnedPositionsMap = new Map();
+      try {
+        const existingObjs = useObjectsStore.getState().objects || [];
+        for (const obj of existingObjs) {
+          if (obj && obj.merfolkData && obj.merfolkData.nodeId && obj.position) {
+            pinnedPositionsMap.set(obj.merfolkData.nodeId, { position: obj.position, scale: obj.scale });
+          }
+        }
+      } catch (e) {}
       context = {
         parentChildMap,
         childParentMap,
@@ -76,6 +86,8 @@ export const objectMethods = {
         communityAssignments: useDiagramStore.getState().communityAssignments || null,
         alignments: graph.metadata?.alignments || [],
         spaceId: currentSpaceId,
+        pinnedPositions: pinnedPositionsMap,
+        pinnedSet: new Set(pinnedPositionsMap.keys()),
       };
     } else {
       // ── Main-thread fallback (original code path) ────────────────────────
@@ -89,6 +101,15 @@ export const objectMethods = {
       nodeScales = new Map();
       const processedNodes = new Set();
 
+      const pinnedPositionsMap2 = new Map();
+      try {
+        const existingObjs = useObjectsStore.getState().objects || [];
+        for (const obj of existingObjs) {
+          if (obj && obj.merfolkData && obj.merfolkData.nodeId && obj.position) {
+            pinnedPositionsMap2.set(obj.merfolkData.nodeId, { position: obj.position, scale: obj.scale });
+          }
+        }
+      } catch (e) {}
       context = {
         parentChildMap,
         childParentMap,
@@ -103,6 +124,8 @@ export const objectMethods = {
         communityAssignments: useDiagramStore.getState().communityAssignments || null,
         alignments: graph.metadata?.alignments || [],
         spaceId: currentSpaceId,
+        pinnedPositions: pinnedPositionsMap2,
+        pinnedSet: new Set(pinnedPositionsMap2.keys()),
       };
 
       // Process root nodes
@@ -254,6 +277,14 @@ export const objectMethods = {
             const existingId = existingNodeIdMap.get(data.nodeId);
             nodeToObjectIdMap.set(data.nodeId, existingId);
             positionUpdates.set(existingId, data.position);
+            // Also update scale if changed
+            if (data.extraData?.scale) {
+              const scaleUpdates = (merfolkDataUpdates.get(existingId) && merfolkDataUpdates.get(existingId).__scaleUpdate)
+                ? merfolkDataUpdates.get(existingId)
+                : { ...(merfolkDataUpdates.get(existingId) || {}), __scaleUpdate: true };
+              // We'll handle scale separately
+              merfolkDataUpdates.set(existingId, { ...(merfolkDataUpdates.get(existingId) || {}), scale: data.extraData.scale });
+            }
 
             // The reprocessed (rescan) markdown may now carry a code path for
             // a node whose object was created before that association existed.
@@ -263,6 +294,7 @@ export const objectMethods = {
             // the merfolk linkage the LOD gating needs.
             const hierarchy = data.extraData?.merfolkData || {};
             const patch = {
+              ...(merfolkDataUpdates.get(existingId) || {}),
               ...(hierarchy.parentNodeId && { parentNodeId: hierarchy.parentNodeId }),
             };
             if (data.extraData?.codeFilePath) {
@@ -559,11 +591,14 @@ export const objectMethods = {
           updated = { ...updated, position: newPos };
         }
         if (mPatch) {
+          const scaleUpdate = mPatch.scale;
+          const { scale, ...restPatch } = mPatch;
           updated = {
             ...updated,
+            ...(scaleUpdate ? { scale: scaleUpdate } : {}),
             merfolkData: {
               ...(updated.merfolkData || {}),
-              ...mPatch,
+              ...restPatch,
             },
           };
         }

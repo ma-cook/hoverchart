@@ -34,7 +34,8 @@ export const positionMethods = {
     graphNodes,
     parentChildMap,
     internalComponentChildren,
-    siblingIds = []
+    siblingIds = [],
+    context = null
   ) {
     const node = graphNodes.get(nodeId);
     const nodeType = node ? node.type : 'unknown';
@@ -524,6 +525,30 @@ export const positionMethods = {
     } = context;
 
     if (processedNodes.has(nodeId)) return;
+
+    // Handle pinned nodes - keep existing position but still traverse children
+    if (context.pinnedSet && context.pinnedSet.has(nodeId)) {
+      const pinned = context.pinnedPositions?.get(nodeId);
+      if (pinned && pinned.position) {
+        nodePositions.set(nodeId, [pinned.position[0], pinned.position[1], pinned.position[2]]);
+        if (pinned.scale && !nodeScales.has(nodeId)) {
+          nodeScales.set(nodeId, Array.isArray(pinned.scale) ? pinned.scale : [pinned.scale, pinned.scale, pinned.scale]);
+        }
+      }
+      processedNodes.add(nodeId);
+      const node = graphNodes.get(nodeId);
+      if (node && node.type === NODE_TYPE_DATAPATH) {
+        return;
+      }
+      const children = context.parentChildMap.get(nodeId);
+      if (children && children.size > 0) {
+        const childArray = Array.from(children).sort();
+        childArray.forEach((childId, idx) => {
+          this.positionNodeHierarchy(childId, context, nodePositions.get(nodeId) || parentPosition, level + 1, idx, childArray.length, 50);
+        });
+      }
+      return;
+    }
 
     const node = graphNodes.get(nodeId);
     if (!node) return;
@@ -1329,14 +1354,16 @@ export const positionMethods = {
       }
 
       groupEntries.forEach(([, nodes], index) => {
-        // Start from left side (−π) and distribute evenly
+        // Start from left side (-π) and distribute evenly
         const angle = -Math.PI + index * angleStep;
         const xOffset =
           Math.cos(angle) * minPlacementRadius + rootCenterXOffset;
         const zOffset =
           Math.sin(angle) * minPlacementRadius + rootCenterZOffset;
 
-        positionGroup(nodes, xOffset, groupContainerYOffset, zOffset);
+        // Filter out pinned nodes from group positioning
+        const nodesToPosition = nodes.filter(n => !(context.pinnedSet && context.pinnedSet.has(n)));
+        positionGroup(nodesToPosition, xOffset, groupContainerYOffset, zOffset);
       });
     }
 
@@ -1392,6 +1419,9 @@ export const positionMethods = {
       const baseSpacing = 40;
 
       ungroupedComponents.forEach((nodeId, index) => {
+        if (context.pinnedSet && context.pinnedSet.has(nodeId)) {
+          return; // keep pinned position
+        }
         const row = Math.floor(index / gridSize);
         const col = index % gridSize;
         const scale = nodeScales.get(nodeId) || [1, 1, 1];
@@ -1523,6 +1553,14 @@ export const positionMethods = {
     for (const alignment of alignments) {
       const ids = alignment.nodeIds || [];
       if (ids.length < 2) continue;
+      // Skip if any node is pinned
+      if (context.pinnedSet) {
+        let hasPinned = false;
+        for (const id of ids) {
+          if (context.pinnedSet.has(id)) { hasPinned = true; break; }
+        }
+        if (hasPinned) continue;
+      }
 
       const positioned = [];
       for (const id of ids) {
