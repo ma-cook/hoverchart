@@ -1,0 +1,1 @@
+import fs from 'fs'; const c = fs.readFileSync('D:/Projects/hoverchart/src/services/markdownDiagram/containerMethods.js','utf8'); const lines=c.split('\n'); for(let i=250;i<450;i++){ if(lines[i]&&lines[i].includes('container')) console.log(i+1+': '+lines[i]); }

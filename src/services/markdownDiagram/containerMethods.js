@@ -483,14 +483,11 @@ export const containerMethods = {
    * Create container for root-level component hierarchy
    */
   async createRootHierarchyContainer(context, allObjectsToSave) {
-    // Skip if a Component Hierarchy container already exists in the store.
-    // This prevents duplicates when rescan runs createObjectsFromDiagram on
-    // a space that already has a full diagram.
-    const existingObjectsForHierarchy = useObjectsStore.getState().objects;
-    const hierarchyContainerExists = existingObjectsForHierarchy.some(
+    // Update if exists, else create
+    const existingObjectsForHierarchy = useObjectsStore.getState().objects || [];
+    const existingHierarchyContainer = existingObjectsForHierarchy.find(
       (obj) => obj.merfolkData?.isContainer && obj.merfolkData?.groupType === 'Component Hierarchy'
     );
-    if (hierarchyContainerExists) return;
 
     const { graphNodes, _childParentMap, nodePositions, nodeScales, rootNodes } =
       context;
@@ -917,16 +914,15 @@ export const containerMethods = {
 
     // Build set of parentNodeIds that already have a container so we don't
     // create duplicates during rescan.
-    const existingParentNodeIds = new Set();
-    const existingObjectsForContainers = useObjectsStore.getState().objects;
+    const existingContainersByParent = new Map();
+    const existingObjectsForContainers = useObjectsStore.getState().objects || [];
     for (const obj of existingObjectsForContainers) {
       if (obj.merfolkData?.isContainer && obj.merfolkData?.parentNodeId) {
-        existingParentNodeIds.add(obj.merfolkData.parentNodeId);
+        existingContainersByParent.set(obj.merfolkData.parentNodeId, obj);
       }
     }
 
     for (const [parentNodeId, containerInfo] of containerDimensions.entries()) {
-      if (existingParentNodeIds.has(parentNodeId)) continue; // already exists — skip
       const parentNode = graphNodes.get(parentNodeId);
       if (!parentNode) continue;
 
@@ -937,6 +933,48 @@ export const containerMethods = {
           !Number.isFinite(position[1]) ||
           !Number.isFinite(position[2])) {
         console.warn('⚠️ Skipping container with invalid position:', parentNodeId, position);
+        continue;
+      }
+
+      const existingContainer = existingContainersByParent.get(parentNodeId);
+      if (existingContainer) {
+        try {
+          const currentObjects = useObjectsStore.getState().objects || [];
+          const updatedObjects = currentObjects.map(obj => {
+            if (obj.id === existingContainer.id) {
+              return {
+                ...obj,
+                position: [...position],
+                scale: Array.isArray(scale) ? [...scale] : scale,
+                size: Array.isArray(scale) ? [...scale] : scale,
+                merfolkData: {
+                  ...(obj.merfolkData || {}),
+                  parentNodeId,
+                  groupLabel: obj.merfolkData?.groupLabel || (parentNode.name || parentNode.id),
+                  childCount: childCount,
+                }
+              };
+            }
+            return obj;
+          });
+          useObjectsStore.getState().setObjects(updatedObjects);
+          allObjectsToSave.push({
+            id: existingContainer.id,
+            position: [...position],
+            size: Array.isArray(scale) ? [...scale] : scale,
+            scale: Array.isArray(scale) ? [...scale] : scale,
+            type: existingContainer.type || 'cube',
+            color: existingContainer.color || '#e0e0e0',
+            cellId: existingContainer.cellId,
+            merfolkData: {
+              ...(existingContainer.merfolkData || {}),
+              parentNodeId,
+              childCount: childCount,
+            }
+          });
+        } catch (e) {
+          console.warn('[container] Failed to update existing container:', e);
+        }
         continue;
       }
 

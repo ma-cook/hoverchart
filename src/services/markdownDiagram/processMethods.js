@@ -160,7 +160,24 @@ export const processMethods = {
     });
 
     // Camera position must be sampled on the main thread
-    const basePosition = this.getCameraBasedPosition();
+    let basePosition = this.getCameraBasedPosition();
+    try {
+      const existingObjs = useObjectsStore.getState().objects || [];
+      if (existingObjs.length > 0) {
+        let sumX = 0, sumY = 0, sumZ = 0, count = 0;
+        for (const obj of existingObjs) {
+          if (obj.position && Array.isArray(obj.position)) {
+            sumX += obj.position[0];
+            sumY += obj.position[1];
+            sumZ += obj.position[2];
+            count++;
+          }
+        }
+        if (count > 0) {
+          basePosition = [sumX / count, sumY / count, sumZ / count];
+        }
+      }
+    } catch (e) { /* ignore */ }
 
     // ── Attempt worker-computed layout ────────────────────────────────────
     let workerResult = null;
