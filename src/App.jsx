@@ -1858,11 +1858,7 @@ const existingIdsRef = useRef(new Set());
     return <div className="loading">Loading...</div>;
   }
 
-  // Show loading when looking up public space metadata
-  if (isLookingUpPublicSpace) {
-    console.log('🔍 [App] Showing loading screen for public space lookup');
-    return <div className="loading">Loading public space...</div>;
-  }
+  // Public space lookup no longer shows a separate loader - rely on main canvas/loading flow
 
   if (shouldRedirect) {
     console.log('🔄 [App] Triggering redirect due to !canViewSpace');
