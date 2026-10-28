@@ -103,49 +103,51 @@ export const getPublicSpaceMetadata = async (spaceId) => {
   console.log('🔍 getPublicSpaceMetadata called with spaceId:', spaceId);
 
   try {
-    // Step 1: Check sessionStorage cache first
-    console.log('📋 Step 1: Checking sessionStorage cache...');
-    const cachedOwner = sessionStorage.getItem(`sharedSpaceOwner_${spaceId}`);
-    if (cachedOwner) {
-      console.log(' Found cached owner:', cachedOwner);
-      try {
-        const data = await api.get(`/api/spaces/${spaceId}`, { retries: 0 });
-
-        if (data && data.isPublic && data.sharedWith?.includes('everyone')) {
-          console.log('✅ Found public space using cached owner!');
-          return {
-            id: data.id || spaceId,
-            ...data,
-            ownerId: cachedOwner,
-          };
-        }
-      } catch (error) {
-        console.error('❌ Error using cached owner:', error);
-      }
-    }
-
-    // Step 2: Try API directly
-    console.log('📋 Step 2: Trying API...');
+    // Step 1: Try API directly (no auth required for public spaces)
+    console.log('📋 Step 1: Trying API...');
     try {
-      const data = await api.get(`/api/spaces/${spaceId}`, { retries: 0 });
+      const data = await api.get(`/api/spaces/${spaceId}`, { retries: 1 });
 
       if (data) {
         console.log('✅ Found public space via API!');
-
-        // Cache this for future use
-        sessionStorage.setItem(`sharedSpaceOwner_${spaceId}`, data.owner_id);
+        const ownerId = data.owner_id || data.ownerId || data.owner?.uid;
+        if (ownerId) {
+          sessionStorage.setItem(`sharedSpaceOwner_${spaceId}`, ownerId);
+        }
         sessionStorage.setItem(`isPublicSpace_${spaceId}`, 'true');
 
         return {
           id: data.id || spaceId,
           ...data,
           isPublic: true,
-          sharedWith: ['everyone'],
-          ownerId: data.owner_id,
+          sharedWith: data.sharedWith || ['everyone'],
+          ownerId,
         };
       }
     } catch (error) {
       console.error('❌ Error checking via API:', error);
+    }
+
+    // Step 2: Check sessionStorage cache first
+    console.log('📋 Step 2: Checking sessionStorage cache...');
+    const cachedOwner = sessionStorage.getItem(`sharedSpaceOwner_${spaceId}`);
+    if (cachedOwner) {
+      console.log(' Found cached owner:', cachedOwner);
+      try {
+        const data = await api.get(`/api/spaces/${spaceId}`, { retries: 1 });
+
+        if (data) {
+          console.log('✅ Found public space using cached owner!');
+          const ownerId = cachedOwner || data.owner_id || data.ownerId;
+          return {
+            id: data.id || spaceId,
+            ...data,
+            ownerId,
+          };
+        }
+      } catch (error) {
+        console.error('❌ Error using cached owner:', error);
+      }
     }
 
     // Step 3: Try sessionStorage cache

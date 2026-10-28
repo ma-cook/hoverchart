@@ -43,7 +43,7 @@ class BroadcastSession {
       this.stream.getTracks().forEach((track) => pc.addTrack(track, this.stream));
       this.peerConnections.set(viewerId, pc);
 
-      const offer = await pc.createOffer({ offerToReceiveVideo: false, offerToReceiveAudio: false });
+      const offer = await pc.createOffer({ offerToReceiveVideo: true, offerToReceiveAudio: true });
       await pc.setLocalDescription(offer);
       emitSocket('signaling:offer', { to: viewerId, offer: { type: offer.type, sdp: offer.sdp } });
 
@@ -126,6 +126,10 @@ export const joinBroadcast = async (spaceId, broadcastId, viewerId) => {
   pc.onicecandidate = (e) => {
     if (e.candidate) emitSocket('signaling:ice', { to: broadcastId, candidate: e.candidate.toJSON() });
   };
+
+  // Allow receiving both video and audio
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.addTransceiver('audio', { direction: 'recvonly' });
 
   const unsubAnswer = onSocket('signaling:offer', async ({ from, offer }) => {
     if (from === viewerId) return;

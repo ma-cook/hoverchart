@@ -102,9 +102,29 @@ export async function api(path, options = {}) {
       res = await makeRequest(newToken);
     } catch {
       clearTokens();
+      // For public space access, don't force logout/throw session expired
+      if (url && (url.includes('/api/spaces/') || url.includes('/spaces/'))) {
+        try {
+          res = await makeRequest(null);
+          if (res.ok) {
+            const text = await res.text();
+            return text ? JSON.parse(text) : null;
+          }
+        } catch {}
+      }
       window.dispatchEvent(new CustomEvent('auth:logout'));
       throw new Error('Session expired');
     }
+  }
+
+  if (res.status === 401 && (url && (url.includes('/api/spaces/') || url.includes('/spaces/')))) {
+    try {
+      const resNoAuth = await makeRequest(null);
+      if (resNoAuth.ok) {
+        const text = await resNoAuth.text();
+        return text ? JSON.parse(text) : null;
+      }
+    } catch {}
   }
 
   if (res.status === 304) {

@@ -13,19 +13,42 @@ export class ScreenRecordingService {
   async startRecording(format = 'webm') {
     try {
       // Get display media (screen capture)
-      this.stream = await navigator.mediaDevices.getDisplayMedia({
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
           mediaSource: 'screen',
           width: { ideal: 1920 },
           height: { ideal: 1080 },
           frameRate: { ideal: 30 },
         },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 44100,
-        },
+        audio: true,
       });
+
+      let combinedStream = displayStream;
+      try {
+        const micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+        const audioTracks = [
+          ...displayStream.getAudioTracks(),
+          ...micStream.getAudioTracks(),
+        ];
+        const videoTracks = displayStream.getVideoTracks();
+        if (audioTracks.length > 0) {
+          combinedStream = new MediaStream([...videoTracks, ...audioTracks]);
+        } else if (micStream.getAudioTracks().length > 0) {
+          combinedStream = new MediaStream([...videoTracks, ...micStream.getAudioTracks()]);
+        }
+      } catch (micErr) {
+        console.warn('Microphone access failed, recording without mic audio:', micErr);
+        combinedStream = displayStream;
+      }
+
+      this.stream = combinedStream;
 
       this.recordingFormat = format;
 

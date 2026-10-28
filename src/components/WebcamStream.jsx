@@ -340,61 +340,70 @@ const WebcamStream = ({
         viewerConnectionRef.current = connection;
 
         connection.peerConnection.ontrack = (event) => {
-          if (
-            event.streams &&
-            event.streams[0] &&
-            remoteVideoRef.current &&
-            event.track.kind === 'video'
-          ) {
+          if (event.streams && event.streams[0] && remoteVideoRef.current) {
             const newStream = event.streams[0];
-
-            if (remoteVideoRef.current.srcObject !== newStream) {
-              currentStream = newStream;
-              remoteVideoRef.current.srcObject = newStream;
-
-              remoteVideoRef.current.onloadedmetadata = null;
-              remoteVideoRef.current.onplaying = null;
-              remoteVideoRef.current.onerror = null;
-
-              remoteVideoRef.current.onloadedmetadata = () => {
-                if (remoteVideoRef.current?.srcObject !== currentStream) return;
-
-                // Apply video texture using shared helper.
-                // THREE.VideoTexture auto-updates via the renderer — no RAF loop needed.
-                applyVideoTexture(
-                  remoteVideoRef.current,
-                  currentMesh,
-                  `webcam-${streamId}-material-update`,
-                  textureRef
-                );
-                remoteVideoRef.current
-                  .play()
-                  .then(() => {
-                    setWebcamLoading(streamId, false);
-                  })
-                  .catch((e) => {
-                    if (e.name !== 'AbortError') {
-                      setWebcamError(
-                        streamId,
-                        true,
-                        'Remote video playback error'
-                      );
-                      setWebcamLoading(streamId, false);
-                    }
-                  });
+            if (event.track.kind === 'video') {
+              if (remoteVideoRef.current.srcObject !== newStream) {
+                currentStream = newStream;
+                remoteVideoRef.current.srcObject = newStream;
 
                 remoteVideoRef.current.onloadedmetadata = null;
-              };
-              remoteVideoRef.current.onplaying = () => {
-                if (remoteVideoRef.current?.srcObject !== currentStream) return;
-                setWebcamLoading(streamId, false);
-              };
+                remoteVideoRef.current.onplaying = null;
+                remoteVideoRef.current.onerror = null;
 
-              remoteVideoRef.current.onerror = () => {
-                if (remoteVideoRef.current?.srcObject !== currentStream) return;
-                setWebcamError(streamId, true, 'Remote video playback error');
-                setWebcamLoading(streamId, false);
-              };
+                remoteVideoRef.current.onloadedmetadata = () => {
+                  if (remoteVideoRef.current?.srcObject !== currentStream) return;
+
+                  // Apply video texture using shared helper.
+                  // THREE.VideoTexture auto-updates via the renderer — no RAF loop needed.
+                  applyVideoTexture(
+                    remoteVideoRef.current,
+                    currentMesh,
+                    `webcam-${streamId}-material-update`,
+                    textureRef
+                  );
+                  remoteVideoRef.current
+                    .play()
+                    .then(() => {
+                      setWebcamLoading(streamId, false);
+                    })
+                    .catch((e) => {
+                      if (e.name !== 'AbortError') {
+                        setWebcamError(
+                          streamId,
+                          true,
+                          'Remote video playback error'
+                        );
+                        setWebcamLoading(streamId, false);
+                      }
+                    });
+
+                  remoteVideoRef.current.onloadedmetadata = null;
+                };
+                remoteVideoRef.current.onplaying = () => {
+                  if (remoteVideoRef.current?.srcObject !== currentStream) return;
+                  setWebcamLoading(streamId, false);
+                };
+
+                remoteVideoRef.current.onerror = () => {
+                  if (remoteVideoRef.current?.srcObject !== currentStream) return;
+                  setWebcamError(streamId, true, 'Remote video playback error');
+                  setWebcamLoading(streamId, false);
+                };
+              }
+            } else if (event.track.kind === 'audio') {
+              try {
+                if (remoteVideoRef.current.srcObject !== newStream) {
+                  remoteVideoRef.current.srcObject = newStream;
+                }
+                remoteVideoRef.current.muted = false;
+                remoteVideoRef.current.volume = 1.0;
+                remoteVideoRef.current.play().catch((e) => {
+                  console.warn('[WebcamStream] Failed to play remote audio:', e);
+                });
+              } catch (e) {
+                console.warn('[WebcamStream] Error setting up remote audio:', e);
+              }
             }
           }
         };
