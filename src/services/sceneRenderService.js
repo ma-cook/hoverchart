@@ -33,12 +33,22 @@ export async function renderMerfolkMarkdownToScene(markdown, spaceId, user) {
     .map((block) => '```merfolk\n' + block + '\n```')
     .join('\n\n');
 
-  const basePosition = markdownDiagramService.getCameraBasedPosition();
+  // Anchor the layout at the existing diagram (centroid of already-created
+  // objects) and pin their positions. Without this a rescan re-lays-out the
+  // whole diagram in front of the camera and moves every existing object to
+  // the new coordinates. On a first scan (empty store) the anchor falls back
+  // to the camera-based spawn position.
+  const { basePosition, existingPositions } =
+    markdownDiagramService.computeDiagramLayoutAnchor();
 
   let workerResult = null;
   try {
     const layoutWorker = getMarkdownLayoutWorker();
-    workerResult = await layoutWorker.computeLayout(normalized, basePosition);
+    workerResult = await layoutWorker.computeLayout(
+      normalized,
+      basePosition,
+      existingPositions.length > 0 ? { existingPositions } : {}
+    );
   } catch (err) {
     console.warn('[sceneRender] Layout worker failed:', err.message);
     return { success: false, objectsCreated: 0, connectionsCreated: 0 };

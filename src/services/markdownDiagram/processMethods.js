@@ -66,6 +66,54 @@ export const processMethods = {
   },
 
   /**
+   * Compute the layout anchor for a scan/rescan: the base position the layout
+   * is centred on plus the existing node positions to pin.
+   *
+   * When the space already contains diagram objects, the layout is anchored at
+   * the centroid of those objects (the diagram's original location) and every
+   * existing node is pinned so a rescan never teleports the diagram to the
+   * camera. On a first scan (empty store) the anchor falls back to the
+   * camera-based spawn position.
+   *
+   * Only objects with `merfolkData.nodeId` participate — container cubes and
+   * ad-hoc user objects are excluded so they cannot drag the centroid away
+   * from the diagram.
+   *
+   * @returns {{ basePosition: number[], existingPositions: Array<[string, {position: number[], scale: number[], objectId: string}]> }}
+   */
+  computeDiagramLayoutAnchor() {
+    let basePosition = null;
+    const existingPositions = [];
+
+    try {
+      const existingObjs = useObjectsStore.getState().objects || [];
+      let sumX = 0, sumY = 0, sumZ = 0, count = 0;
+      for (const obj of existingObjs) {
+        const nodeId = obj?.merfolkData?.nodeId;
+        if (!nodeId || !Array.isArray(obj.position)) continue;
+        existingPositions.push([nodeId, {
+          position: obj.position,
+          scale: obj.scale,
+          objectId: obj.id,
+        }]);
+        sumX += obj.position[0];
+        sumY += obj.position[1];
+        sumZ += obj.position[2];
+        count++;
+      }
+      if (count > 0) {
+        basePosition = [sumX / count, sumY / count, sumZ / count];
+      }
+    } catch { /* ignore — fall through to camera-based anchor */ }
+
+    if (!basePosition) {
+      basePosition = this.getCameraBasedPosition();
+    }
+
+    return { basePosition, existingPositions };
+  },
+
+  /**
    * Populate diagramStore from raw markdown without creating 3D objects.
    *
    * Used to hydrate the 2D diagram view when loading an existing space that
@@ -159,39 +207,14 @@ export const processMethods = {
       reader.readAsText(file);
     });
 
-    // Camera position must be sampled on the main thread
-    let basePosition = this.getCameraBasedPosition();
-    try {
-      const existingObjs = useObjectsStore.getState().objects || [];
-      if (existingObjs.length > 0) {
-        let sumX = 0, sumY = 0, sumZ = 0, count = 0;
-        for (const obj of existingObjs) {
-          if (obj.position && Array.isArray(obj.position)) {
-            sumX += obj.position[0];
-            sumY += obj.position[1];
-            sumZ += obj.position[2];
-            count++;
-          }
-        }
-        if (count > 0) {
-          basePosition = [sumX / count, sumY / count, sumZ / count];
-        }
-      }
-    } catch (e) { /* ignore */ }
+    // Anchor the layout at the existing diagram (rescan) or the camera (first
+    // scan). Existing node positions are pinned so a rescan never moves them.
+    const { basePosition, existingPositions } = this.computeDiagramLayoutAnchor();
 
     // ── Attempt worker-computed layout ────────────────────────────────────
     let workerResult = null;
     try {
       const layoutWorker = getMarkdownLayoutWorker();
-      const existingPositions = [];
-      try {
-        const objects = useObjectsStore.getState().objects || [];
-        for (const obj of objects) {
-          if (obj && obj.merfolkData && obj.merfolkData.nodeId) {
-            existingPositions.push([obj.merfolkData.nodeId, { position: obj.position, scale: obj.scale, objectId: obj.id }]);
-          }
-        }
-      } catch (e) {}
       workerResult = await layoutWorker.computeLayout(content, basePosition, existingPositions.length > 0 ? { existingPositions } : {});
     } catch (workerError) {
       console.warn(

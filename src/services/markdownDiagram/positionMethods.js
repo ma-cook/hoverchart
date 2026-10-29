@@ -802,6 +802,7 @@ export const positionMethods = {
         let maxX = -Infinity, maxZ = -Infinity;
 
         let nodeList = null;
+        let memberIds = null;
 
         if (containerId === '__UNGROUPED__') {
           nodeList = ungroupedComponents;
@@ -811,6 +812,7 @@ export const positionMethods = {
         }
 
         if (nodeList) {
+          memberIds = nodeList;
           for (const nodeId of nodeList) {
             const pos = nodePositions.get(nodeId);
             if (!pos) continue;
@@ -841,6 +843,7 @@ export const positionMethods = {
 
           const allDescendants = new Set();
           collectAllDescendants(containerId, allDescendants);
+          memberIds = [containerId, ...allDescendants];
 
           for (const descId of allDescendants) {
             const descPos = nodePositions.get(descId);
@@ -867,6 +870,7 @@ export const positionMethods = {
           minX, maxX, minZ, maxZ,
           width: maxX - minX,
           height: maxZ - minZ,
+          members: memberIds || [containerId],
         });
       }
 
@@ -898,6 +902,14 @@ export const positionMethods = {
 
           if (overlapX < 1 && overlapZ < 1) continue;
 
+          // Never move existing (pinned) objects on a rescan: when the bbox
+          // that would be displaced contains pinned nodes, push the OTHER bbox
+          // away instead. If both are pinned, leave the overlap untouched.
+          const pinnedSet = context.pinnedSet;
+          const bbox1Pinned = !!pinnedSet && bbox1.members.some((id) => pinnedSet.has(id));
+          const bbox2Pinned = !!pinnedSet && bbox2.members.some((id) => pinnedSet.has(id));
+          if (bbox1Pinned && bbox2Pinned) continue;
+
           const center1X = (bbox1.minX + bbox1.maxX) / 2;
           const center1Z = (bbox1.minZ + bbox1.maxZ) / 2;
           const center2X = (bbox2.minX + bbox2.maxX) / 2;
@@ -912,9 +924,15 @@ export const positionMethods = {
 
             if (moveDistance > 0) {
               const offsetX = direction * Math.min(moveDistance, 2000);
-              resolveNodeMove(bbox2, offsetX, 0);
-              bbox2.minX += offsetX;
-              bbox2.maxX += offsetX;
+              if (bbox2Pinned) {
+                resolveNodeMove(bbox1, -offsetX, 0);
+                bbox1.minX -= offsetX;
+                bbox1.maxX -= offsetX;
+              } else {
+                resolveNodeMove(bbox2, offsetX, 0);
+                bbox2.minX += offsetX;
+                bbox2.maxX += offsetX;
+              }
             }
           } else {
             const direction = center2Z > center1Z ? 1 : -1;
@@ -923,9 +941,15 @@ export const positionMethods = {
 
             if (moveDistance > 0) {
               const offsetZ = direction * Math.min(moveDistance, 2000);
-              resolveNodeMove(bbox2, 0, offsetZ);
-              bbox2.minZ += offsetZ;
-              bbox2.maxZ += offsetZ;
+              if (bbox2Pinned) {
+                resolveNodeMove(bbox1, 0, -offsetZ);
+                bbox1.minZ -= offsetZ;
+                bbox1.maxZ -= offsetZ;
+              } else {
+                resolveNodeMove(bbox2, 0, offsetZ);
+                bbox2.minZ += offsetZ;
+                bbox2.maxZ += offsetZ;
+              }
             }
           }
         }

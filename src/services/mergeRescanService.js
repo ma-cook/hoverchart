@@ -1,6 +1,7 @@
 import { rescanRepositoryForChanges, isGithubAuthenticated } from './githubRepoService';
 import { uploadMarkdownToStorage, fetchStoredMarkdown } from './storageService';
 import { markdownDiagramService } from './markdownDiagramService';
+import { renderMerfolkMarkdownToScene } from './sceneRenderService';
 import { saveDiagramDigest } from './graphPersistence';
 import { api } from '../api-client';
 import useObjectsStore from '../stores/objectsStore';
@@ -48,6 +49,19 @@ async function tryServerRescan(repoSlug, spaceId) {
       const markdown = await fetchStoredMarkdown(j.markdown_storage_url);
       if (!markdown) throw new Error('Server rescan produced no markdown');
       await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
+      // Materialize the new/changed nodes as 3D objects too — the server only
+      // produces markdown, so without this step a merged PR's objects never
+      // appear in the scene. Existing objects are pinned to their current
+      // positions, so the diagram stays where it was first created.
+      try {
+        const sceneResult = await renderMerfolkMarkdownToScene(markdown, spaceId, user);
+        console.log(
+          `[mergeRescan] Scene updated — ${sceneResult.objectsCreated} object(s),`,
+          `${sceneResult.connectionsCreated} connection(s)`
+        );
+      } catch (sceneErr) {
+        console.warn('[mergeRescan] Scene materialization failed:', sceneErr.message);
+      }
       setTimeout(() => saveDiagramDigest(spaceId), 0);
       if (j.sha) localStorage.setItem(`diagramCommitSha_${spaceId}`, j.sha);
       localStorage.setItem(`diagramMarkdownText_${spaceId}`, markdown);

@@ -16,6 +16,59 @@ import { addToAllCellObjects } from '../cellObjectCache';
 
 export const containerMethods = {
   /**
+   * Update an existing container cube in place: new centre/size plus a
+   * merfolkData patch, applied to the store and queued for persistence.
+   *
+   * Used on rescan so group / boundary / hierarchy containers GROW to enclose
+   * newly-added members instead of leaving stale bounds (or duplicating).
+   *
+   * The existing cellId is deliberately kept: moving a persisted object to a
+   * different cell requires a delete+insert across cell documents (see
+   * spatialObjectsService.moveObjectBetweenCells), which the bulk-import save
+   * path does not perform. Container centres shift only modestly on growth,
+   * and cells are 15000 world units, so the original cell stays correct.
+   */
+  updateExistingContainer(existingContainer, position, scale, merfolkPatch, allObjectsToSave) {
+    try {
+      const newPosition = [...position];
+      const newScale = Array.isArray(scale) ? [...scale] : scale;
+      const cellId = existingContainer.cellId;
+
+      const currentObjects = useObjectsStore.getState().objects || [];
+      const updatedObjects = currentObjects.map((obj) => {
+        if (obj.id !== existingContainer.id) return obj;
+        return {
+          ...obj,
+          position: newPosition,
+          scale: newScale,
+          size: newScale,
+          merfolkData: {
+            ...(obj.merfolkData || {}),
+            ...merfolkPatch,
+          },
+        };
+      });
+      useObjectsStore.getState().setObjects(updatedObjects);
+
+      allObjectsToSave.push({
+        id: existingContainer.id,
+        position: newPosition,
+        size: newScale,
+        scale: newScale,
+        type: existingContainer.type || 'cube',
+        color: existingContainer.color || '#e0e0e0',
+        cellId,
+        merfolkData: {
+          ...(existingContainer.merfolkData || {}),
+          ...merfolkPatch,
+        },
+      });
+    } catch (e) {
+      console.warn('[container] Failed to update existing container:', e);
+    }
+  },
+
+  /**
    * Create container cubes around grouped nodes.
    *
    * Groups are discovered dynamically by scanning the node types present in
@@ -123,9 +176,12 @@ export const containerMethods = {
     // ── Container creation helper (unchanged logic) ──────────────────────
     const containerCubes = [];
 
-    const createContainerForGroup = (nodes, groupName, color) => {
+    // Bounding box (+padding) around a set of positioned group members.
+    // Shared by container creation AND the rescan growth path so existing
+    // containers resize with exactly the same math they were created with.
+    const computeGroupContainerDimensions = (nodes) => {
       if (nodes.length === 0) {
-        return;
+        return null;
       }
 
       let minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -176,9 +232,23 @@ export const containerMethods = {
       if (!Number.isFinite(containerPosition[0]) ||
           !Number.isFinite(containerPosition[1]) ||
           !Number.isFinite(containerPosition[2])) {
-        console.warn('⚠️ Skipping group container with invalid position:', groupName, containerPosition);
+        return null;
+      }
+
+      return { position: containerPosition, scale: containerScale };
+    };
+
+    const createContainerForGroup = (nodes, groupName, color) => {
+      const dims = computeGroupContainerDimensions(nodes);
+      if (!dims) {
+        if (nodes.length > 0) {
+          console.warn('⚠️ Skipping group container with invalid position:', groupName);
+        }
         return;
       }
+
+      const containerScale = dims.scale;
+      const containerPosition = dims.position;
 
       const containerId = `group-container-${groupName}-${Date.now()}-${Math.random()
         .toString(36)
@@ -237,14 +307,17 @@ export const containerMethods = {
       allObjectsToSave.push(containerForSave);
     };
 
-    // ── Build set of group types that already have containers in the store ─
-    // This prevents duplicate containers when rescan calls createObjectsFromDiagram
-    // on top of an already-populated space.
-    const existingGroupTypes = new Set();
+    // ── Build map of group types that already have containers in the store ─
+    // Prevents duplicate containers when rescan calls createObjectsFromDiagram
+    // on top of an already-populated space — existing containers are instead
+    // GROWN (bbox recomputed over old + new members) so new nodes from a
+    // rescan end up inside their group container.
+    const existingGroupContainers = new Map();
     const existingObjectsSnapshot = useObjectsStore.getState().objects;
     for (const obj of existingObjectsSnapshot) {
-      if (obj.merfolkData?.isContainer && obj.merfolkData?.groupType) {
-        existingGroupTypes.add(obj.merfolkData.groupType);
+      const groupType = obj.merfolkData?.groupType;
+      if (obj.merfolkData?.isContainer && groupType && !existingGroupContainers.has(groupType)) {
+        existingGroupContainers.set(groupType, obj);
       }
     }
 
@@ -255,13 +328,39 @@ export const containerMethods = {
 
     sortedGroups.forEach(([groupKey, nodes], index) => {
       const displayName = getGroupDisplayName(groupKey);
-      if (existingGroupTypes.has(displayName)) return; // already exists — skip
+      const existing = existingGroupContainers.get(displayName);
+      if (existing) {
+        // Already exists — grow/shrink to fit all current members.
+        const dims = computeGroupContainerDimensions(nodes);
+        if (dims) {
+          this.updateExistingContainer(
+            existing,
+            dims.position,
+            dims.scale,
+            { nodeCount: nodes.length },
+            allObjectsToSave
+          );
+        }
+        return;
+      }
       const color = getGroupColor(index);
       createContainerForGroup(nodes, displayName, color);
     });
 
     // Unused components always get the grey container
-    if (!existingGroupTypes.has('Unused Components')) {
+    const existingUnused = existingGroupContainers.get('Unused Components');
+    if (existingUnused) {
+      const dims = computeGroupContainerDimensions(ungroupedComponents);
+      if (dims) {
+        this.updateExistingContainer(
+          existingUnused,
+          dims.position,
+          dims.scale,
+          { nodeCount: ungroupedComponents.length },
+          allObjectsToSave
+        );
+      }
+    } else {
       createContainerForGroup(ungroupedComponents, 'Unused Components', '#757575');
     }
 
@@ -292,19 +391,20 @@ export const containerMethods = {
     const boundaryCubes = [];
 
     // Prevent duplicate boundary containers when rescan calls
-    // createObjectsFromDiagram on top of an already-populated space.
-    const existingBoundaryOf = new Set();
+    // createObjectsFromDiagram on top of an already-populated space — existing
+    // ones are GROWN to enclose newly-added members instead.
+    const existingBoundaryContainers = new Map();
     const existingObjectsSnapshot = useObjectsStore.getState().objects;
     for (const obj of existingObjectsSnapshot) {
-      if (obj.merfolkData?.boundary && obj.merfolkData?.boundaryOf) {
-        existingBoundaryOf.add(obj.merfolkData.boundaryOf);
+      if (obj.merfolkData?.boundary && obj.merfolkData?.boundaryOf && !existingBoundaryContainers.has(obj.merfolkData.boundaryOf)) {
+        existingBoundaryContainers.set(obj.merfolkData.boundaryOf, obj);
       }
     }
 
     for (const [nodeId, node] of graphNodes.entries()) {
       const nodeType = (node.type || '').toLowerCase().trim();
       if (nodeType !== NODE_TYPE_BOUNDARY) continue;
-      if (existingBoundaryOf.has(nodeId)) continue;
+      const existingBoundary = existingBoundaryContainers.get(nodeId) || null;
 
       const children = (parentChildMap && parentChildMap.get(nodeId)) || new Set();
       if (children.size === 0) continue;
@@ -364,6 +464,19 @@ export const containerMethods = {
           '⚠️ Skipping boundary container with invalid position:',
           nodeId,
           containerPosition
+        );
+        continue;
+      }
+
+      // Rescan: the boundary container already exists — resize it to enclose
+      // its current members instead of creating a duplicate.
+      if (existingBoundary) {
+        this.updateExistingContainer(
+          existingBoundary,
+          containerPosition,
+          containerScale,
+          { nodeCount: children.size },
+          allObjectsToSave
         );
         continue;
       }
@@ -577,6 +690,19 @@ export const containerMethods = {
         !Number.isFinite(containerPosition[1]) ||
         !Number.isFinite(containerPosition[2])) {
       console.warn('⚠️ Skipping Component Hierarchy container with invalid position:', containerPosition);
+      return null;
+    }
+
+    // Rescan: grow the existing hierarchy container to enclose newly-added
+    // components instead of stacking a duplicate container on every rescan.
+    if (existingHierarchyContainer) {
+      this.updateExistingContainer(
+        existingHierarchyContainer,
+        containerPosition,
+        containerScale,
+        { nodeCount: hierarchyNodes.length },
+        allObjectsToSave
+      );
       return null;
     }
 
