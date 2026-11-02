@@ -42,6 +42,7 @@ import {
   getErrorStatus,
 } from '../services/durableScan';
 import { saveScanSession, loadScanSession, clearScanSession } from '../services/scanJobSession';
+import { checkSpaceForRepoUpdates } from '../services/mergeRescanService';
 import {
   scanWebsiteAndGenerateDiagram,
   validateScanUrl,
@@ -675,6 +676,20 @@ const UIOverlay = ({
       }
     };
   }, [currentSpaceId, user, buildDurableHydrate, buildDurableFailed, registerDurablePoll]);
+
+  // Auto-rescan on open: if the connected repo has new commits since the
+  // diagram was generated, silently rescan so the space reflects main.
+  const autoRescanCheckedRef = useRef(null);
+  useEffect(() => {
+    if (!currentSpaceId) return;
+    if (autoRescanCheckedRef.current === currentSpaceId) return;
+    autoRescanCheckedRef.current = currentSpaceId;
+    // Let initial load + markdown hydration settle before probing GitHub.
+    const timer = setTimeout(() => {
+      checkSpaceForRepoUpdates(currentSpaceId).catch(() => {});
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [currentSpaceId]);
 
   // Chat scans run inside SpaceChat which has no access to latestMarkdownUrl
   // persistence. Mirror the in-canvas scan's success handling so the markdown

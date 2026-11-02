@@ -82,6 +82,8 @@ After an initial scan the app records the commit SHA. When the rescan button is 
 5. Merges new nodes and connections into the existing diagram without duplicating existing elements
 6. Processes only the new section to create additional 3D objects
 
+**Automatic staleness check on open:** when a space connected to a GitHub repo is opened, the client compares the repo's latest commit SHA against the space's stored diagram SHA (one API call). If they differ, a background rescan runs automatically — existing objects keep their positions, and new/changed objects are merged into the diagram in place. Duplicate triggers are collapsed: the backend returns the already-running scan job when one exists for the space.
+
 ### How LLMs Use the Merfolk File to Gain Codebase-Wide Context
 
 The Merfolk markdown is the single artifact that gives LLM copilots and agents a compact, navigable mental model of the **entire repository** — not just the file the user is looking at. It is treated as a *map*, while the actual source text lives in a separate layer.

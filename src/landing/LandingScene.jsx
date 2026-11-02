@@ -1,4 +1,5 @@
 import PerspectiveGrid from './PerspectiveGrid';
+import LandingRenderController from './LandingRenderController';
 
 /**
  * Empty-space backdrop for the landing page.
@@ -7,6 +8,7 @@ import PerspectiveGrid from './PerspectiveGrid';
  */
 const LandingScene = () => (
   <>
+    <LandingRenderController />
     <ambientLight intensity={2} />
     <PerspectiveGrid />
     <perspectiveCamera

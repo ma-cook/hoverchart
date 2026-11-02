@@ -126,6 +126,22 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: RESCAN_NEEDED });
     }
 
+    // Idempotency: a scan of the same kind is already running for this
+    // space — return it instead of creating a duplicate. Collapses concurrent
+    // triggers (multiple tabs, auto-rescan racing a manual rescan) onto one
+    // job; callers poll the returned job either way.
+    const existing = await pool.query(
+      `SELECT ${JOB_COLUMNS}
+       FROM scan_jobs
+       WHERE space_id = $1 AND owner_id = $2 AND is_rescan = $3 AND status = ANY($4::text[])
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [spaceId, userId, rescan, ACTIVE_STATUSES]
+    );
+    if (existing.rows.length > 0) {
+      return res.status(200).json(existing.rows[0]);
+    }
+
     const [active, limit] = await Promise.all([activeCount(userId), tierLimit(userId)]);
     if (active >= limit) {
       return res.status(429).json({

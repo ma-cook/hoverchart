@@ -11,9 +11,9 @@ import useSceneStore from '../stores/sceneStore';
  * re-rendered at 60fps for the entire visit. This controller drops it to
  * "never" and re-renders on demand:
  *   – one frame when the user scrolls (landingScrollVersion bump)
- *   – one frame on window resize (Camera/OrderHeader re-position)
- *   – subsequent frames while CustomCamera's lerp is still converging
- * It restores "always" on unmount so the diagram app keeps its continuous loop.
+ *   – one frame on window resize (camera aspect)
+ * It restores "always" when the landing view unmounts so the diagram app keeps
+ * its continuous loop.
  *
  * Note: R3F's CanvasImpl re-applies its `frameloop` prop (SharedCanvas passes
  * "always") on every canvas re-render via a deps-less configure() effect,
@@ -32,8 +32,9 @@ function LandingRenderController() {
     if (frameloop !== 'never') {
       set({ frameloop: 'never' });
     }
-    return () => set({ frameloop: 'always' });
   }, [frameloop, set]);
+
+  useEffect(() => () => set({ frameloop: 'always' }), [set]);
 
   useEffect(() => {
     invalidate();

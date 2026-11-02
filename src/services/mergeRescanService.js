@@ -1,7 +1,8 @@
-import { rescanRepositoryForChanges, isGithubAuthenticated } from './githubRepoService';
+import { rescanRepositoryForChanges, isGithubAuthenticated, fetchLatestCommitSha } from './githubRepoService';
 import { uploadMarkdownToStorage, fetchStoredMarkdown } from './storageService';
 import { markdownDiagramService } from './markdownDiagramService';
 import { renderMerfolkMarkdownToScene } from './sceneRenderService';
+import { loadScanSession } from './scanJobSession';
 import { saveDiagramDigest } from './graphPersistence';
 import { api } from '../api-client';
 import useObjectsStore from '../stores/objectsStore';
@@ -201,5 +202,96 @@ export async function rescanAfterMerge(repoSlug, spaceId) {
     );
   } catch (err) {
     console.warn('[mergeRescan] Background rescan failed:', err.message);
+  }
+}
+
+// Multi-tab guard for the on-open staleness check: the first tab to detect
+// staleness runs the rescan; other tabs see the fresh lock and skip. The TTL
+// outlives the longest expected rescan so an abandoned tab can't lock a space
+// forever.
+const AUTO_RESCAN_LOCK_TTL_MS = 15 * 60 * 1000;
+const autoRescanLockKey = (spaceId) => `autoRescanLock_${spaceId}`;
+
+/**
+ * On-open staleness check: compare the connected repo's latest commit SHA
+ * against the space's stored diagram SHA and silently rescan when they
+ * differ. Runs the standard rescan pipeline (server diff rescan preferred,
+ * in-browser fallback) so new objects are materialized at the existing
+ * diagram location.
+ *
+ * Cheap path: a single GitHub API call when the space is up to date.
+ * Never throws, never blocks space opening — every failure is logged + skipped.
+ *
+ * Skips when: the space has no repo / no stored SHA (never scanned), a scan
+ * is already in progress, another tab holds a fresh auto-rescan lock, or
+ * GitHub is not connected.
+ *
+ * @param {string} spaceId
+ */
+export async function checkSpaceForRepoUpdates(spaceId) {
+  if (!spaceId) return;
+  try {
+    // Another tab recently started (or is running) the auto-rescan.
+    const lockRaw = localStorage.getItem(autoRescanLockKey(spaceId));
+    if (lockRaw && Date.now() - (Number(lockRaw) || 0) < AUTO_RESCAN_LOCK_TTL_MS) {
+      return;
+    }
+
+    // A scan is already in progress for this space — the durable re-attach
+    // flow will hydrate its result, no need to start another.
+    const session = loadScanSession(spaceId);
+    if (session?.jobId && !['done', 'failed', 'cancelled'].includes(session.status)) {
+      return;
+    }
+
+    // Authoritative repo + SHA come from the server space record (works
+    // cross-browser); localStorage is the offline/guest fallback.
+    let repo = null;
+    let storedSha = null;
+    try {
+      const space = await api.get(`/api/spaces/${spaceId}`);
+      if (space?.diagramRepo) repo = space.diagramRepo;
+      if (space?.diagramCommitSha) storedSha = space.diagramCommitSha;
+    } catch { /* fall through to local state */ }
+    if (!repo) {
+      try {
+        repo = JSON.parse(localStorage.getItem(`diagramRepo_${spaceId}`) || 'null');
+      } catch { repo = null; }
+    }
+    if (!storedSha) {
+      storedSha = localStorage.getItem(`diagramCommitSha_${spaceId}`) || null;
+    }
+
+    const owner = repo?.owner?.login;
+    const name = repo?.name;
+    if (!owner || !name) return;   // space is not connected to a repository
+    if (!storedSha) return;        // never scanned — nothing to diff against
+    if (!isGithubAuthenticated()) return;
+
+    // One-call staleness check. Uses the same HEAD the rescan diff is based
+    // on, so "equal" reliably means "nothing would change".
+    let headSha = null;
+    try {
+      headSha = await fetchLatestCommitSha(owner, name);
+    } catch (err) {
+      console.warn('[autoRescan] HEAD check failed:', err.message);
+      return;
+    }
+    if (!headSha || headSha === storedSha) {
+      console.log('[autoRescan] Space diagram is up to date');
+      return;
+    }
+
+    console.log(
+      `[autoRescan] New commits detected (${storedSha.slice(0, 7)} → ${headSha.slice(0, 7)}) — rescanning`
+    );
+    localStorage.setItem(autoRescanLockKey(spaceId), String(Date.now()));
+    try {
+      await rescanAfterMerge(`${owner}/${name}`, spaceId);
+    } finally {
+      localStorage.removeItem(autoRescanLockKey(spaceId));
+    }
+  } catch (err) {
+    console.warn('[autoRescan] Update check failed:', err.message);
   }
 }
