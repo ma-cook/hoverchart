@@ -312,7 +312,10 @@ const CameraFollowController = () => {
 
     const dt = Math.min(delta, 0.1); // clamp after stalls / tab switches
     if (phaseRef.current !== 'PAUSED') {
-      distanceRef.current += SPEED * dt;
+      // Per-connection speed multiplier (short=1x, medium=1.5x, long=2x),
+      // classified in buildFollowPaths from how the endpoint objects relate.
+      const speedMult = active.paths[pathIndexRef.current]?.meta?.speedMultiplier ?? 1;
+      distanceRef.current += SPEED * speedMult * dt;
     }
 
     let resampled = active.paths[pathIndexRef.current];

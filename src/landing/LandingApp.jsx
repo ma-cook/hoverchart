@@ -516,13 +516,10 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
               bottom: windowSize.width <= 768 ? '12px' : '56px',
               left: windowSize.width <= 768 ? '8px' : '270px',
               right: windowSize.width <= 768 ? '8px' : '270px',
-              backgroundColor: 'rgba(255, 255, 255, 0.8)',
-              opacity: 0.95,
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-              border: '1px solid rgba(0, 0, 0, 0.92)',
+              backgroundColor: 'var(--panel-bg)',
+              border: '1px solid var(--panel-border)',
               borderRadius: '10px',
-              boxShadow: '0 4px 18px rgba(0, 0, 0, 0.47)',
+              boxShadow: '0 4px 18px var(--panel-shadow)',
               zIndex: 10,
               display: 'flex',
               padding: windowSize.width <= 480 ? '0.5rem' : '1rem',
@@ -603,6 +600,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
                 cursor: 'pointer',
                 opacity: 0.65,
                 pointerEvents: 'auto',
+                color: 'var(--panel-text-muted)',
               }}
               onClick={() => {
                 rawScrollRef.current = Math.min(MAX_SCROLL, rawScrollRef.current + 500);
@@ -615,13 +613,13 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
                   fontWeight: '600',
                   letterSpacing: '1.2px',
                   textTransform: 'uppercase',
-                  color: '#444',
+                  color: 'var(--panel-text-muted)',
                 }}
               >
                 Explore
               </span>
               <svg width="20" height="12" viewBox="0 0 20 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M1 1L10 10L19 1" stroke="#444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M1 1L10 10L19 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
           </div>

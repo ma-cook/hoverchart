@@ -34,8 +34,8 @@
 
 /* WelcomeOverlay secondary button (Sign In) */
 .welcome-btn-secondary:hover {
-  background-color: #f0f7ff !important;
-  border-color: #020202 !important;
+  background-color: var(--panel-hover-bg) !important;
+  border-color: var(--panel-text) !important;
 }
 
 /* Scroll hint bounce animation */

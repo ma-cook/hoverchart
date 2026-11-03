@@ -3,7 +3,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 // ---------- Static style constants (hoisted outside component) ----------
 const TABLE_STYLES = {
   width: '100%',
-  backgroundColor: 'rgba(255, 255, 255, 0.5)',
+  backgroundColor: 'transparent',
   borderCollapse: 'collapse',
   borderRadius: '4px',
   overflow: 'hidden',
@@ -19,10 +19,10 @@ const BTN_STYLES = {
   width: '28px',
   height: '28px',
   borderRadius: '4px',
-  backgroundColor: 'rgba(255, 255, 255, 0.06)',
-  border: '1px solid rgba(255, 255, 255, 0.1)',
+  backgroundColor: 'var(--panel-hover-bg)',
+  border: '1px solid var(--panel-border)',
   fontSize: '16px',
-  color: '#e6e6e6',
+  color: 'var(--panel-text)',
 };
 const SHARE_BTN_STYLES = { ...BTN_STYLES, marginLeft: '10px' };
 const TRASH_BTN_STYLES = { ...BTN_STYLES, marginLeft: '5px' };
@@ -42,8 +42,8 @@ const LEAVE_BTN_STYLES = {
 };
 const INVITE_BANNER_BASE = {
   marginTop: '12px',
-  backgroundColor: 'rgba(255, 255, 255, 0.04)',
-  border: '1px solid rgba(255, 255, 255, 0.08)',
+  backgroundColor: 'var(--panel-hover-bg)',
+  border: '1px solid var(--panel-border)',
   borderRadius: '6px',
   display: 'flex',
   alignItems: 'center',
@@ -53,7 +53,7 @@ const INVITE_BANNER_BASE = {
   fontFamily:
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
 };
-const INVITE_TEXT_STYLES = { fontSize: '14px', color: '#d0d0d0', fontWeight: '400' };
+const INVITE_TEXT_STYLES = { fontSize: '14px', color: 'var(--panel-text)', fontWeight: '400' };
 const INVITE_BTN_ROW = { display: 'flex', gap: '8px' };
 const ACCEPT_BTN_STYLES = {
   padding: '6px 14px',
@@ -64,7 +64,7 @@ const ACCEPT_BTN_STYLES = {
   fontFamily: 'inherit',
   transition: 'background-color 0.2s',
 };
-const NO_SPACES_TEXT = { textAlign: 'center', color: '#999' };
+const NO_SPACES_TEXT = { textAlign: 'center', color: 'var(--panel-text-muted)' };
 // -----------------------------------------------------------------------
 
 export const SpacesTable = React.memo(
@@ -116,9 +116,9 @@ export const SpacesTable = React.memo(
     const tdStyles = useMemo(
       () => ({
         padding: isSmall ? '8px' : '12px',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+        borderBottom: '1px solid var(--panel-border)',
         fontSize: isSmall ? '12px' : '14px',
-        color: '#d0d0d0',
+        color: 'var(--panel-text)',
         fontWeight: '400',
       }),
       [isSmall]

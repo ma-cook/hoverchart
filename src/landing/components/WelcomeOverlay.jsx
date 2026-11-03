@@ -1,4 +1,5 @@
 import React from 'react';
+import useThemeStore from '../../stores/themeStore';
 
 const BRAND = '#cc8500';
 const BRAND_DARK = '#8a5a00';
@@ -15,6 +16,12 @@ const HERO_BULLETS = [
 export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAccount }) => {
   const isMobile = windowSize.width <= 768;
   const isSmallMobile = windowSize.width <= 480;
+  const isDark = useThemeStore((s) => s.mode) === 'dark';
+  const ink = isDark ? '#f4f4f5' : INK;
+  const bodyText = isDark ? '#c8c8cc' : '#555';
+  const listText = isDark ? '#e0e0e4' : '#333';
+  const mutedText = isDark ? '#9a9aa2' : '#999';
+  const eyebrowText = isDark ? '#ffb733' : BRAND_DARK;
 
   return (
     <div
@@ -32,6 +39,11 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
         borderRadius: '14px',
         padding: isMobile ? '24px 20px' : '32px 30px',
         zIndex: 100,
+        background: isDark ? 'rgba(22, 22, 26, 0.88)' : 'transparent',
+        border: isDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid transparent',
+        boxShadow: isDark ? '0 12px 48px rgba(0, 0, 0, 0.5)' : 'none',
+        backdropFilter: isDark ? 'blur(10px)' : undefined,
+        WebkitBackdropFilter: isDark ? 'blur(10px)' : undefined,
         fontFamily:
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
       }}
@@ -45,7 +57,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
             fontWeight: 700,
             letterSpacing: '1.8px',
             textTransform: 'uppercase',
-            color: BRAND_DARK,
+            color: eyebrowText,
             padding: '6px 12px',
             borderRadius: '999px',
             background: 'rgba(204,133,0,0.10)',
@@ -61,7 +73,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
         style={{
           fontSize: isMobile ? '28px' : '36px',
           fontWeight: 800,
-          color: INK,
+          color: ink,
           margin: '0 0 12px 0',
           textAlign: 'center',
           lineHeight: 1.12,
@@ -85,7 +97,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
       <p
         style={{
           fontSize: isMobile ? '14px' : '15px',
-          color: '#555',
+          color: bodyText,
           lineHeight: 1.6,
           margin: '0 0 22px 0',
           textAlign: 'center',
@@ -113,7 +125,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
               alignItems: 'flex-start',
               gap: '10px',
               fontSize: isMobile ? '13.5px' : '14px',
-              color: '#333',
+              color: listText,
               lineHeight: 1.5,
             }}
           >
@@ -163,8 +175,8 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
             width: '100%',
             padding: isMobile ? '12px 16px' : '14px 20px',
             backgroundColor: 'transparent',
-            color: INK,
-            border: `2px solid ${INK}`,
+            color: ink,
+            border: `2px solid ${ink}`,
             borderRadius: '8px',
             fontSize: isMobile ? '14px' : '15px',
             fontWeight: 600,
@@ -186,7 +198,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
           fontWeight: 600,
           letterSpacing: '1.4px',
           textTransform: 'uppercase',
-          color: '#999',
+          color: mutedText,
         }}
       >
         Scroll to explore ↓

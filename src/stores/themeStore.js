@@ -6,7 +6,7 @@ const THEME_STORAGE_KEY = 'hoverchart:theme';
 
 function readStoredTheme() {
   const stored = safeGetItem(THEME_STORAGE_KEY);
-  return stored === 'dark' ? 'dark' : 'light';
+  return stored === 'light' ? 'light' : 'dark';
 }
 
 function applyThemeAttribute(mode) {
@@ -31,7 +31,7 @@ const useThemeStore = createWithEqualityFn((set) => ({
 
   setTheme: (mode) =>
     set(() => {
-      const nextMode = mode === 'dark' ? 'dark' : 'light';
+      const nextMode = mode === 'light' ? 'light' : 'dark';
       safeSetItem(THEME_STORAGE_KEY, nextMode);
       applyThemeAttribute(nextMode);
       return { mode: nextMode };

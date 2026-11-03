@@ -16,8 +16,105 @@
  */
 import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
+import useLODStore from '../stores/lodStore';
 import { computeConnectionPath } from './pathfindingUtils';
 import { calculateFacePosition } from './facePositionUtils';
+
+/**
+ * Per-connection camera-follow speed multipliers, classified by how the two
+ * endpoint objects relate spatially:
+ *   short  – internal child ↔ parent of the same object (containment link)
+ *   medium – both endpoint objects inside the SAME container group
+ *   long   – endpoints in different container groups (or ungrouped)
+ * Attached to each follow path as `speedMultiplier`; CameraFollowController
+ * multiplies its base SPEED by it for that segment.
+ */
+export const FOLLOW_SPEED_MULTIPLIERS = { short: 1, medium: 1.5, long: 2 };
+
+// Group containers are cubes: world half-extent = scale * DEFAULT_CUBE_SIZE.
+const CONTAINER_HALF_SIZE = 5;
+
+const _groupContainers = (objects) => {
+  const list = [];
+  for (const obj of objects) {
+    if (!obj?.merfolkData?.isContainer) continue;
+    if (!Array.isArray(obj.position)) continue;
+    const s = Array.isArray(obj.scale) ? obj.scale : [1, 1, 1];
+    const half = [
+      Math.abs(s[0] || 1) * CONTAINER_HALF_SIZE,
+      Math.abs(s[1] || 1) * CONTAINER_HALF_SIZE,
+      Math.abs(s[2] || 1) * CONTAINER_HALF_SIZE,
+    ];
+    list.push({
+      id: String(obj.id),
+      center: obj.position,
+      half,
+      volume: half[0] * half[1] * half[2],
+    });
+  }
+  return list;
+};
+
+// An object's "container group" is the SMALLEST container box containing its
+// centre. Containers nest (per-component ⊂ boundary ⊂ Component Hierarchy),
+// so the most-specific box is the group the object actually belongs to —
+// testing "any shared box" would put nearly every component in the same giant
+// hierarchy container and classify almost everything medium.
+const _smallestContainerId = (pos, containers) => {
+  if (!Array.isArray(pos)) return null;
+  let best = null;
+  for (const c of containers) {
+    if (Math.abs(pos[0] - c.center[0]) > c.half[0]) continue;
+    if (Math.abs(pos[1] - c.center[1]) > c.half[1]) continue;
+    if (Math.abs(pos[2] - c.center[2]) > c.half[2]) continue;
+    if (!best || c.volume < best.volume) best = c;
+  }
+  return best ? best.id : null;
+};
+
+/**
+ * Classify a connection into a follow-speed multiplier.
+ * Positions prefer the live store object and fall back to the endpoint
+ * snapshot baked into the connection (works for cell-unloaded far objects).
+ */
+function classifyFollowSpeed(conn, startObjId, endObjId, objectsById, containers) {
+  const a = objectsById.get(startObjId) || null;
+  const b = objectsById.get(endObjId) || null;
+
+  // short: internal child ↔ parent of the same object. parentNodeId links a
+  // child to its containing parent's node id.
+  const aNode = a?.merfolkData?.nodeId;
+  const aParent = a?.merfolkData?.parentNodeId;
+  const bNode = b?.merfolkData?.nodeId;
+  const bParent = b?.merfolkData?.parentNodeId;
+  if ((aParent && aParent === bNode) || (bParent && bParent === aNode)) {
+    return FOLLOW_SPEED_MULTIPLIERS.short;
+  }
+  // Fallback when merfolkData is unavailable (unloaded objects): the LOD
+  // hierarchy carries the same linkage keyed by object id.
+  try {
+    const { childParentMap } = useLODStore.getState();
+    if (
+      childParentMap &&
+      (String(childParentMap.get(startObjId)) === endObjId ||
+        String(childParentMap.get(endObjId)) === startObjId)
+    ) {
+      return FOLLOW_SPEED_MULTIPLIERS.short;
+    }
+  } catch { /* hierarchy unavailable */ }
+
+  // medium: both endpoints belong to the same (most-specific) container group.
+  const aPos = a?.position || conn.start?.cube?.position || conn.start?.position || null;
+  const bPos = b?.position || conn.end?.cube?.position || conn.end?.position || null;
+  const aGroup = _smallestContainerId(aPos, containers);
+  const bGroup = _smallestContainerId(bPos, containers);
+  if (aGroup && aGroup === bGroup) {
+    return FOLLOW_SPEED_MULTIPLIERS.medium;
+  }
+
+  // long: different groups, or either endpoint outside every container.
+  return FOLLOW_SPEED_MULTIPLIERS.long;
+}
 
 const _objectsById = (objects) => {
   const map = new Map();
@@ -83,7 +180,7 @@ function resolveEndpoint(endpoint, objectsById, allObjects) {
 
 /**
  * Build round-trip follow paths for every connection incident to objectId.
- * @returns {Array<{ connectionId: string, startObjectId: string, endObjectId: string, points: number[][], turnaroundDistance: number }>}
+ * @returns {Array<{ connectionId: string, startObjectId: string, endObjectId: string, points: number[][], turnaroundDistance: number, speedMultiplier: number }>}
  */
 export function buildFollowPaths(objectId) {
   const idStr = objectId != null ? String(objectId) : null;
@@ -97,6 +194,7 @@ export function buildFollowPaths(objectId) {
   const objects = useObjectsStore.getState().objects || [];
   const objectsById = _objectsById(objects);
   const allObjects = _pathfindingObjects(objects);
+  const containers = _groupContainers(objects);
 
   const paths = [];
   for (const conn of connections) {
@@ -144,6 +242,7 @@ export function buildFollowPaths(objectId) {
       endObjectId: endObjId,
       points: roundTrip,
       turnaroundDistance,
+      speedMultiplier: classifyFollowSpeed(conn, startObjId, endObjId, objectsById, containers),
     });
   }
   return paths;
