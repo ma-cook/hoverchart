@@ -3,6 +3,7 @@ import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useChatArchiveStore from '../stores/chatArchiveStore';
+import useChatWindowStore from '../stores/chatWindowStore';
 import { useRef, useCallback, useEffect, useState, useMemo, memo } from 'react';
 import {
   uploadModelToStorage,
@@ -60,6 +61,27 @@ const defaultChatLayout = {
   width: SPACE_CHAT_DEFAULT_WIDTH,
   height: SPACE_CHAT_DEFAULT_HEIGHT,
 };
+
+const ChatWindowInstance = memo(({ windowId = 0, ...props }) => {
+  const layout = useChatWindowStore(
+    (state) => state.layouts[windowId] || defaultChatLayout
+  );
+  const setLayout = useChatWindowStore((state) => state.setLayout);
+  const handleLayoutChange = useCallback(
+    (nextLayout) => setLayout(windowId, nextLayout),
+    [setLayout, windowId]
+  );
+
+  return (
+    <SpaceChat
+      {...props}
+      windowId={windowId}
+      layout={layout}
+      onLayoutChange={handleLayoutChange}
+    />
+  );
+});
+ChatWindowInstance.displayName = 'ChatWindowInstance';
 import CodeWorkspace from './CodeWorkspace';
 import PendingChangesPanel from './PendingChangesPanel';
 import RepoAnalysisOverlay from './RepoAnalysisOverlay';
@@ -261,14 +283,16 @@ const EarthSidebarSections = () => {
  * multi-second block that followed each `pump vN` mark.  Here only this small
  * subtree re-renders, and only when one of its own selectors actually changes.
  */
-const ProgressToast = memo(({ scanProgress }) => {
+const ProgressToast = memo(() => {
+  const scanProgress = useDiagramStore((state) => state.scanProgress);
+  const isScanning = scanProgress.isScanning;
   const renderProgress = useDiagramStore((state) => state.renderProgress);
   const isInitialLoading = useObjectsStore((state) => state.isInitialLoading);
   const objectCount = useObjectsStore((state) => state.objects?.length ?? 0);
   const isCellsLoading = useSpatialManagerStore((state) => state.loadingCells.size > 0);
 
   if (
-    !scanProgress.isScanning &&
+    !isScanning &&
     !renderProgress &&
     !((isInitialLoading || isCellsLoading) && objectCount > 0)
   ) {
@@ -291,7 +315,7 @@ const ProgressToast = memo(({ scanProgress }) => {
           </div>
         </div>
       )}
-      {scanProgress.isScanning && (
+      {isScanning && (
         <div className={`progress-toast-row${isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
           <div className="progress-toast-label">{scanProgress.stage || 'Scanning…'}</div>
           <div className="progress-toast-track">
@@ -301,7 +325,7 @@ const ProgressToast = memo(({ scanProgress }) => {
         </div>
       )}
       {renderProgress && (
-        <div className={`progress-toast-row${scanProgress.isScanning || isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
+        <div className={`progress-toast-row${isScanning || isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
           <div className="progress-toast-label">
             Rendering {renderProgress.total.toLocaleString()} objects
             <span className="progress-toast-count"> ({renderProgress.mounted.toLocaleString()} / {renderProgress.total.toLocaleString()})</span>
@@ -351,7 +375,8 @@ const UIOverlay = ({
   const [showRepos, setShowRepos] = useState(false);
   const [isGithubAuthenticated, setIsGithubAuthenticated] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [scanProgress, setScanProgress] = useState({ isScanning: false, progress: 0, stage: '' });
+  const isScanning = useDiagramStore((state) => state.scanProgress.isScanning);
+  const setScanProgress = useDiagramStore((state) => state.setScanProgress);
   const [notification, setNotification] = useState({ show: false, message: '' });
   const [currentDiagramRepo, setCurrentDiagramRepo] = useState(null);
   const [lastGeneratedMarkdownUrl, setLastGeneratedMarkdownUrl] = useState(null);
@@ -675,7 +700,7 @@ const UIOverlay = ({
         activePollRef.current = null;
       }
     };
-  }, [currentSpaceId, user, buildDurableHydrate, buildDurableFailed, registerDurablePoll]);
+  }, [currentSpaceId, user, buildDurableHydrate, buildDurableFailed, registerDurablePoll, setScanProgress]);
 
   // Auto-rescan on open: if the connected repo has new commits since the
   // diagram was generated, silently rescan so the space reflects main.
@@ -762,11 +787,11 @@ const UIOverlay = ({
     }
   }, [trialMode, user]);
   const [chatWindows, setChatWindows] = useState([]);
-  const [chatWindowLayouts, setChatWindowLayouts] = useState({});
   const nextChatWindowIdRef = useRef(1);
-  const handleLayoutChange = useCallback((id, nextLayout) => {
-    setChatWindowLayouts((prev) => ({ ...prev, [id]: nextLayout }));
-  }, []);
+
+  useEffect(() => {
+    return () => useChatWindowStore.getState().clearLayouts();
+  }, [currentSpaceId]);
 
   const cascadeWindowLayout = useCallback((fromLayout) => {
     let x = fromLayout.x + fromLayout.width + SPACE_CHAT_GAP;
@@ -793,11 +818,12 @@ const UIOverlay = ({
     let id = nextChatWindowIdRef.current;
     while (used.has(id)) id++;
     nextChatWindowIdRef.current = id + 1;
-    const prev = chatWindowLayouts[fromWindowId] || defaultChatLayout;
+    const layouts = useChatWindowStore.getState().layouts;
+    const prev = layouts[fromWindowId] || defaultChatLayout;
     const layout = cascadeWindowLayout(prev);
-    setChatWindowLayouts((prevLayouts) => ({ ...prevLayouts, [id]: layout }));
+    useChatWindowStore.getState().setLayout(id, layout);
     setChatWindows((prev) => [...prev, id]);
-  }, [currentSpaceId, chatWindows, chatWindowLayouts, cascadeWindowLayout]);
+  }, [currentSpaceId, chatWindows, cascadeWindowLayout]);
 
   // Cascade code-viewer popups into the same chain as chat windows: each new
   // code window docks next to the most recently opened one (or the last chat
@@ -817,9 +843,10 @@ const UIOverlay = ({
       }
     }
     if (!anchor) {
+      const chatLayouts = useChatWindowStore.getState().layouts;
       for (const id of [...sortedChat].reverse()) {
-        if (chatWindowLayouts[id]) {
-          anchor = chatWindowLayouts[id];
+        if (chatLayouts[id]) {
+          anchor = chatLayouts[id];
           break;
         }
       }
@@ -835,14 +862,10 @@ const UIOverlay = ({
       anchor = next;
       store.setCodeWindowLayout(w.id, next);
     }
-  }, [codeWindows, chatWindows, chatWindowLayouts, cascadeWindowLayout]);
+  }, [codeWindows, chatWindows, cascadeWindowLayout]);
   const handleCloseChat = useCallback((id) => {
     setChatWindows((prev) => prev.filter((w) => w !== id));
-    setChatWindowLayouts((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
+    useChatWindowStore.getState().removeLayout(id);
     // Surface closed chat windows that were actually used (provider configured
     // or interacted with) as numbered icons below the top bar so the user can
     // reopen them. The primary window (id 0) is included now too.
@@ -875,11 +898,12 @@ const UIOverlay = ({
     }
     if (chatWindows.includes(id)) return;
     const lastId = chatWindows[chatWindows.length - 1];
-    const anchor = (lastId != null && chatWindowLayouts[lastId]) || defaultChatLayout;
+    const layouts = useChatWindowStore.getState().layouts;
+    const anchor = (lastId != null && layouts[lastId]) || defaultChatLayout;
     const layout = cascadeWindowLayout(anchor);
-    setChatWindowLayouts((prev) => ({ ...prev, [id]: layout }));
+    useChatWindowStore.getState().setLayout(id, layout);
     setChatWindows((prev) => (prev.includes(id) ? prev : [...prev, id]));
-  }, [currentSpaceId, chatWindows, chatWindowLayouts, cascadeWindowLayout]);
+  }, [currentSpaceId, chatWindows, cascadeWindowLayout]);
 
   // The space-chat icon opens/closes ALL chat windows as one unit: the primary
   // chat plus every archived chat window. Opening reopens each archived window
@@ -901,22 +925,19 @@ const UIOverlay = ({
     setChatOpen(true);
     archived.forEach((id) => archive.unarchiveWindow(currentSpaceId, id));
     if (archived.length === 0) return;
-    setChatWindowLayouts((prevLayouts) => {
-      const next = { ...prevLayouts };
-      let anchor = chatWindowLayouts[0] || defaultChatLayout;
-      for (const id of archived) {
-        if (id === 0) continue;
-        const layout = cascadeWindowLayout(anchor);
-        next[id] = layout;
-        anchor = layout;
-      }
-      return next;
-    });
+    const layouts = useChatWindowStore.getState().layouts;
+    let anchor = layouts[0] || defaultChatLayout;
+    for (const id of archived) {
+      if (id === 0) continue;
+      const layout = cascadeWindowLayout(anchor);
+      useChatWindowStore.getState().setLayout(id, layout);
+      anchor = layout;
+    }
     setChatWindows((prev) => {
       const toAdd = archived.filter((id) => id !== 0 && !prev.includes(id));
       return [...prev, ...toAdd];
     });
-  }, [currentSpaceId, chatOpen, chatWindows, chatWindowLayouts, handleCloseChat, cascadeWindowLayout]);
+  }, [currentSpaceId, chatOpen, chatWindows, handleCloseChat, cascadeWindowLayout]);
 
   // Keep the archive store's cached list in sync with the current space so the
   // numbered icon bar below the top bar reflects the persisted archive.
@@ -1351,7 +1372,7 @@ const UIOverlay = ({
       setNotification({ show: true, message: `Local scan failed: ${err.message}` });
       setTimeout(() => setNotification({ show: false, message: '' }), 5000);
     }
-  }, [onCreateObject, user, currentSpaceId, storeGeneratedMarkdown]);
+  }, [onCreateObject, user, currentSpaceId, storeGeneratedMarkdown, setScanProgress]);
 
   // Background scan: the heavy repository scan runs server-side (dedicated
   // scanner Cloud Run service). The job is durable — the session survives tab
@@ -1401,7 +1422,7 @@ const UIOverlay = ({
         setTimeout(() => setNotification({ show: false, message: '' }), 5000);
       }
     }
-  }, [currentSpaceId, user, buildDurableHydrate, buildDurableFailed, registerDurablePoll, runLocalFullScan]);
+  }, [currentSpaceId, user, buildDurableHydrate, buildDurableFailed, registerDurablePoll, runLocalFullScan, setScanProgress]);
 
   // Download the latest generated markdown file
   const handleDownloadMarkdown = useCallback(async () => {
@@ -2201,7 +2222,7 @@ const UIOverlay = ({
               <button
                 className="top-bar-btn rescan"
                 onClick={() => handleRescan(currentDiagramRepo)}
-                disabled={!currentDiagramRepo || scanProgress.isScanning}
+                disabled={!currentDiagramRepo || isScanning}
                 title={currentDiagramRepo?.name ? `Rescan ${currentDiagramRepo.name}` : 'No repo scanned yet'}
                 aria-label="Rescan repository"
               >
@@ -2211,7 +2232,7 @@ const UIOverlay = ({
               <button
                 className="top-bar-btn background-scan"
                 onClick={() => handleBackgroundScan(currentDiagramRepo)}
-                disabled={!currentDiagramRepo || (scanProgress.isScanning && !backgroundJobRef.current)}
+                disabled={!currentDiagramRepo || (isScanning && !backgroundJobRef.current)}
                 title={
                   backgroundJobRef.current
                     ? 'Cancel background scan'
@@ -2447,14 +2468,14 @@ const UIOverlay = ({
                 placeholder="https://example.com"
                 value={runtimeScanUrl}
                 onChange={(e) => setRuntimeScanUrl(e.target.value)}
-                disabled={scanProgress.isScanning}
+                disabled={isScanning}
               />
               <div className="runtime-scan-controls">
                 <select
                   className="runtime-scan-duration"
                   value={runtimeScanDuration}
                   onChange={(e) => setRuntimeScanDuration(Number(e.target.value))}
-                  disabled={scanProgress.isScanning}
+                  disabled={isScanning}
                   title="Capture duration"
                 >
                   <option value={5}>5s</option>
@@ -2465,10 +2486,10 @@ const UIOverlay = ({
                 <button
                   className="runtime-scan-button"
                   onClick={handleRuntimeScan}
-                  disabled={scanProgress.isScanning || !runtimeScanUrl.trim()}
+                  disabled={isScanning || !runtimeScanUrl.trim()}
                   title="Scan runtime behavior of the website"
                 >
-                  {scanProgress.isScanning ? 'Scanning...' : '🌐 Scan Runtime'}
+                  {isScanning ? 'Scanning...' : '🌐 Scan Runtime'}
                 </button>
               </div>
               {lastScannedUrl && (
@@ -2807,11 +2828,11 @@ const UIOverlay = ({
       </div>
 
       {/* Group chat window - opens at the top-left of the chat area */}
-      {!trialMode && <SpaceChat spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={handleClosePrimaryChat} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={() => handleAddChat(0)} layout={chatWindowLayouts[0] || defaultChatLayout} onLayoutChange={(next) => handleLayoutChange(0, next)} />}
+      {!trialMode && <ChatWindowInstance windowId={0} spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={handleClosePrimaryChat} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={() => handleAddChat(0)} />}
 
       {/* Extra chat windows - each is an independent LLM chat */}
       {!trialMode && chatWindows.map((id) => (
-        <SpaceChat
+        <ChatWindowInstance
           key={id}
           windowId={id}
           spaceId={currentSpaceId}
@@ -2821,15 +2842,13 @@ const UIOverlay = ({
           onCreateObject={onCreateObject}
           onDiagramGenerated={handleChatDiagramGenerated}
           onAddChat={() => handleAddChat(id)}
-          layout={chatWindowLayouts[id] || defaultChatLayout}
-          onLayoutChange={(next) => handleLayoutChange(id, next)}
         />
       ))}
 
       {/* Unified progress toast — bottom-right, handles scan, render, and data
           loading.  Isolated in a memoized child so progressive-mount progress
           writes don't re-render the whole overlay. */}
-      <ProgressToast scanProgress={scanProgress} />
+      <ProgressToast />
 
       {/* Notification popup */}
       {notification.show && (

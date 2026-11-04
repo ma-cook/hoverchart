@@ -45,6 +45,7 @@ const useSpatialManagerStore = create((set, get) => ({
   // PERF: cheap monotonic counter replacing sort/join "keys" derived from
   // loadedCells — consumers subscribe to this instead of hashing the set.
   loadedCellsVersion: 0,
+  visibleObjectIds: new Set(),
   currentCellCoords: { x: 0, y: 0, z: 0 },
   cameraCellCoords: { x: 0, y: 0, z: 0 },
   isInitialized: false,
@@ -95,6 +96,32 @@ const useSpatialManagerStore = create((set, get) => ({
     const newSet = new Set(state.loadedCells);
     newSet.delete(cellId);
     set({ loadedCells: newSet, loadedCellsVersion: state.loadedCellsVersion + 1 });
+  },
+
+  setVisibleObjectIds: (ids) => {
+    const state = get();
+    const next = ids instanceof Set ? ids : new Set(ids || []);
+    if (setsEqual(next, state.visibleObjectIds)) return;
+    set({ visibleObjectIds: next });
+  },
+
+  addVisibleObjectIds: (ids) => {
+    if (!ids || ids.length === 0) return;
+    const state = get();
+    const next = new Set(state.visibleObjectIds);
+    let changed = false;
+    for (const id of ids) {
+      if (!next.has(id)) {
+        next.add(id);
+        changed = true;
+      }
+    }
+    if (changed) set({ visibleObjectIds: next });
+  },
+
+  clearVisibleObjectIds: () => {
+    if (get().visibleObjectIds.size === 0) return;
+    set({ visibleObjectIds: new Set() });
   },
 
   setCurrentCellCoords: (coords) => {
@@ -879,6 +906,7 @@ const useSpatialManagerStore = create((set, get) => ({
     set({
       loadedCells: new Set(),
       loadedCellsVersion: state.loadedCellsVersion + 1,
+      visibleObjectIds: new Set(),
       currentCellCoords: { x: 0, y: 0, z: 0 },
       cameraCellCoords: { x: 0, y: 0, z: 0 },
       isInitialized: false,

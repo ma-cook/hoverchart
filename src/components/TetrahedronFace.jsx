@@ -159,8 +159,6 @@ const TetrahedronFace = React.memo(
         e.stopPropagation();
         e.nativeEvent?.stopPropagation?.();
         setTetrahedronActiveTextFace(id, faceName);
-        // Note: setActiveTextStyleUI would need to be passed or handled differently
-        // For now, assuming it's handled in parent
         return false;
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
@@ -275,7 +273,6 @@ const TetrahedronFace = React.memo(
               onStyleChange={handleFaceTextStyleChange}
               onClose={() => {
                 setTetrahedronActiveTextFace(id, null);
-                // setActiveTextStyleUI(null); // Handle in parent
               }}
               currentStyle={faceTextStyle || {}}
             />

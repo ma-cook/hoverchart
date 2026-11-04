@@ -30,8 +30,6 @@ const ObjectRenderer = React.memo(
     activeIndicator,
     indicatorMode,
     selectedIndicators,
-    activeTextStyleUI,
-    setActiveTextStyleUI,
     handleIndicatorDeselected,
     registerTransformingObject,
     handleObjectMatrixChanged,
@@ -93,8 +91,6 @@ const ObjectRenderer = React.memo(
           activeIndicator={activeIndicator}
           indicatorMode={indicatorMode}
           selectedIndicators={selectedIndicators}
-          activeTextStyleUI={activeTextStyleUI}
-          setActiveTextStyleUI={setActiveTextStyleUI}
           handleIndicatorDeselected={handleIndicatorDeselected}
           registerTransformingObject={registerTransformingObject}
           onTransformStart={onTransformStartStable}
@@ -127,8 +123,6 @@ const ObjectRenderer = React.memo(
           activeIndicator={activeIndicator}
           indicatorMode={indicatorMode}
           selectedIndicators={selectedIndicators}
-          activeTextStyleUI={activeTextStyleUI}
-          setActiveTextStyleUI={setActiveTextStyleUI}
           handleIndicatorDeselected={handleIndicatorDeselected}
           registerTransformingObject={registerTransformingObject}
           onTransformStart={onTransformStartStable}
@@ -161,8 +155,6 @@ const ObjectRenderer = React.memo(
           activeIndicator={activeIndicator}
           indicatorMode={indicatorMode}
           selectedIndicators={selectedIndicators}
-          activeTextStyleUI={activeTextStyleUI}
-          setActiveTextStyleUI={setActiveTextStyleUI}
           handleIndicatorDeselected={handleIndicatorDeselected}
           registerTransformingObject={registerTransformingObject}
           onTransformStart={onTransformStartStable}
@@ -229,8 +221,6 @@ const ObjectRenderer = React.memo(
           faceTextStyle={obj.faceTextStyle}
           imageUrl={obj.imageUrl}
           webcamActive={obj.webcamActive}
-          activeTextStyleUI={activeTextStyleUI}
-          setActiveTextStyleUI={setActiveTextStyleUI}
           onDelete={onDeleteStable}
           user={user}
           currentSpaceId={currentSpaceId}
@@ -300,7 +290,6 @@ const ObjectRenderer = React.memo(
       prevProps.showAllCubesIndicators === nextProps.showAllCubesIndicators &&
       prevProps.activeIndicator === nextProps.activeIndicator &&
       prevProps.indicatorMode === nextProps.indicatorMode &&
-      prevProps.activeTextStyleUI === nextProps.activeTextStyleUI &&
       prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
       (prevProps.selectedIndicators?.length || 0) ===
         (nextProps.selectedIndicators?.length || 0) &&

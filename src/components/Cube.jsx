@@ -171,7 +171,6 @@ const Cube = ({
   activeIndicator,
   indicatorMode,
   selectedIndicators = [],
-  setActiveTextStyleUI,
   onUpdate,
   onDelete,
   onTransformStart,
@@ -446,7 +445,6 @@ const Cube = ({
       setCubeSelectedFace(id, null);
       setCubeSelectedIndicator(id, null);
       setCubeShowTransform(id, false);
-      setActiveTextStyleUI(null);
       setCubeShowHeaderTextStyleUI(id, false);
       setCubeActiveTextFace(id, null);
 
@@ -463,7 +461,6 @@ const Cube = ({
     setCubeSelectedFace,
     setCubeSelectedIndicator,
     setCubeShowTransform,
-    setActiveTextStyleUI,
     setCubeShowHeaderTextStyleUI,
     setCubeActiveTextFace,
     setIndicatorActive, // Add setIndicatorActive
@@ -593,11 +590,9 @@ const Cube = ({
     setCubeShowObjectUI(id, true);
     setCubeShowHeaderTextStyleUI(id, false); // Close header text style UI
     setCubeActiveTextFace(id, null); // Reset active text face for face text UI
-    setActiveTextStyleUI(null); // Reset active text style UI reference
     onClick();
   }, [
     onClick,
-    setActiveTextStyleUI,
     id,
     setCubeShowObjectUI,
     setCubeShowHeaderTextStyleUI,
@@ -660,13 +655,11 @@ const Cube = ({
     if (currentCube?.showHeaderTextStyleUI || currentCube?.activeTextFace) {
       setCubeShowHeaderTextStyleUI(id, false);
       setCubeActiveTextFace(id, null);
-      setActiveTextStyleUI(null);
     }
   }, [
     id,
     setCubeShowHeaderTextStyleUI,
     setCubeActiveTextFace,
-    setActiveTextStyleUI,
   ]);
 
   useGlobalClickHandler(
@@ -906,14 +899,12 @@ const Cube = ({
       e.nativeEvent?.stopPropagation?.();
       setCubeShowHeaderTextStyleUI(id, true);
       setCubeActiveTextFace(id, null);
-      setActiveTextStyleUI(contentRef.current);
       setCubeSelectedFace(id, null);
       // Close ObjectUI when header text is clicked
       setCubeShowObjectUI(id, false);
     },
     [
       id,
-      setActiveTextStyleUI,
       setCubeShowHeaderTextStyleUI,
       setCubeActiveTextFace,
       setCubeSelectedFace,
@@ -975,7 +966,6 @@ const Cube = ({
         e.stopPropagation();
         e.nativeEvent?.stopPropagation?.();
       }
-      setActiveTextStyleUI(contentRef.current);
       setCubeActiveTextFace(id, faceName);
       setCubeSelectedFace(id, null);
       setCubeShowFaceTextInput(id, false);
@@ -986,7 +976,6 @@ const Cube = ({
     },
     [
       id,
-      setActiveTextStyleUI,
       setCubeActiveTextFace,
       setCubeSelectedFace,
       setCubeShowFaceTextInput,
@@ -1390,7 +1379,6 @@ const Cube = ({
               onStyleChange={handleStyleChange}
               onClose={() => {
                 setCubeActiveTextFace(id, null);
-                setActiveTextStyleUI(null);
                 setCubeShowHeaderTextStyleUI(id, false);
               }}
               currentStyle={
@@ -1411,7 +1399,6 @@ const Cube = ({
     handleStyleChange,
     id,
     setCubeActiveTextFace,
-    setActiveTextStyleUI,
     setCubeShowHeaderTextStyleUI,
   ]);
 
@@ -1520,7 +1507,6 @@ const Cube = ({
               billboard={true}
               scale={1}
             />
-            {/* Remove the activeTextStyleUI condition */}
             {cube?.showHeaderTextStyleUI && (
               <TextStyleUI
                 position={[0, 2 / (cube?.scale || scale)[1], 0]}
@@ -1528,7 +1514,6 @@ const Cube = ({
                 onStyleChange={handleStyleChange}
                 onClose={() => {
                   setCubeShowHeaderTextStyleUI(id, false);
-                  setActiveTextStyleUI(null);
                 }}
                 currentStyle={cube?.textStyle || textStyle}
               />

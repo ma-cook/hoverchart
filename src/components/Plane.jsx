@@ -1736,7 +1736,6 @@ export default React.memo(Plane, (prevProps, nextProps) => {
     prevProps.webcamActive === nextProps.webcamActive &&
     prevProps.showAllIndicators === nextProps.showAllIndicators &&
     prevProps.globalIndicatorSelected === nextProps.globalIndicatorSelected &&
-    prevProps.activeTextStyleUI === nextProps.activeTextStyleUI &&
     prevProps.selectedIndicators.length === nextProps.selectedIndicators.length
   );
 });

@@ -158,7 +158,6 @@ const Octahedron = ({
   globalIndicatorSelected,
   indicatorMode,
   selectedIndicators = [],
-  setActiveTextStyleUI,
   onUpdate,
   onDelete,
   onTransformStart,
@@ -335,13 +334,11 @@ const Octahedron = ({
       octahedronActions.setOctahedronSelectedFace(id, null);
       octahedronActions.setOctahedronSelectedIndicator(id, null);
       octahedronActions.setOctahedronShowTransform(id, false);
-      setActiveTextStyleUI(null);
       octahedronActions.setOctahedronShowHeaderTextStyleUI(id, false);
       octahedronActions.setOctahedronActiveTextFace(id, null);
     }
   }, [
     octahedronActions, selected, id,
-    setActiveTextStyleUI,
   ]);
 
   const isIndicatorConnected = useCallback(
@@ -456,10 +453,9 @@ const Octahedron = ({
     octahedronActions.setOctahedronShowObjectUI(id, true);
     octahedronActions.setOctahedronShowHeaderTextStyleUI(id, false);
     octahedronActions.setOctahedronActiveTextFace(id, null);
-    setActiveTextStyleUI(null);
     onClick();
   }, [
-    onClick, setActiveTextStyleUI, id,
+    onClick, id,
     octahedronActions,
   ]);
 
@@ -759,7 +755,6 @@ const Octahedron = ({
       e.nativeEvent?.stopPropagation?.();
 
       octahedronActions.setOctahedronActiveTextFace(id, faceName);
-      setActiveTextStyleUI(contentRef.current);
       octahedronActions.setOctahedronShowHeaderTextStyleUI(id, false);
       octahedronActions.setOctahedronSelectedFace(id, null);
       octahedronActions.setOctahedronShowObjectUI(id, false);
@@ -767,7 +762,7 @@ const Octahedron = ({
       return false;
     },
     [
-      octahedronActions, id, setActiveTextStyleUI,
+      octahedronActions, id,
     ]
   );
 
@@ -871,7 +866,6 @@ const Octahedron = ({
               onStyleChange={handleFaceTextStyleChange}
               onClose={() => {
                 octahedronActions.setOctahedronActiveTextFace(id, null);
-                setActiveTextStyleUI(null);
                 octahedronActions.setOctahedronShowHeaderTextStyleUI(id, false);
               }}
               currentStyle={
@@ -885,7 +879,7 @@ const Octahedron = ({
     });
   }, [
     octahedronState, octahedronFaces, faceTexts, faceTextStyles, scale, getFaceTextOffset,
-    handleFaceTextStyleClick, handleFaceTextStyleChange, id, octahedronActions, setActiveTextStyleUI,
+    handleFaceTextStyleClick, handleFaceTextStyleChange, id, octahedronActions,
   ]);
 
   const renderFaces = useMemo(() => {
@@ -1009,7 +1003,6 @@ const Octahedron = ({
                 e.nativeEvent?.stopPropagation?.();
                 octahedronActions.setOctahedronShowHeaderTextStyleUI(id, true);
                 octahedronActions.setOctahedronActiveTextFace(id, null);
-                setActiveTextStyleUI(contentRef.current);
                 octahedronActions.setOctahedronSelectedFace(id, null);
                 octahedronActions.setOctahedronShowObjectUI(id, false);
               }}
@@ -1051,7 +1044,6 @@ const Octahedron = ({
                 }}
                 onClose={() => {
                   octahedronActions.setOctahedronShowHeaderTextStyleUI(id, false);
-                  setActiveTextStyleUI(null);
                 }}
                 currentStyle={octahedronState.textStyle || textStyle}
               />

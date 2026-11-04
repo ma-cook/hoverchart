@@ -190,7 +190,6 @@ const Tetrahedron = ({
   globalIndicatorSelected,
   indicatorMode,
   selectedIndicators = [],
-  setActiveTextStyleUI,
   onUpdate,
   onDelete,
   onTransformStart,
@@ -394,7 +393,6 @@ const Tetrahedron = ({
       tetrahedronActions.setTetrahedronSelectedFace(id, null);
       tetrahedronActions.setTetrahedronSelectedIndicator(id, null);
       tetrahedronActions.setTetrahedronShowTransform(id, false);
-      setActiveTextStyleUI(null);
       tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(id, false);
       tetrahedronActions.setTetrahedronActiveTextFace(id, null);
     }
@@ -402,7 +400,6 @@ const Tetrahedron = ({
     selected,
     id,
     tetrahedronActions,
-    setActiveTextStyleUI,
   ]);
 
   // Check if a face is connected via a connection
@@ -547,11 +544,9 @@ const Tetrahedron = ({
     tetrahedronActions.setTetrahedronShowObjectUI(id, true);
     tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(id, false);
     tetrahedronActions.setTetrahedronActiveTextFace(id, null);
-    setActiveTextStyleUI(null);
     onClick();
   }, [
     onClick,
-    setActiveTextStyleUI,
     id,
     tetrahedronActions,
   ]);
@@ -909,7 +904,6 @@ const Tetrahedron = ({
       e.nativeEvent?.stopPropagation?.();
 
       tetrahedronActions.setTetrahedronActiveTextFace(id, faceName);
-      setActiveTextStyleUI(contentRef.current);
       tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(id, false);
       tetrahedronActions.setTetrahedronSelectedFace(id, null);
       tetrahedronActions.setTetrahedronShowObjectUI(id, false);
@@ -919,7 +913,6 @@ const Tetrahedron = ({
     [
       id,
       tetrahedronActions,
-      setActiveTextStyleUI,
     ]
   );
 
@@ -1050,7 +1043,6 @@ const Tetrahedron = ({
               onStyleChange={handleFaceTextStyleChange}
               onClose={() => {
                 tetrahedronActions.setTetrahedronActiveTextFace(id, null);
-                setActiveTextStyleUI(null);
                 tetrahedronActions.setTetrahedronShowHeaderTextStyleUI(
                   id,
                   false
@@ -1077,7 +1069,6 @@ const Tetrahedron = ({
     handleFaceTextStyleChange,
     id,
     tetrahedronActions,
-    setActiveTextStyleUI,
   ]);
 
   // Render faces
@@ -1237,7 +1228,6 @@ const Tetrahedron = ({
                   true
                 );
                 tetrahedronActions.setTetrahedronActiveTextFace(id, null);
-                setActiveTextStyleUI(contentRef.current);
                 tetrahedronActions.setTetrahedronSelectedFace(id, null);
                 tetrahedronActions.setTetrahedronShowObjectUI(id, false);
               }}
@@ -1283,7 +1273,6 @@ const Tetrahedron = ({
                     id,
                     false
                   );
-                  setActiveTextStyleUI(null);
                 }}
                 currentStyle={tetrahedronState.textStyle || textStyle}
               />

@@ -5,11 +5,17 @@ const useSceneStore = createWithEqualityFn((set) => ({
   diagramScene: null,
   onDiagramPointerMissed: null,
   landingScrollVersion: 0,
+  landingScrollProgress: 0,
   setLandingScene: (scene) => set({ landingScene: scene }),
   setDiagramScene: (scene, onPointerMissed) =>
     set({ diagramScene: scene, onDiagramPointerMissed: onPointerMissed }),
-  notifyLandingScroll: () =>
-    set((s) => ({ landingScrollVersion: s.landingScrollVersion + 1 })),
+  notifyLandingScroll: (progress) =>
+    set((s) => ({
+      landingScrollVersion: s.landingScrollVersion + 1,
+      ...(typeof progress === 'number'
+        ? { landingScrollProgress: progress }
+        : {}),
+    })),
 }));
 
 export default useSceneStore;

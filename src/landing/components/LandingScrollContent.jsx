@@ -1,4 +1,5 @@
 
+import useSceneStore from '../../stores/sceneStore';
 
 const BRAND = '#cc8500';
 const BRAND_DARK = '#8a5a00';
@@ -582,7 +583,13 @@ function CtaContent({ isMobile, onLogin, onTryWithoutAccount }) {
   );
 }
 
-export function LandingScrollContent({ scrollProgress, isMobile, onLogin, onTryWithoutAccount }) {
+export function LandingScrollContent({
+  isMobile,
+  onLogin,
+  onTryWithoutAccount
+}) {
+  const scrollProgress = useSceneStore((s) => s.landingScrollProgress);
+
   const sections = [
     {
       id: 'diagram',

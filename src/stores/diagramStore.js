@@ -74,6 +74,8 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   // { total: number, mounted: number }
   connectionsProgress: null,
 
+  scanProgress: { isScanning: false, progress: 0, stage: '' },
+
   // LSP enrichment data: { definitions, references, hover, callGraph, moduleExports, errors }
   // Set by the LSP enrichment service after background analysis
   lspMetadata: null,
@@ -147,6 +149,14 @@ const useDiagramStore = createWithEqualityFn((set) => ({
     set({ connectionsProgress: null });
   },
 
+  setScanProgress(scanProgress) {
+    set({ scanProgress });
+  },
+
+  clearScanProgress() {
+    set({ scanProgress: { isScanning: false, progress: 0, stage: '' } });
+  },
+
   setLspMetadata(lspMetadata) {
     set({ lspMetadata, isLspEnriching: false });
   },
@@ -169,6 +179,7 @@ const useDiagramStore = createWithEqualityFn((set) => ({
       selectedNodeId: null,
       renderProgress: null,
       connectionsProgress: null,
+      scanProgress: { isScanning: false, progress: 0, stage: '' },
       lspMetadata: null,
       isLspEnriching: false,
     });

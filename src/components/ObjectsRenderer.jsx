@@ -97,7 +97,6 @@ const MOUNT_RADIUS_CELLS = 2;
  */
 const ObjectsRenderer = React.memo(({
   objects,
-  visibleObjectIds,
   selectedId,
   handleObjectClick,
   handleObjectMove,
@@ -110,8 +109,6 @@ const ObjectsRenderer = React.memo(({
   activeIndicator,
   indicatorMode,
   selectedIndicators,
-  activeTextStyleUI,
-  setActiveTextStyleUI,
   handleIndicatorDeselected,
   registerTransformingObject,
   handleObjectMatrixChanged,
@@ -133,6 +130,7 @@ const ObjectsRenderer = React.memo(({
   cameraRef.current = camera;
 
   const lodVersion = useLODStore((s) => s._lodVersion);
+  const visibleObjectIds = useSpatialManagerStore((s) => s.visibleObjectIds);
 
   // ─── Progressive mounting ───────────────────────────────────────────
   // Instead of mounting every newly-visible object in one frame (which
@@ -1254,8 +1252,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
       activeIndicator,
       indicatorMode,
       selectedIndicators,
-      activeTextStyleUI,
-      setActiveTextStyleUI,
       handleIndicatorDeselected,
       registerTransformingObject,
       handleObjectMatrixChanged,
@@ -1304,8 +1300,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
         activeIndicator={activeIndicator}
         indicatorMode={indicatorMode}
         selectedIndicators={selectedIndicators}
-        activeTextStyleUI={activeTextStyleUI}
-        setActiveTextStyleUI={setActiveTextStyleUI}
         handleIndicatorDeselected={handleIndicatorDeselected}
         registerTransformingObject={registerTransformingObject}
         handleObjectMatrixChanged={handleObjectMatrixChanged}
@@ -1341,8 +1335,6 @@ const [mountedVersion, setMountedVersion] = useState(0);
     activeIndicator,
     indicatorMode,
     selectedIndicators,
-    activeTextStyleUI,
-    setActiveTextStyleUI,
     handleIndicatorDeselected,
     registerTransformingObject,
     handleObjectMatrixChanged,

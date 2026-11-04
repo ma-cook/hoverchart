@@ -381,9 +381,6 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
     handleIndicatorDeselected,
   } = useIndicators();
 
-  // UI state
-  const [activeTextStyleUI, setActiveTextStyleUI] = useState(null);
-
   // Track objects in transition between cells to prevent flicker
   const transitioningObjectsRef = useRef(new Set()); // Set of object IDs currently transitioning
 
@@ -1482,7 +1479,6 @@ const existingIdsRef = useRef(new Set());
     }
 
     // Close any active text styling menus
-    setActiveTextStyleUI(null);
     setSelectedConnection(null);
     setShowLineTextStyleUI(null);
     setSelectedId(null);
@@ -1507,7 +1503,6 @@ const existingIdsRef = useRef(new Set());
       selectedIndicatorsRef.current = [];
     }
   }, [
-    setActiveTextStyleUI,
     setSelectedConnection,
     setShowLineTextStyleUI,
     setSelectedId,
@@ -1517,7 +1512,6 @@ const existingIdsRef = useRef(new Set());
     setSelectedIndicators,
     selectedIndicatorsRef,
   ]); // Virtualized object rendering with LOD
-  const [visibleObjectIds, setVisibleObjectIds] = useState(new Set());
   // Objects whose source file the LLM is actively editing (highlighted red).
   const llmActiveObjectIds = useObjectsEditedByLlm();
 
@@ -1530,11 +1524,6 @@ const existingIdsRef = useRef(new Set());
   const [useLOD, setUseLOD] = useState(true);
 
   // Update visible objects based on camera frustum
-  // PERF: Stabilize the Set reference — only create a new Set when the
-  // membership actually changes.  This avoids cascading re-renders in
-  // ObjectsRenderer / ConnectionsRenderer on every camera frame.
-  const prevVisibleRef = useRef(new Set());
-
   // PERF: Use refs for objects and loadedCells so that updateVisibleObjects
   // doesn't recreate on every objects/loadedCells change.  Recreating the
   // callback cascades: throttle recreates → camera listener re-registers →
@@ -1582,8 +1571,8 @@ const existingIdsRef = useRef(new Set());
         loadedCellsSet
       );
 
-      // Only create a new Set reference when membership changed
-      const prev = prevVisibleRef.current;
+      const visibleStore = useSpatialManagerStore.getState();
+      const prev = visibleStore.visibleObjectIds;
       let changed = visible.length !== prev.size;
       if (!changed) {
         for (const id of visible) {
@@ -1591,9 +1580,7 @@ const existingIdsRef = useRef(new Set());
         }
       }
       if (changed) {
-        const next = new Set(visible);
-        prevVisibleRef.current = next;
-        setVisibleObjectIds(next);
+        visibleStore.setVisibleObjectIds(new Set(visible));
       }
     },
     [] // Stable — reads objects/loadedCells from refs
@@ -1675,26 +1662,10 @@ const existingIdsRef = useRef(new Set());
     if (newIds.length === 0) return; // Nothing new — skip state update entirely
 
     const timeoutId = setTimeout(() => {
-      setVisibleObjectIds((prev) => {
-        const next = new Set(prev);
-        for (const id of newIds) {
-          next.add(id);
-        }
-        // BUGFIX: Keep prevVisibleRef in sync so the first updateVisibleObjects
-        // call (on camera move) doesn't see a stale empty Set and think the
-        // membership changed.  Without this, the virtualizer returns the same
-        // IDs but prevVisibleRef is empty → "changed" = true → new Set
-        // reference → ObjectsRenderer's progressive effect restarts.
-        prevVisibleRef.current = next;
-        return next;
-      });
+      useSpatialManagerStore.getState().addVisibleObjectIds(newIds);
 
-      // BUGFIX: Defer the virtualizer call so it doesn't get batched with the
-      // setVisibleObjectIds above.  React 18 automatic batching causes both
-      // state updates to merge — the virtualizer's CAPPED set wins, and
-      // objects beyond the cap never enter the progressive mounting queue.
-      // Using a second setTimeout ensures the full set applies first, giving
-      // progressive mounting a chance to queue ALL objects before the
+      // BUGFIX: Defer the virtualizer call so the full set applies first,
+      // giving progressive mounting a chance to queue ALL objects before the
       // virtualizer caps the set on the next cycle.
       if (cameraRef.current?.camera) {
         setTimeout(() => {
@@ -1764,7 +1735,6 @@ const existingIdsRef = useRef(new Set());
         <ConnectionsRenderer
           objects={objects}
           allObjectsForPathfinding={objects}
-          visibleObjectIds={visibleObjectIds}
           onLineStyleChange={handleLineStyleChange}
           onLineColorChange={handleLineColorChange}
           onConnectionClick={handleConnectionClick}
@@ -1775,7 +1745,6 @@ const existingIdsRef = useRef(new Set());
         {spaceTypeProp === 'earth' && <EarthGlobe />}
         <ObjectsRenderer
           objects={objects}
-          visibleObjectIds={visibleObjectIds}
           selectedId={selectedId}
           handleObjectClick={handleObjectClick}
           handleObjectMove={handleObjectMoveCallback}
@@ -1788,8 +1757,6 @@ const existingIdsRef = useRef(new Set());
           activeIndicator={activeIndicator}
           indicatorMode={indicatorMode}
           selectedIndicators={selectedIndicators}
-          activeTextStyleUI={activeTextStyleUI}
-          setActiveTextStyleUI={setActiveTextStyleUI}
           handleIndicatorDeselected={handleIndicatorDeselected}
           registerTransformingObject={registerTransformingObject}
           handleObjectMatrixChanged={handleObjectMatrixChanged}
@@ -1818,14 +1785,13 @@ const existingIdsRef = useRef(new Set());
     </>
   ), [
     useLOD, viewMode, spaceTypeProp, canvasQuality,
-    objects, visibleObjectIds, selectedId,
+    objects, selectedId,
     llmActiveObjectIds,
     handleObjectClick, handleObjectMoveCallback, handleObjectUpdateCallback,
     disableOrbitControls, enableOrbitControls,
     handleFaceIndicatorClickCallback, handleFaceClick,
     showAllCubesIndicators, activeIndicator, indicatorMode,
-    selectedIndicators, activeTextStyleUI, setActiveTextStyleUI,
-    handleIndicatorDeselected, registerTransformingObject,
+    selectedIndicators, handleIndicatorDeselected, registerTransformingObject,
     handleObjectMatrixChanged, handleIndicatorSelected,
     globalIndicatorSelected, handleObjectDelete, user,
     effectiveSpaceId, getTransformStartPosition,

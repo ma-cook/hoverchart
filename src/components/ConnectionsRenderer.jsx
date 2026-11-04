@@ -32,6 +32,7 @@ import {
 import { useFrustumCulledConnections } from '../hooks/useFrustumCulling';
 import useConnectionStore from '../stores/connectionStore';
 import useDiagramStore from '../stores/diagramStore';
+import useSpatialManagerStore from '../stores/spatialManagerStore';
 import useThemeStore from '../stores/themeStore';
 import { resolveEdgeColor } from '../utils/themeColors';
 
@@ -906,7 +907,6 @@ Connection.displayName = 'Connection';
  */
 const ConnectionsRenderer = ({
   objects,
-  visibleObjectIds,
   onLineStyleChange,
   onLineColorChange,
   onConnectionClick,
@@ -922,6 +922,8 @@ const ConnectionsRenderer = ({
     selectedConnection,
     highlightedFlowPathIds,
   } = useConnectionsRendererStore();
+
+  const visibleObjectIds = useSpatialManagerStore((s) => s.visibleObjectIds);
 
   // Create a stable set of available object IDs to avoid recalculating on every render
   const availableObjectIds = useMemo(() => {
@@ -1718,7 +1720,6 @@ export default React.memo(ConnectionsRenderer, (prevProps, nextProps) => {
   // Only re-render if these specific props change
   return (
     prevProps.objects === nextProps.objects &&
-    prevProps.visibleObjectIds === nextProps.visibleObjectIds &&
     prevProps.onLineStyleChange === nextProps.onLineStyleChange &&
     prevProps.onLineColorChange === nextProps.onLineColorChange &&
     prevProps.onConnectionClick === nextProps.onConnectionClick &&

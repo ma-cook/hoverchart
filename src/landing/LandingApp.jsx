@@ -31,6 +31,77 @@ import { LandingScrollContent } from './components/LandingScrollContent';
 import './LandingApp.css';
 import '../components/TopBar.css';
 
+const LandingIntroLayer = ({
+  windowSize,
+  isMobile,
+  onLogin,
+  onTryWithoutAccount,
+  onExplore,
+}) => {
+  const scrollProgress = useSceneStore((s) => s.landingScrollProgress);
+
+  return (
+    <>
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 15,
+          opacity: Math.max(0, 1 - scrollProgress * 12),
+          pointerEvents: scrollProgress > 0.08 ? 'none' : 'auto',
+          transition: 'opacity 0.3s ease',
+        }}
+      >
+        <WelcomeOverlay
+          windowSize={windowSize}
+          onLogin={onLogin}
+          onTryWithoutAccount={onTryWithoutAccount}
+        />
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '28px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '6px',
+            zIndex: 50,
+            animation: 'scrollBounce 2s ease-in-out infinite',
+            cursor: 'pointer',
+            opacity: 0.65,
+            pointerEvents: 'auto',
+            color: 'var(--panel-text-muted)',
+          }}
+          onClick={onExplore}
+        >
+          <span
+            style={{
+              fontSize: '11px',
+              fontWeight: '600',
+              letterSpacing: '1.2px',
+              textTransform: 'uppercase',
+              color: 'var(--panel-text-muted)',
+            }}
+          >
+            Explore
+          </span>
+          <svg width="20" height="12" viewBox="0 0 20 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M1 1L10 10L19 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+      </div>
+
+      <LandingScrollContent
+        isMobile={isMobile}
+        onLogin={onLogin}
+        onTryWithoutAccount={onTryWithoutAccount}
+      />
+    </>
+  );
+};
+
 function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [_backgroundColor] = useState('white');
   const [_lightColor] = useState('#fff4d2');
@@ -49,7 +120,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const MAX_SCROLL = 3000;
   const rawScrollRef = useRef(0);
   const touchStartYRef = useRef(0);
-  const [scrollProgress, setScrollProgress] = useState(0);
   const scrollProgressRef = useRef(0);
   const rafPendingRef = useRef(null);
 
@@ -73,20 +143,24 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
 
   const scheduleScrollUpdate = useCallback((value) => {
     scrollProgressRef.current = value;
-    useSceneStore.getState().notifyLandingScroll();
     if (!rafPendingRef.current) {
       rafPendingRef.current = requestAnimationFrame(() => {
-        setScrollProgress(scrollProgressRef.current);
+        useSceneStore.getState().notifyLandingScroll(scrollProgressRef.current);
         rafPendingRef.current = null;
       });
     }
   }, []);
 
+  const handleExplore = useCallback(() => {
+    rawScrollRef.current = Math.min(MAX_SCROLL, rawScrollRef.current + 500);
+    scheduleScrollUpdate(rawScrollRef.current / MAX_SCROLL);
+  }, [scheduleScrollUpdate]);
+
   useEffect(() => {
     if (user) {
       rawScrollRef.current = 0;
       scrollProgressRef.current = 0;
-      setScrollProgress(0);
+      useSceneStore.getState().notifyLandingScroll(0);
       return;
     }
     const handleWheel = (e) => {
@@ -569,68 +643,13 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       )}
 
       {!user && (
-        <>
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 15,
-              opacity: Math.max(0, 1 - scrollProgress * 12),
-              pointerEvents: scrollProgress > 0.08 ? 'none' : 'auto',
-              transition: 'opacity 0.3s ease',
-            }}
-          >
-            <WelcomeOverlay
-              windowSize={windowSize}
-              onLogin={handleLogin}
-              onTryWithoutAccount={onTryWithoutAccount}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '28px',
-                left: '50%',
-                transform: 'translateX(-50%)',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '6px',
-                zIndex: 50,
-                animation: 'scrollBounce 2s ease-in-out infinite',
-                cursor: 'pointer',
-                opacity: 0.65,
-                pointerEvents: 'auto',
-                color: 'var(--panel-text-muted)',
-              }}
-              onClick={() => {
-                rawScrollRef.current = Math.min(MAX_SCROLL, rawScrollRef.current + 500);
-                scheduleScrollUpdate(rawScrollRef.current / MAX_SCROLL);
-              }}
-            >
-              <span
-                style={{
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  letterSpacing: '1.2px',
-                  textTransform: 'uppercase',
-                  color: 'var(--panel-text-muted)',
-                }}
-              >
-                Explore
-              </span>
-              <svg width="20" height="12" viewBox="0 0 20 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M1 1L10 10L19 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
-          </div>
-
-          <LandingScrollContent
-            scrollProgress={scrollProgress}
-            isMobile={isMobile}
-            onLogin={handleLogin}
-            onTryWithoutAccount={onTryWithoutAccount}
-          />
-        </>
+        <LandingIntroLayer
+          windowSize={windowSize}
+          isMobile={isMobile}
+          onLogin={handleLogin}
+          onTryWithoutAccount={onTryWithoutAccount}
+          onExplore={handleExplore}
+        />
       )}
     </div>
   );
