@@ -187,8 +187,9 @@ const InstancedAtlasText = ({
 
       const fontSizeRaw = label.textStyle?.fontSize || 1.5;
       const aspectRatio = entry.width / entry.height;
+      const lineCount = entry.lineCount || 1;
       const baseHeight =
-        (fontSizeRaw < 10 ? fontSizeRaw : fontSizeRaw / 10) * 3;
+        (fontSizeRaw < 10 ? fontSizeRaw : fontSizeRaw / 10) * 3 * lineCount;
       const baseWidth = baseHeight * aspectRatio;
 
       groupMap.get(texId).items.push({

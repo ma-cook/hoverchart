@@ -14,6 +14,7 @@
  */
 
 import { expose, transfer } from 'comlink';
+import { wrapTextToWidth } from '../utils/textWrap.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -105,9 +106,16 @@ class AtlasPage {
     const font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
     this.ctx.font = font;
-    const metrics = this.ctx.measureText(text);
-    const width = Math.ceil(metrics.width);
-    const height = Math.ceil(fontSize * 1.5);
+    const maxLineWidth = Math.max(1, this.maxWidth - PADDING * 2);
+    const lines = wrapTextToWidth(this.ctx, text, maxLineWidth);
+    const lineHeight = Math.ceil(fontSize * 1.5);
+    const width = Math.ceil(
+      lines.reduce(
+        (max, line) => Math.max(max, this.ctx.measureText(line).width),
+        0
+      )
+    );
+    const height = lineHeight * lines.length;
 
     // Row wrap
     if (this.currentX + width + PADDING > this.maxWidth) {
@@ -130,16 +138,30 @@ class AtlasPage {
     this.ctx.font = font;
     this.ctx.fillStyle = color;
     this.ctx.textBaseline = 'top';
-    this.ctx.fillText(text, this.currentX, this.currentY);
 
-    // Underline
-    if (style.underline) {
-      this.ctx.strokeStyle = color;
-      this.ctx.lineWidth = Math.max(1, fontSize / 16);
-      this.ctx.beginPath();
-      this.ctx.moveTo(this.currentX, this.currentY + height - 2);
-      this.ctx.lineTo(this.currentX + width, this.currentY + height - 2);
-      this.ctx.stroke();
+    const centerLines = lines.length > 1;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineWidth = this.ctx.measureText(line).width;
+      const lineX = centerLines
+        ? this.currentX + Math.max(0, (width - lineWidth) / 2)
+        : this.currentX;
+      const lineY = this.currentY + i * lineHeight;
+
+      this.ctx.fillText(line, lineX, lineY);
+
+      if (style.underline) {
+        this.ctx.strokeStyle = color;
+        this.ctx.lineWidth = Math.max(1, fontSize / 16);
+        this.ctx.beginPath();
+        this.ctx.moveTo(lineX, lineY + lineHeight - 2);
+        this.ctx.lineTo(
+          centerLines ? lineX + lineWidth : this.currentX + width,
+          lineY + lineHeight - 2
+        );
+        this.ctx.stroke();
+      }
     }
 
     const uvs = {
@@ -149,7 +171,15 @@ class AtlasPage {
       vHeight: height / this.maxHeight,
     };
 
-    const entry = { key, x: this.currentX, y: this.currentY, width, height, uvs };
+    const entry = {
+      key,
+      x: this.currentX,
+      y: this.currentY,
+      width,
+      height,
+      lineCount: lines.length,
+      uvs,
+    };
     this.entries.set(key, entry);
 
     this.currentX += width + PADDING;

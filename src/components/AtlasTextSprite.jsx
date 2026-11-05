@@ -295,8 +295,9 @@ const AtlasTextSprite = ({
     // Create plane geometry sized to match the text
     const aspectRatio = entry.width / entry.height;
     // Use original fontSize for world-unit sizing, multiply by 3 for base size
+    const lineCount = entry.lineCount || 1;
     const baseHeight =
-      (fontSizeValue < 10 ? fontSizeValue : fontSizeValue / 10) * 3;
+      (fontSizeValue < 10 ? fontSizeValue : fontSizeValue / 10) * 3 * lineCount;
     const baseWidth = baseHeight * aspectRatio;
 
     const geo = new THREE.PlaneGeometry(baseWidth, baseHeight);

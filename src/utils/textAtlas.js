@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import useTextAtlasStore from '../stores/textAtlasStore.js';
+import { wrapTextToWidth } from './textWrap.js';
 
 /**
  * Text Atlas - Combines multiple text labels into a single texture atlas
@@ -123,10 +124,16 @@ export class TextAtlas {
 
     this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
-    // Measure text
-    const metrics = this.ctx.measureText(text);
-    const width = Math.ceil(metrics.width);
-    const height = Math.ceil(fontSize * 1.5); // Add padding for descenders
+    const maxLineWidth = Math.max(1, this.maxWidth - this.padding * 2);
+    const lines = wrapTextToWidth(this.ctx, text, maxLineWidth);
+    const lineHeight = Math.ceil(fontSize * 1.5); // Add padding for descenders
+    const width = Math.ceil(
+      lines.reduce(
+        (max, line) => Math.max(max, this.ctx.measureText(line).width),
+        0
+      )
+    );
+    const height = lineHeight * lines.length;
 
     // Check if we need to move to next row
     if (this.currentX + width + this.padding > this.maxWidth) {
@@ -155,17 +162,29 @@ export class TextAtlas {
     this.ctx.fillStyle = color;
     this.ctx.textBaseline = 'top';
 
-    // Draw text to canvas
-    this.ctx.fillText(text, this.currentX, this.currentY);
+    const centerLines = lines.length > 1;
 
-    // Apply underline if needed
-    if (style.underline) {
-      this.ctx.strokeStyle = color;
-      this.ctx.lineWidth = Math.max(1, fontSize / 16);
-      this.ctx.beginPath();
-      this.ctx.moveTo(this.currentX, this.currentY + height - 2);
-      this.ctx.lineTo(this.currentX + width, this.currentY + height - 2);
-      this.ctx.stroke();
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineWidth = this.ctx.measureText(line).width;
+      const lineX = centerLines
+        ? this.currentX + Math.max(0, (width - lineWidth) / 2)
+        : this.currentX;
+      const lineY = this.currentY + i * lineHeight;
+
+      this.ctx.fillText(line, lineX, lineY);
+
+      if (style.underline) {
+        this.ctx.strokeStyle = color;
+        this.ctx.lineWidth = Math.max(1, fontSize / 16);
+        this.ctx.beginPath();
+        this.ctx.moveTo(lineX, lineY + lineHeight - 2);
+        this.ctx.lineTo(
+          centerLines ? lineX + lineWidth : this.currentX + width,
+          lineY + lineHeight - 2
+        );
+        this.ctx.stroke();
+      }
     }
 
     // Calculate UV coordinates (normalized 0-1)
@@ -182,6 +201,7 @@ export class TextAtlas {
       y: this.currentY,
       width,
       height,
+      lineCount: lines.length,
       uvs,
       text,
       style,
@@ -940,7 +960,8 @@ export function createAtlasTextMesh(text, style = {}, position = [0, 0, 0]) {
 
   // Create plane geometry sized to match the text
   const aspectRatio = entry.width / entry.height;
-  const displayHeight = (style.fontSize || 16) / 10; // Scale to world units
+  const lineCount = entry.lineCount || 1;
+  const displayHeight = ((style.fontSize || 16) / 10) * lineCount; // Scale to world units
   const displayWidth = displayHeight * aspectRatio;
 
   const geometry = new THREE.PlaneGeometry(displayWidth, displayHeight);

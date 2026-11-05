@@ -29,7 +29,7 @@ import { calculateFacePosition } from './facePositionUtils';
  * Attached to each follow path as `speedMultiplier`; CameraFollowController
  * multiplies its base SPEED by it for that segment.
  */
-export const FOLLOW_SPEED_MULTIPLIERS = { short: 1, medium: 1.5, long: 2 };
+export const FOLLOW_SPEED_MULTIPLIERS = { short: 1, medium: 1.5, long: 6 };
 
 // Group containers are cubes: world half-extent = scale * DEFAULT_CUBE_SIZE.
 const CONTAINER_HALF_SIZE = 5;
