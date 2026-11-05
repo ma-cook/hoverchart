@@ -719,7 +719,7 @@ export const containerMethods = {
       position: [...containerPosition],
       scale: [...containerScale],
       color: '#e0e0e0',
-      lineWidth: 2,
+      lineWidth: 0.5,
       cellId: cellId,
       createdAt: Date.now(),
       headerText: '',
