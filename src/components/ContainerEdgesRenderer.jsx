@@ -1,7 +1,6 @@
 import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { extend, useFrame, useThree } from '@react-three/fiber';
-import LineShaderMaterial from './LineShaderMaterial';
+import { useFrame } from '@react-three/fiber';
 import useThemeStore from '../stores/themeStore';
 import { resolveEdgeColor } from '../utils/themeColors';
 import {
@@ -10,9 +9,7 @@ import {
   cubeTransformMap,
 } from './GlobalCubeEdgesRenderer';
 
-extend({ LineShaderMaterial });
-
-const IDENTITY_MATRIX = new THREE.Matrix4();
+const VERTICES_PER_CUBE = EDGES_PER_CUBE * 2;
 
 // Reusable objects to avoid GC pressure during frame updates
 const tempVec = new THREE.Vector3();
@@ -33,19 +30,13 @@ function applyUpdateRange(attr, offset, count) {
 
 /**
  * ContainerEdgesRenderer - Renders grouping/repo container edges in ONE
- * instanced mesh that is INDEPENDENT of the LOD system.
+ * LineSegments draw call using the standard LineBasicMaterial (no custom
+ * shaders) and is INDEPENDENT of the LOD system.
  *
  * Grouping containers have no LOD level, so their edges should not be rebuilt
  * every time another object's LOD changes or when unrelated objects
- * mount/unmount.  GlobalCubeEdgesRenderer packs all cube edges into a single
- * LOD-reactive instanced mesh that fully rebuilds on any LOD membership change;
- * keeping containers in that mesh meant their edges were re-uploaded on every
- * LOD transition.  This renderer splits container edges into their own stable
- * mesh keyed only to the container set.
- *
- * The container list preserves referential identity across unrelated
- * mount/unmount batches, so the GPU buffers are only rewritten when a container
- * is actually added/removed or its transform/color changes.
+ * mount/unmount.  This renderer keeps container edges in their own stable
+ * buffers keyed only to the container set.
  *
  * @param {Array} cubes - Array of cube objects (containers are filtered out internally)
  * @param {number} defaultLineWidth - Line width for all edges
@@ -55,7 +46,6 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   const needsFullUpdateRef = useRef(true);
   // Track last-known transform/color per container to detect in-place mutations.
   const lastStateRef = useRef(new Map());
-  const { size } = useThree();
   const themeMode = useThemeStore((s) => s.mode);
 
   // Filter to grouping / repo containers only.  Containers have no LOD, so this
@@ -87,8 +77,8 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
 
   const totalEdges = containers.length * EDGES_PER_CUBE;
 
-  // Grow-only power-of-2 capacity so the instanced mesh is not recreated on
-  // every container addition.
+  // Grow-only power-of-2 capacity so the geometry is not recreated on every
+  // container addition.
   const capacityRef = useRef(0);
   if (totalEdges > capacityRef.current) {
     capacityRef.current = Math.max(
@@ -102,33 +92,24 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   const { geometry, material } = useMemo(() => {
     if (capacity === 0) return { geometry: null, material: null };
 
-    const geo = new THREE.InstancedBufferGeometry();
-    const positions = new Float32Array([
-      0, -1, 0, 1, -1, 0, 0, 1, 0,
-      1, -1, 0, 1, 1, 0, 0, 1, 0,
-    ]);
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(capacity * 2 * 3);
+    const colors = new Float32Array(capacity * 2 * 3);
+
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setDrawRange(0, 0);
 
-    const instanceStart = new Float32Array(capacity * 3);
-    const instanceEnd = new Float32Array(capacity * 3);
-    const instanceColor = new Float32Array(capacity * 3);
-    geo.setAttribute('instanceStart', new THREE.InstancedBufferAttribute(instanceStart, 3));
-    geo.setAttribute('instanceEnd', new THREE.InstancedBufferAttribute(instanceEnd, 3));
-    geo.setAttribute('instanceColor', new THREE.InstancedBufferAttribute(instanceColor, 3));
+    const mat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      linewidth: defaultLineWidth,
+      transparent: false,
+      depthTest: true,
+      depthWrite: false,
+    });
 
-    const mat = LineShaderMaterial.clone();
-    mat.uniforms.linewidth.value = defaultLineWidth;
     return { geometry: geo, material: mat };
   }, [capacity, defaultLineWidth]);
-
-  // Keep resolution uniform in sync with the actual viewport size so line
-  // width matches the other edge renderers.
-  useEffect(() => {
-    if (material) {
-      material.uniforms.resolution.value.x = size.width;
-      material.uniforms.resolution.value.y = size.height;
-    }
-  }, [material, size.width, size.height]);
 
   // Dispose GPU resources when geometry/material change or on unmount
   useEffect(() => {
@@ -138,21 +119,11 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
     };
   }, [geometry, material]);
 
-  // Set identity instance matrices once per mesh allocation.
-  useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh || !geometry) return;
-    for (let i = 0; i < capacity; i++) {
-      mesh.setMatrixAt(i, IDENTITY_MATRIX);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-  }, [geometry, capacity]);
-
-  // Container set changed (added/removed) — force a full rewrite.
+  // Container set or buffer allocation changed — force a full rewrite.
   useEffect(() => {
     needsFullUpdateRef.current = true;
     lastStateRef.current.clear();
-  }, [containers]);
+  }, [containers, geometry]);
 
   // Per-frame: write container edges.  Containers are few, so a targeted
   // dirty-check per container is cheap.  Position updates mutate objects in
@@ -160,12 +131,11 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   // relying on array identity.
   useFrame(() => {
     if (!geometry || !meshRef.current) return;
-    meshRef.current.count = totalEdges;
+    geometry.setDrawRange(0, totalEdges * 2);
     if (containers.length === 0) return;
 
-    const instanceStart = geometry.getAttribute('instanceStart');
-    const instanceEnd = geometry.getAttribute('instanceEnd');
-    const instanceColor = geometry.getAttribute('instanceColor');
+    const positionAttr = geometry.getAttribute('position');
+    const colorAttr = geometry.getAttribute('color');
 
     let minDirty = needsFullUpdateRef.current ? 0 : Infinity;
 
@@ -198,25 +168,25 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
       tempColor.set(color);
       const edgeStartIndex = i * EDGES_PER_CUBE;
       for (let e = 0; e < EDGES_PER_CUBE; e++) {
-        const edgeIndex = edgeStartIndex + e;
+        const vertexIndex = (edgeStartIndex + e) * 2;
         const sp = BASE_CUBE_EDGES[e * 2];
         const ep = BASE_CUBE_EDGES[e * 2 + 1];
         tempVec.set(sp[0], sp[1], sp[2]).applyMatrix4(tempMatrix);
-        instanceStart.setXYZ(edgeIndex, tempVec.x, tempVec.y, tempVec.z);
+        positionAttr.setXYZ(vertexIndex, tempVec.x, tempVec.y, tempVec.z);
         tempVec.set(ep[0], ep[1], ep[2]).applyMatrix4(tempMatrix);
-        instanceEnd.setXYZ(edgeIndex, tempVec.x, tempVec.y, tempVec.z);
-        instanceColor.setXYZ(edgeIndex, tempColor.r, tempColor.g, tempColor.b);
+        positionAttr.setXYZ(vertexIndex + 1, tempVec.x, tempVec.y, tempVec.z);
+        colorAttr.setXYZ(vertexIndex, tempColor.r, tempColor.g, tempColor.b);
+        colorAttr.setXYZ(vertexIndex + 1, tempColor.r, tempColor.g, tempColor.b);
       }
       if (i < minDirty) minDirty = i;
     }
 
     if (minDirty !== Infinity) {
-      const startF = minDirty * EDGES_PER_CUBE * 3;
-      const endF = containers.length * EDGES_PER_CUBE * 3;
+      const startF = minDirty * VERTICES_PER_CUBE * 3;
+      const endF = containers.length * VERTICES_PER_CUBE * 3;
       const lenF = endF - startF;
-      applyUpdateRange(instanceStart, startF, lenF);
-      applyUpdateRange(instanceEnd, startF, lenF);
-      applyUpdateRange(instanceColor, startF, lenF);
+      applyUpdateRange(positionAttr, startF, lenF);
+      applyUpdateRange(colorAttr, startF, lenF);
     }
     needsFullUpdateRef.current = false;
   });
@@ -226,10 +196,11 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   }
 
   return (
-    <instancedMesh
+    <lineSegments
       key={capacity}
       ref={meshRef}
-      args={[geometry, material, capacity]}
+      geometry={geometry}
+      material={material}
       frustumCulled={false}
       renderOrder={10}
     />

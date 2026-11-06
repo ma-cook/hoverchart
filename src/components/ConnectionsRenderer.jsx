@@ -31,6 +31,7 @@ import {
 } from '../hooks/useConnectionsRendererStore';
 import { useFrustumCulledConnections } from '../hooks/useFrustumCulling';
 import useConnectionStore from '../stores/connectionStore';
+import useCodeStore from '../stores/codeStore';
 import useDiagramStore from '../stores/diagramStore';
 import useSpatialManagerStore from '../stores/spatialManagerStore';
 import useThemeStore from '../stores/themeStore';
@@ -255,6 +256,7 @@ const Connection = React.memo(
     onLineTextClick,
     onLineTextSubmit,
     onLineTextStyleChange,
+    isFollowHighlighted,
     // PERFORMANCE: Pass store state as props to avoid individual subscriptions
     _selectedConnection,
     // PERFORMANCE: Single hash computed once in the parent for ALL objects,
@@ -286,11 +288,12 @@ const Connection = React.memo(
     // Consolidated line width calculation - consistent across all line types
     const getLineWidth = useCallback(
       () => {
+        if (isFollowHighlighted) return 2.5;
         if (isSelected) return 2.5;
         if (isFlowPathHighlighted) return 2;
         return 1;
       },
-      [isSelected, isFlowPathHighlighted]
+      [isFollowHighlighted, isSelected, isFlowPathHighlighted]
     );
 
     // Handler function - always use passed onConnectionClick if available for consistency
@@ -748,6 +751,7 @@ const Connection = React.memo(
                 }`}
                 points={pathToLineSegments(calculatedPathPoints)}
                 color={
+                  isFollowHighlighted ? '#FF9800' :
                   isSelected ? '#ffff00' :
                   isFlowPathHighlighted ? '#FF9800' :
                   (resolveEdgeColor(connection.color, themeMode) || 'black')
@@ -771,6 +775,7 @@ const Connection = React.memo(
               points={calculatedPathPoints}
               connectionId={connection.id}
               color={
+                isFollowHighlighted ? '#FF9800' :
                 isSelected ? '#ffff00' :
                 isFlowPathHighlighted ? '#FF9800' :
                 (resolveEdgeColor(connection.color, themeMode) || 'black')
@@ -862,6 +867,8 @@ const Connection = React.memo(
     // replaces the old pattern of passing the entire connections array.
     if (prevProps.objectsPositionHash !== nextProps.objectsPositionHash) return false;
 
+    if (prevProps.isFollowHighlighted !== nextProps.isFollowHighlighted) return false;
+
     // Only re-render if the connection data actually changed
     const connectionChanged =
       prevProps.connection.id !== nextProps.connection.id ||
@@ -924,6 +931,9 @@ const ConnectionsRenderer = ({
   } = useConnectionsRendererStore();
 
   const visibleObjectIds = useSpatialManagerStore((s) => s.visibleObjectIds);
+  const followActiveConnectionId = useCodeStore((s) =>
+    s.followActiveConnectionId == null ? null : String(s.followActiveConnectionId)
+  );
 
   // Create a stable set of available object IDs to avoid recalculating on every render
   const availableObjectIds = useMemo(() => {
@@ -1030,23 +1040,51 @@ const ConnectionsRenderer = ({
     });
   }, [highlightedFlowPathIds, connections, availableObjectIds]);
 
+  // The connection currently being traversed by camera follow. Keep it in the
+  // render set even when its far endpoint is outside the focused/visible subset.
+  const followConnection = useMemo(() => {
+    if (!followActiveConnectionId || !connections?.length) return null;
+    return connections.find((conn) => String(conn.id) === followActiveConnectionId) || null;
+  }, [connections, followActiveConnectionId]);
+
   // Determine which connections to consider for rendering.
   // When a flow-path is highlighted, merge its connections into the culling set
   // so they get rendered even when globally hidden or outside the focus filter.
   const connectionsForCulling = useMemo(() => {
     const base = connectionsVisible ? objectVisibleConnections : focusedConnections;
-    if (!highlightedFlowPathIds?.size || flowPathHighlightedConnections.length === 0) return base;
     const baseIds = new Set(base.map(c => c.id));
-    const extras = flowPathHighlightedConnections.filter(c => !baseIds.has(c.id));
+    const extras = [];
+
+    if (followConnection && !baseIds.has(followConnection.id)) {
+      extras.push(followConnection);
+      baseIds.add(followConnection.id);
+    }
+
+    if (highlightedFlowPathIds?.size && flowPathHighlightedConnections.length > 0) {
+      for (const conn of flowPathHighlightedConnections) {
+        if (!baseIds.has(conn.id)) {
+          extras.push(conn);
+          baseIds.add(conn.id);
+        }
+      }
+    }
+
     return extras.length > 0 ? [...base, ...extras] : base;
-  }, [connectionsVisible, objectVisibleConnections, focusedConnections, highlightedFlowPathIds, flowPathHighlightedConnections]);
+  }, [connectionsVisible, objectVisibleConnections, focusedConnections, followConnection, highlightedFlowPathIds, flowPathHighlightedConnections]);
 
   // PERFORMANCE: Apply frustum culling to only render connections visible in camera
-  const { visibleConnections: frustumCulledConnections } = useFrustumCulledConnections(
+  const { visibleConnections: frustumVisibleConnections } = useFrustumCulledConnections(
     connectionsForCulling,
     objects,
     true // Enable frustum culling
   );
+  const frustumCulledConnections = useMemo(() => {
+    if (!followConnection) return frustumVisibleConnections;
+    if (frustumVisibleConnections.some(c => c.id === followConnection.id)) {
+      return frustumVisibleConnections;
+    }
+    return [...frustumVisibleConnections, followConnection];
+  }, [frustumVisibleConnections, followConnection]);
 
   // ─── Progressive connection mounting ──────────────────────────────
   // Mirrors ObjectsRenderer's progressive mounting pattern:
@@ -1247,7 +1285,7 @@ const ConnectionsRenderer = ({
   // setObjects function guards against spurious updates via its own position hash check).
   const prevPathfindingObjectsRef = useRef(null);
   const lastCategorizationRef = useRef({ batchedConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
-  const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null, highlightedFlowPathIds: null });
+  const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null, highlightedFlowPathIds: null, followActiveConnectionId: null });
 
   // NOTE: pathfindingHash was removed - it had 0.5-unit resolution which meant object moves
   // smaller than 0.5 units would never trigger cache invalidation. Since pathfindingObjects
@@ -1301,6 +1339,7 @@ const ConnectionsRenderer = ({
       for (const conn of (progressiveConnections || [])) {
         if (
           conn.id === selectedConnection ||
+          (followActiveConnectionId && String(conn.id) === followActiveConnectionId) ||
           (highlightedSet && highlightedSet.has(conn.id))
         ) {
           highlighted.push(conn);
@@ -1341,6 +1380,7 @@ const ConnectionsRenderer = ({
       progressiveConnections === inputsRef.progressiveConnectionsRef &&
       selectedConnection === inputsRef.selectedConnection &&
       highlightedFlowPathIds === inputsRef.highlightedFlowPathIds &&
+      followActiveConnectionId === inputsRef.followActiveConnectionId &&
       cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0
     ) {
       return cacheRef;
@@ -1376,6 +1416,9 @@ const ConnectionsRenderer = ({
       const style = conn.styleType || conn.lineStyle || 'straight';
       const baseStyle = style.split('-')[0];
       const isSelected = conn.id === selectedConnection;
+      const isFollowHighlighted =
+        followActiveConnectionId != null &&
+        String(conn.id) === followActiveConnectionId;
       const isFlowPathHighlighted = !isSelected &&
         highlightedFlowPathIds?.size > 0 &&
         highlightedFlowPathIds.has(conn.id);
@@ -1383,6 +1426,12 @@ const ConnectionsRenderer = ({
       
       // Selected connections need full UI (LineUI, etc)
       if (isSelected) {
+        individual.push(conn);
+        return;
+      }
+
+      // Camera-followed connection needs individual rendering for the orange override
+      if (isFollowHighlighted) {
         individual.push(conn);
         return;
       }
@@ -1460,11 +1509,12 @@ const ConnectionsRenderer = ({
       selectedConnection,
       pathfindingObjectsRef: pathfindingObjects,
       highlightedFlowPathIds,
+      followActiveConnectionId,
     };
     
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
-  }, [progressiveConnections, selectedConnection, highlightedFlowPathIds, objectPositions, pathfindingObjects, workerWarmVersion]);
+  }, [progressiveConnections, selectedConnection, highlightedFlowPathIds, followActiveConnectionId, objectPositions, pathfindingObjects, workerWarmVersion]);
 
   // WORKER: Fire-and-forget batch dispatch to the pathfinding Web Worker.
   // Populates a module-level precomputed cache that `computeConnectionPath`
@@ -1706,6 +1756,10 @@ const ConnectionsRenderer = ({
             onLineTextClick={onLineTextClick}
             onLineTextSubmit={onLineTextSubmit}
             onLineTextStyleChange={onLineTextStyleChange}
+            isFollowHighlighted={
+              followActiveConnectionId != null &&
+              String(connection.id) === followActiveConnectionId
+            }
             selectedConnection={selectedConnection}
             objectsPositionHash={objectsPositionHash}
           />
