@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import useLODStore, { calculateLODLevel, LOD_LEVELS, FACE_TEXT_DISTANCE_SQ } from '../stores/lodStore';
 import useObjectsStore from '../stores/objectsStore';
+import useCameraFollowStore from '../stores/cameraFollowStore';
 import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
@@ -77,6 +78,10 @@ const wasImportActiveRef = useRef(false);
   // Pending LOD downgrades: Map<objectId, level>. Latest level wins.
   // Drained at a budgeted rate per frame — see LOD_DOWNGRADE_BUDGET_PER_FRAME.
   const downgradeQueueRef = useRef(new Map());
+
+  // Non-null while camera follow mode is active. Holds the followed object and
+  // every endpoint on its followed connection lines.
+  const followModeRef = useRef(null);
   
   // Get objects from store — shallow equality avoids re-renders on
   // individual object property changes (position moves, text edits, etc.)
@@ -92,6 +97,9 @@ const wasImportActiveRef = useRef(false);
     }),
     shallow
   );
+
+  const followObjectId = useCameraFollowStore((s) => s.activeObjectId);
+  const followPathObjectIds = useCameraFollowStore((s) => s.followPathObjectIds);
 
   // Actions are stable — read once from getState(), no subscription needed.
   const {
@@ -126,6 +134,28 @@ const wasImportActiveRef = useRef(false);
       needsImmediateUpdateRef.current = true;
     }
   }, [objects]);
+
+  // Camera follow mode overrides distance LOD: line endpoints (and their
+  // ancestor parents) stay FULL, everything else stays MEDIUM.
+  useEffect(() => {
+    if (!followObjectId) {
+      if (followModeRef.current) {
+        followModeRef.current = null;
+        upgradeQueueRef.current.clear();
+        downgradeQueueRef.current.clear();
+        needsImmediateUpdateRef.current = true;
+      }
+      return;
+    }
+
+    followModeRef.current = {
+      objectId: String(followObjectId),
+      pathObjectIds: (followPathObjectIds || []).map(String),
+    };
+    upgradeQueueRef.current.clear();
+    downgradeQueueRef.current.clear();
+    needsImmediateUpdateRef.current = true;
+  }, [followObjectId, followPathObjectIds]);
 
   // WORKER: Sync objects to the spatial index worker whenever they change.
   // Also request spatial containment computation (replaces the O(N²) loop below).
@@ -313,6 +343,93 @@ const wasImportActiveRef = useRef(false);
     initializedRef.current = true;
     needsImmediateUpdateRef.current = true;
   }, [batchRegisterParentChild, batchRegisterParents]);
+
+  // Apply the follow-mode LOD policy. Endpoints (and ancestor parents that gate
+  // their full-detail visibility) are forced FULL immediately so they are ready
+  // before the camera arrives. Every other non-container object is pinned to
+  // MEDIUM through the transition queues.
+  const applyFollowLODTargets = () => {
+    const follow = followModeRef.current;
+    if (!follow) return;
+
+    const objects = objectsRef.current;
+    if (!objects || objects.length === 0) return;
+
+    const { childParentMap, lodLevels, faceTextVisible } = useLODStore.getState();
+
+    const fullIds = new Set(follow.pathObjectIds);
+    fullIds.add(follow.objectId);
+
+    const ancestorQueue = [...fullIds];
+    for (let i = 0; i < ancestorQueue.length; i++) {
+      const parentId = childParentMap.get(ancestorQueue[i]);
+      if (parentId == null) continue;
+      const parentKey = String(parentId);
+      if (!fullIds.has(parentKey)) {
+        fullIds.add(parentKey);
+        ancestorQueue.push(parentKey);
+      }
+    }
+
+    const fullUpdates = [];
+    const mediumUpdates = [];
+    const faceTextUpdates = [];
+
+    for (let i = 0; i < objects.length; i++) {
+      const obj = objects[i];
+      const pos = obj.position;
+      if (pos) {
+        let hasPosition = true;
+        if (Array.isArray(pos)) {
+          _objectPos.set(pos[0] || 0, pos[1] || 0, pos[2] || 0);
+        } else if (pos.x !== undefined) {
+          _objectPos.set(pos.x, pos.y, pos.z);
+        } else {
+          hasPosition = false;
+        }
+        if (hasPosition) {
+          const showFaceText = _cameraPos.distanceToSquared(_objectPos) < FACE_TEXT_DISTANCE_SQ;
+          if (faceTextVisible.get(obj.id) !== showFaceText) {
+            faceTextUpdates.push([obj.id, showFaceText]);
+          }
+        }
+      }
+
+      if (obj.merfolkData?.isContainer === true) continue;
+
+      const target = fullIds.has(String(obj.id)) ? LOD_LEVELS.FULL : LOD_LEVELS.MEDIUM;
+      if ((lodLevels.get(obj.id) ?? LOD_LEVELS.FULL) === target) continue;
+
+      if (target === LOD_LEVELS.FULL) {
+        fullUpdates.push([obj.id, target]);
+      } else {
+        mediumUpdates.push([obj.id, target]);
+      }
+    }
+
+    if (fullUpdates.length > 0) {
+      for (let i = 0; i < fullUpdates.length; i++) {
+        const objectId = fullUpdates[i][0];
+        upgradeQueueRef.current.delete(objectId);
+        downgradeQueueRef.current.delete(objectId);
+      }
+      batchSetLODLevels(fullUpdates);
+    }
+
+    if (mediumUpdates.length > 0) {
+      enqueueLodTransitions({
+        upgradeQueue: upgradeQueueRef.current,
+        downgradeQueue: downgradeQueueRef.current,
+        updates: mediumUpdates,
+        currentLevels: lodLevels,
+        fullLevel: LOD_LEVELS.FULL,
+      });
+    }
+
+    if (faceTextUpdates.length > 0) {
+      batchSetFaceTextVisible(faceTextUpdates);
+    }
+  };
   
   // Update LOD levels in useFrame
   useFrame(() => {
@@ -349,6 +466,7 @@ const wasImportActiveRef = useRef(false);
     // bypassing throttle and camera-movement gates so objects don't render at
     // full detail until the user happens to move the camera.
     const forceUpdate = needsImmediateUpdateRef.current;
+    const followMode = followModeRef.current;
 
     if (!forceUpdate) {
       // Throttle updates
@@ -356,11 +474,15 @@ const wasImportActiveRef = useRef(false);
         return;
       }
 
-      // Check if camera moved significantly (squared distance avoids sqrt)
-      const cameraMoved = _cameraPos.distanceToSquared(lastCameraPositionRef.current) > CAMERA_MOVE_THRESHOLD_SQ;
+      // Follow mode always re-applies its override on the throttle tick, even
+      // while the camera is paused at a turnaround point.
+      if (!followMode) {
+        // Check if camera moved significantly (squared distance avoids sqrt)
+        const cameraMoved = _cameraPos.distanceToSquared(lastCameraPositionRef.current) > CAMERA_MOVE_THRESHOLD_SQ;
 
-      if (!cameraMoved) {
-        return;
+        if (!cameraMoved) {
+          return;
+        }
       }
     }
 
@@ -369,6 +491,11 @@ const wasImportActiveRef = useRef(false);
     // Update last camera position
     lastCameraPositionRef.current.copy(_cameraPos);
     lastUpdateTimeRef.current = now;
+
+    if (followMode) {
+      applyFollowLODTargets();
+      return;
+    }
     
     const currentLodLevels = useLODStore.getState().lodLevels;
 
@@ -401,6 +528,7 @@ const wasImportActiveRef = useRef(false);
       const worker = getSpatialIndexWorker();
       worker.computeLODLevels(cameraPos, parentIdArr, childIdArr, lodEntries)
         .then((updates) => {
+          if (followModeRef.current) return;
           enqueueLODUpdates(updates);
         })
         .catch(() => { /* worker error — next frame will retry or sync fallback runs */ })

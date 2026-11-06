@@ -236,6 +236,22 @@ const CameraFollowController = () => {
 
     useCodeStore.getState().startFollowSession();
 
+    const followPathObjectIds = [];
+    const seenPathObjectIds = new Set();
+    const addPathObjectId = (id) => {
+      if (id == null) return;
+      const key = String(id);
+      if (seenPathObjectIds.has(key)) return;
+      seenPathObjectIds.add(key);
+      followPathObjectIds.push(key);
+    };
+    addPathObjectId(activeObjectId);
+    for (const path of prepared) {
+      addPathObjectId(path.meta?.startObjectId);
+      addPathObjectId(path.meta?.endObjectId);
+    }
+    useCameraFollowStore.getState().setFollowPathObjectIds(followPathObjectIds);
+
     activeRef.current = { objectId: activeObjectId, paths: prepared };
     pathIndexRef.current = 0;
     distanceRef.current = 0;

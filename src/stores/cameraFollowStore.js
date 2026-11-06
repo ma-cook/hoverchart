@@ -14,14 +14,27 @@ const useCameraFollowStore = create((set, get) => ({
   activeObjectId: null,
   isFollowing: false,
 
+  // Every object endpoint on the connection lines currently being followed.
+  // CameraFollowController publishes this after building the traversal paths so
+  // LODManager can pre-warm those objects without rebuilding the paths.
+  followPathObjectIds: [],
+
   startFollow(objectId) {
     if (objectId == null) return;
-    set({ activeObjectId: String(objectId), isFollowing: true });
+    set({
+      activeObjectId: String(objectId),
+      isFollowing: true,
+      followPathObjectIds: [],
+    });
+  },
+
+  setFollowPathObjectIds(objectIds) {
+    set({ followPathObjectIds: Array.isArray(objectIds) ? objectIds : [] });
   },
 
   stopFollow() {
     if (!get().isFollowing && get().activeObjectId == null) return;
-    set({ activeObjectId: null, isFollowing: false });
+    set({ activeObjectId: null, isFollowing: false, followPathObjectIds: [] });
   },
 
   toggleFollow(objectId) {

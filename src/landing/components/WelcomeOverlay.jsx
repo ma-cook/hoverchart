@@ -48,25 +48,7 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
       }}
     >
-      {/* Eyebrow */}
-      <div style={{ textAlign: 'center', marginBottom: '14px' }}>
-        <span
-          style={{
-            display: 'inline-block',
-            fontSize: '11px',
-            fontWeight: 700,
-            letterSpacing: '1.8px',
-            textTransform: 'uppercase',
-            color: eyebrowText,
-            padding: '6px 12px',
-            borderRadius: '999px',
-            background: 'rgba(204,133,0,0.10)',
-            border: '1px solid rgba(204,133,0,0.22)',
-          }}
-        >
-          3D Architecture, Reimagined
-        </span>
-      </div>
+   
 
       {/* Headline */}
       <h1
@@ -103,9 +85,29 @@ export const WelcomeOverlay = React.memo(({ windowSize, onLogin, onTryWithoutAcc
           textAlign: 'center',
         }}
       >
-        Volscape turns any codebase or Markdown diagram into an interactive 3D
+        Volscape turns any codebase into an interactive 3D
         map.
       </p>
+
+         {/* Eyebrow */}
+      <div style={{ textAlign: 'center', marginBottom: '14px' }}>
+        <span
+          style={{
+            display: 'inline-block',
+            fontSize: '11px',
+            fontWeight: 700,
+            letterSpacing: '1.8px',
+            textTransform: 'uppercase',
+            color: eyebrowText,
+            padding: '6px 12px',
+            borderRadius: '999px',
+            background: 'rgba(204,133,0,0.10)',
+            border: '1px solid rgba(204,133,0,0.22)',
+          }}
+        >
+          3D Architecture, Reimagined
+        </span>
+      </div>
 
       {/* Standout bullets */}
       <ul
