@@ -42,6 +42,33 @@
   flex-shrink: 0;
 }
 
+/* Logged-out landing sign-in — sits at the far right of the top bar */
+.top-bar-signin {
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #cc8500 0%, #b87600 100%);
+  color: #000;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 4px 14px rgba(204, 133, 0, 0.3);
+}
+
+.top-bar-signin:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(204, 133, 0, 0.4);
+}
+
+.top-bar-signin:focus-visible {
+  outline: 2px solid #ffb733;
+  outline-offset: 2px;
+}
+
 /* Smaller side-menu toggle, sits inside the bar */
 .top-bar-menu-button {
   width: 32px;
@@ -192,6 +219,11 @@ body .top-bar + .menu-button-container {
   .top-bar-menu-button {
     width: 30px;
     height: 30px;
+  }
+  .top-bar-signin {
+    height: 30px;
+    padding: 0 12px;
+    font-size: 12px;
   }
 }
 

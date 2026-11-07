@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
-import useSceneStore from '../stores/sceneStore';
 
 /**
  * Pauses the R3F render loop while the landing page is shown.
@@ -10,7 +9,7 @@ import useSceneStore from '../stores/sceneStore';
  * is unmounted on the landing page — so the static landing scene used to be
  * re-rendered at 60fps for the entire visit. This controller drops it to
  * "never" and re-renders on demand:
- *   – one frame when the user scrolls (landingScrollVersion bump)
+ *   – one frame on mount
  *   – one frame on window resize (camera aspect)
  * It restores "always" when the landing view unmounts so the diagram app keeps
  * its continuous loop.
@@ -26,7 +25,6 @@ function LandingRenderController() {
   const set = useThree((s) => s.set);
   const invalidate = useThree((s) => s.invalidate);
   const frameloop = useThree((s) => s.frameloop);
-  const landingScrollVersion = useSceneStore((s) => s.landingScrollVersion);
 
   useEffect(() => {
     if (frameloop !== 'never') {
@@ -38,7 +36,7 @@ function LandingRenderController() {
 
   useEffect(() => {
     invalidate();
-  }, [landingScrollVersion, invalidate]);
+  }, [invalidate]);
 
   useEffect(() => {
     const handleResize = () => invalidate();

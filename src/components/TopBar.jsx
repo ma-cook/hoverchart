@@ -73,6 +73,7 @@ const Avatar = ({ user }) => {
 const TopBar = ({
   view = 'landing',
   user,
+  onSignIn,
   onMenuToggle,
   onLogout,
   onOpenOrgManager,
@@ -134,6 +135,7 @@ const TopBar = ({
   }, [dropdownOpen]);
 
   const isSpace = view === 'space';
+  const showSignIn = view === 'landing' && !user && typeof onSignIn === 'function';
 
   // Guests are never admins, and the entry needs somewhere to go. Both
   // conditions are supplied by the caller so this stays a pure presentational
@@ -168,6 +170,18 @@ const TopBar = ({
           <div className="top-bar-divider" />
           <div className="top-bar-section">{presence}</div>
         </>
+      )}
+
+      {showSignIn && (
+        <div className="top-bar-section" style={{ marginLeft: 'auto' }}>
+          <button
+            type="button"
+            className="top-bar-signin"
+            onClick={onSignIn}
+          >
+            Sign In
+          </button>
+        </div>
       )}
 
       {user && (

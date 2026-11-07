@@ -1,7 +1,6 @@
 import React, {
   useState,
   useEffect,
-  useRef,
   useCallback,
   useMemo,
 } from 'react';
@@ -15,7 +14,7 @@ import { CreateSpacePopup } from './components/CreateSpacePopup';
 import { ShareSpacePopup } from './components/ShareSpacePopup';
 import { SpacesTable } from './components/SpacesTable';
 import TopBar from '../components/TopBar';
-import { WelcomeOverlay } from './components/WelcomeOverlay';
+import { LandingPage } from './components/LandingPage';
 import { OrganizationManager } from './components/OrganizationManager';
 import { AdminDashboard } from './components/AdminDashboard';
 import { UpgradePrompt, TIER_LIMITS } from './components/UpgradePrompt';
@@ -27,80 +26,8 @@ import {
   declineInvite,
 } from '../services/organizationService';
 import { useWindowSize } from './hooks/useWindowSize';
-import { LandingScrollContent } from './components/LandingScrollContent';
 import './LandingApp.css';
 import '../components/TopBar.css';
-
-const LandingIntroLayer = ({
-  windowSize,
-  isMobile,
-  onLogin,
-  onTryWithoutAccount,
-  onExplore,
-}) => {
-  const scrollProgress = useSceneStore((s) => s.landingScrollProgress);
-
-  return (
-    <>
-      <div
-        style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 15,
-          opacity: Math.max(0, 1 - scrollProgress * 12),
-          pointerEvents: scrollProgress > 0.08 ? 'none' : 'auto',
-          transition: 'opacity 0.3s ease',
-        }}
-      >
-        <WelcomeOverlay
-          windowSize={windowSize}
-          onLogin={onLogin}
-          onTryWithoutAccount={onTryWithoutAccount}
-        />
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '28px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '6px',
-            zIndex: 50,
-            animation: 'scrollBounce 2s ease-in-out infinite',
-            cursor: 'pointer',
-            opacity: 0.65,
-            pointerEvents: 'auto',
-            color: 'var(--panel-text-muted)',
-          }}
-          onClick={onExplore}
-        >
-          <span
-            style={{
-              fontSize: '11px',
-              fontWeight: '600',
-              letterSpacing: '1.2px',
-              textTransform: 'uppercase',
-              color: 'var(--panel-text-muted)',
-            }}
-          >
-            Explore
-          </span>
-          <svg width="20" height="12" viewBox="0 0 20 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M1 1L10 10L19 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </div>
-      </div>
-
-      <LandingScrollContent
-        isMobile={isMobile}
-        onLogin={onLogin}
-        onTryWithoutAccount={onTryWithoutAccount}
-      />
-    </>
-  );
-};
 
 function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [_backgroundColor] = useState('white');
@@ -116,12 +43,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [isCreatingSpace, setIsCreatingSpace] = useState(false);
   const [userSpaces, setUserSpaces] = useState({ owned: [], shared: [] });
   const [spacesLoading, setSpacesLoading] = useState(true);
-
-  const MAX_SCROLL = 3000;
-  const rawScrollRef = useRef(0);
-  const touchStartYRef = useRef(0);
-  const scrollProgressRef = useRef(0);
-  const rafPendingRef = useRef(null);
 
   const authState = useAuthStore((s) => s.authState);
   const user = authState.user;
@@ -140,56 +61,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     setLandingScene(<LandingScene />);
     return () => setLandingScene(null);
   }, [setLandingScene]);
-
-  const scheduleScrollUpdate = useCallback((value) => {
-    scrollProgressRef.current = value;
-    if (!rafPendingRef.current) {
-      rafPendingRef.current = requestAnimationFrame(() => {
-        useSceneStore.getState().notifyLandingScroll(scrollProgressRef.current);
-        rafPendingRef.current = null;
-      });
-    }
-  }, []);
-
-  const handleExplore = useCallback(() => {
-    rawScrollRef.current = Math.min(MAX_SCROLL, rawScrollRef.current + 500);
-    scheduleScrollUpdate(rawScrollRef.current / MAX_SCROLL);
-  }, [scheduleScrollUpdate]);
-
-  useEffect(() => {
-    if (user) {
-      rawScrollRef.current = 0;
-      scrollProgressRef.current = 0;
-      useSceneStore.getState().notifyLandingScroll(0);
-      return;
-    }
-    const handleWheel = (e) => {
-      e.preventDefault();
-      rawScrollRef.current = Math.max(0, Math.min(MAX_SCROLL, rawScrollRef.current + e.deltaY));
-      scheduleScrollUpdate(rawScrollRef.current / MAX_SCROLL);
-    };
-    window.addEventListener('wheel', handleWheel, { passive: false });
-    return () => window.removeEventListener('wheel', handleWheel);
-  }, [user, scheduleScrollUpdate]);
-
-  useEffect(() => {
-    if (user) return;
-    const handleTouchStart = (e) => {
-      touchStartYRef.current = e.touches[0].clientY;
-    };
-    const handleTouchMove = (e) => {
-      const delta = touchStartYRef.current - e.touches[0].clientY;
-      touchStartYRef.current = e.touches[0].clientY;
-      rawScrollRef.current = Math.max(0, Math.min(MAX_SCROLL, rawScrollRef.current + delta * 1.5));
-      scheduleScrollUpdate(rawScrollRef.current / MAX_SCROLL);
-    };
-    window.addEventListener('touchstart', handleTouchStart, { passive: true });
-    window.addEventListener('touchmove', handleTouchMove, { passive: true });
-    return () => {
-      window.removeEventListener('touchstart', handleTouchStart);
-      window.removeEventListener('touchmove', handleTouchMove);
-    };
-  }, [user, scheduleScrollUpdate]);
 
   const [showSharePopup, setShowSharePopup] = useState(false);
   const [selectedSpaceForSharing, setSelectedSpaceForSharing] = useState(null);
@@ -494,8 +365,6 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     [handleShareSpace, isSharing, selectedSpaceForSharing, shareEmail, shareError, showSharePopup, activeOrgMembers, user?.sub]
   );
 
-  const isMobile = windowSize.width <= 768;
-
   const footerBtnStyle = {
     background: 'rgba(255, 255, 255, 0.06)',
     color: '#e6e6e6',
@@ -552,6 +421,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       <TopBar
         view="landing"
         user={user}
+        onSignIn={handleLogin}
         onMenuToggle={() => setMenuOpen((prev) => !prev)}
         onLogout={handleLogout}
         onOpenOrgManager={() => setShowOrgManager(true)}
@@ -643,12 +513,9 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       )}
 
       {!user && (
-        <LandingIntroLayer
-          windowSize={windowSize}
-          isMobile={isMobile}
-          onLogin={handleLogin}
+        <LandingPage
+          onRegister={handleLogin}
           onTryWithoutAccount={onTryWithoutAccount}
-          onExplore={handleExplore}
         />
       )}
     </div>
