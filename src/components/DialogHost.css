@@ -1,0 +1,280 @@
+.app-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(6, 6, 8, 0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: appDialogFade 0.16s ease-out;
+}
+
+.app-dialog {
+  position: relative;
+  width: min(440px, calc(100vw - 32px));
+  overflow: hidden;
+  padding: 24px 24px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #1e1e22 0%, #141418 100%);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #e6e6e6;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  animation: appDialogPop 0.18s ease-out;
+}
+
+.app-dialog-accent {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, #8a5a00 0%, #cc8500 45%, #ffb733 100%);
+}
+
+.app-dialog-title {
+  margin: 0 0 10px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #f2f2f4;
+}
+
+.app-dialog-message {
+  margin: 0 0 22px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #a8a8b0;
+}
+
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.app-dialog-btn {
+  min-width: 96px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.app-dialog-btn:focus-visible {
+  outline: 2px solid #ffb733;
+  outline-offset: 2px;
+}
+
+.app-dialog-btn:active {
+  transform: translateY(1px);
+}
+
+.app-dialog-btn--ghost {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #c9c9d0;
+}
+
+.app-dialog-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #f2f2f4;
+}
+
+.app-dialog-btn--confirm {
+  background: linear-gradient(180deg, #e09a00 0%, #cc8500 100%);
+  border-color: #b37400;
+  color: #141418;
+  box-shadow: 0 6px 18px rgba(204, 133, 0, 0.28);
+}
+
+.app-dialog-btn--confirm:hover {
+  background: linear-gradient(180deg, #ffb733 0%, #d98d00 100%);
+}
+
+.app-dialog-btn--confirm.is-danger {
+  background: linear-gradient(180deg, #ffb733 0%, #cc8500 100%);
+  border-color: #a86c00;
+  color: #141418;
+}
+
+.app-dialog-btn--confirm.is-danger:hover {
+  background: linear-gradient(180deg, #ffc65c 0%, #e09a00 100%);
+}
+
+.app-toast-stack {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  z-index: 5000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(460px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.app-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid #cc8500;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(30, 30, 34, 0.98) 0%, rgba(18, 18, 22, 0.98) 100%);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+  color: #e6e6e6;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  pointer-events: auto;
+  animation: appToastIn 0.2s ease-out;
+}
+
+.app-toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(204, 133, 0, 0.18);
+  color: #ffb733;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.app-toast--error {
+  border-left-color: #ffb733;
+}
+
+.app-toast--error .app-toast-icon,
+.app-toast--warning .app-toast-icon {
+  background: rgba(255, 183, 51, 0.2);
+}
+
+.app-toast--info {
+  border-left-color: #7a7a84;
+}
+
+.app-toast--info .app-toast-icon {
+  background: rgba(255, 255, 255, 0.08);
+  color: #c9c9d0;
+}
+
+.app-toast-body {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.app-toast-title {
+  margin-bottom: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #ffb733;
+}
+
+.app-toast--info .app-toast-title {
+  color: #c9c9d0;
+}
+
+.app-toast-message {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #d6d6db;
+  overflow-wrap: anywhere;
+}
+
+.app-toast-close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #8f8f99;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.app-toast-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f2f2f4;
+}
+
+.app-toast-close:focus-visible {
+  outline: 2px solid #ffb733;
+  outline-offset: 1px;
+}
+
+@keyframes appDialogFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes appDialogPop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes appToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 720px) {
+  .app-toast-stack {
+    top: 64px;
+  }
+
+  .app-dialog {
+    padding: 22px 18px 16px;
+  }
+
+  .app-dialog-actions {
+    flex-direction: column-reverse;
+  }
+
+  .app-dialog-btn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-dialog-overlay,
+  .app-dialog,
+  .app-toast {
+    animation: none;
+  }
+}

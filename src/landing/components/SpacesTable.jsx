@@ -35,9 +35,9 @@ const LEAVE_BTN_STYLES = {
   height: '26px',
   borderRadius: '4px',
   marginLeft: '5px',
-  backgroundColor: 'rgba(244, 67, 54, 0.12)',
-  border: '1px solid rgba(244, 67, 54, 0.4)',
-  color: '#f47864',
+  backgroundColor: 'rgba(204, 133, 0, 0.12)',
+  border: '1px solid rgba(204, 133, 0, 0.4)',
+  color: '#cc8500',
   transition: 'all 0.2s',
 };
 const INVITE_BANNER_BASE = {

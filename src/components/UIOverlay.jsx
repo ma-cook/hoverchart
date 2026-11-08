@@ -21,6 +21,7 @@ import { processCsvFile } from '../services/csvDiagramService';
 import { setCellBoundariesVisible } from '../stores/uiOverlayStore';
 import { clearAllObjectCaches, cleanupSpatialObjectSubscriptions, deleteAllCellsInSpace } from '../services/spatialObjectsService';
 import { api } from '../api-client';
+import { confirmDialog, notify, dismissToast } from '../stores/dialogStore';
 import * as THREE from 'three';
 import {
   handleGithubCallback,
@@ -1582,28 +1583,31 @@ const UIOverlay = ({
 
   const handleDeleteAllCells = useCallback(async () => {
     if (!user?.uid || !currentSpaceId) {
-      alert('You must be logged in to delete cells');
+      notify('You must be logged in to delete cells.', {
+        type: 'error',
+        title: 'Sign in required',
+      });
       return;
     }
 
     // Prevent concurrent delete operations
     if (window._bulkDeleteInProgress) {
-      alert('A delete operation is already in progress. Please wait for it to finish.');
+      notify('A delete operation is already in progress. Please wait for it to finish.', {
+        type: 'warning',
+        title: 'Delete in progress',
+      });
       return;
     }
 
-    const confirmed = window.confirm(
-      'Are you sure you want to delete ALL objects in this space? This action cannot be undone.'
-    );
+    const confirmed = await confirmDialog({
+      title: 'Delete all objects',
+      message:
+        'Every object and connection in this space will be permanently deleted. This cannot be undone.',
+      confirmLabel: 'Delete everything',
+      tone: 'danger',
+    });
 
     if (!confirmed) return;
-
-    // Double confirmation for safety
-    const doubleConfirmed = window.confirm(
-      'This will permanently delete all objects. Are you absolutely sure?'
-    );
-
-    if (!doubleConfirmed) return;
 
     setIsDeleting(true);
 
@@ -1623,7 +1627,11 @@ const UIOverlay = ({
     cleanupSpatialObjectSubscriptions(loadedCellIds);
     useSpatialManagerStore.getState().resetSpatialManager();
 
-    setNotification({ show: true, message: '🧹 Clearing space…' });
+    const clearingToastId = notify('Clearing space…', {
+      type: 'info',
+      title: 'Working',
+      duration: 0,
+    });
 
     // ── Delete all cells via backend API ──
     try {
@@ -1658,17 +1666,18 @@ const UIOverlay = ({
       setLatestMarkdownUrl(null);
       setLastCommitSha(null);
       setAnalysisOpen(false);
-      setNotification({
-        show: true,
-        message: '✅ All objects deleted.',
-      });
-      setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+      dismissToast(clearingToastId);
+      notify('All objects deleted.', { type: 'success', title: 'Space cleared' });
     } catch (error) {
       console.error('Bulk delete error:', error);
       window._bulkDeleteInProgress = false;
       setIsDeleting(false);
-      setNotification({ show: true, message: `❌ Error deleting space: ${error.message}` });
-      setTimeout(() => setNotification({ show: false, message: '' }), 5000);
+      dismissToast(clearingToastId);
+      notify(`Error deleting space: ${error.message}`, {
+        type: 'error',
+        title: 'Delete failed',
+        duration: 6000,
+      });
     }
   }, [user, currentSpaceId, resetObjects, resetConnections, storeGeneratedMarkdown]);
 

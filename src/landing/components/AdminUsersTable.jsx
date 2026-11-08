@@ -6,6 +6,7 @@ import {
   updateUserTier,
   deleteUser,
 } from '../../services/adminService';
+import { confirmDialog, notify } from '../../stores/dialogStore';
 
 const FONT_FAMILY =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif";
@@ -53,8 +54,10 @@ const smallBtn = {
 
 const dangerBtn = {
   ...smallBtn,
-  color: '#e53e3e',
-  border: '1px solid #e53e3e',
+  color: '#8a5a00',
+  background: '#fff7ea',
+  border: '1px solid #cc8500',
+  fontWeight: '600',
 };
 
 const tableStyle = {
@@ -156,7 +159,6 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   const debounceRef = useRef(null);
 
@@ -216,20 +218,29 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
   };
 
   const handleDelete = async (user) => {
+    const confirmed = await confirmDialog({
+      title: 'Delete user account',
+      message: `Delete ${user.email || user.id} and everything they own? This cannot be undone.`,
+      confirmLabel: 'Delete account',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
     setBusyId(user.id);
     setError('');
     setNotice('');
     try {
       await deleteUser(user.id);
-      setConfirmDeleteId(null);
-      setNotice(`Deleted ${user.email || user.id}.`);
+      notify(`Deleted ${user.email || user.id}.`, { type: 'success', title: 'User deleted' });
       // Step back a page if the last row on this page just went away.
       const remaining = users.length - 1;
       if (remaining === 0 && page > 1) setPage((prev) => prev - 1);
       else load();
     } catch (err) {
-      setConfirmDeleteId(null);
-      setError(err?.message || 'Failed to delete user.');
+      notify(err?.message || 'Failed to delete user.', {
+        type: 'error',
+        title: 'Delete failed',
+      });
     } finally {
       setBusyId(null);
     }
@@ -263,9 +274,10 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
         <div
           style={{
             ...bannerBase,
-            background: '#fff5f5',
-            border: '1px solid #e53e3e',
-            color: '#c53030',
+            background: '#fff7ea',
+            border: '1px solid #e0a33a',
+            borderLeft: '3px solid #cc8500',
+            color: '#8a5a00',
           }}
         >
           {error}
@@ -275,9 +287,10 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
         <div
           style={{
             ...bannerBase,
-            background: '#f0fff4',
-            border: '1px solid #48bb78',
-            color: '#22543d',
+            background: '#f6f6f7',
+            border: '1px solid #d9d9dd',
+            borderLeft: '3px solid #cc8500',
+            color: '#3a3a40',
           }}
         >
           {notice}
@@ -308,7 +321,6 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
           {users.map((user) => {
             const isSelf = user.id === currentUserId;
             const busy = busyId === user.id;
-            const confirming = confirmDeleteId === user.id;
 
             return (
               <tr key={user.id} style={{ opacity: busy ? 0.6 : 1 }}>
@@ -355,32 +367,14 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
                 <td style={tdStyle}>
                   {isSelf ? (
                     <span style={{ fontSize: '11px', color: '#aaa' }}>—</span>
-                  ) : confirming ? (
-                    <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '11px', color: '#c53030' }}>Delete account?</span>
-                      <button
-                        onClick={() => handleDelete(user)}
-                        disabled={busy}
-                        style={{ ...dangerBtn, background: '#fff5f5' }}
-                      >
-                        {busy ? 'Deleting…' : 'Confirm'}
-                      </button>
-                      <button
-                        onClick={() => setConfirmDeleteId(null)}
-                        disabled={busy}
-                        style={smallBtn}
-                      >
-                        Cancel
-                      </button>
-                    </span>
                   ) : (
                     <button
-                      onClick={() => setConfirmDeleteId(user.id)}
+                      onClick={() => handleDelete(user)}
                       disabled={busy}
-                      style={dangerBtn}
+                      style={{ ...dangerBtn, opacity: busy ? 0.6 : 1 }}
                       title={`Delete ${user.email || user.id} and everything they own`}
                     >
-                      Delete
+                      {busy ? 'Deleting…' : 'Delete'}
                     </button>
                   )}
                 </td>

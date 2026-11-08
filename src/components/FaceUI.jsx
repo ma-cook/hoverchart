@@ -5,6 +5,7 @@ import { useFrame } from '@react-three/fiber';
 import ColorPicker from './ColorPicker';
 import { useColorPickerStore, useFaceStore } from '../stores';
 import * as THREE from 'three';
+import { confirmDialog } from '../stores/dialogStore';
 
 // Pre-allocated temp vector to avoid GC pressure in useFrame
 const _tempVec3 = new THREE.Vector3();
@@ -169,7 +170,7 @@ const FaceUI = React.memo(
       });
     }
 
-    const handleToolClick = (tool, e) => {
+    const handleToolClick = async (tool, e) => {
       e.stopPropagation();
       switch (tool.name) {
         case 'paint':
@@ -211,11 +212,18 @@ const FaceUI = React.memo(
         case 'pin': // Toggle pinning webcam to UI overlay
           onPinToggle?.();
           break;
-        case 'delete':
-          if (window.confirm('Are you sure you want to delete this object?')) {
+        case 'delete': {
+          const confirmed = await confirmDialog({
+            title: 'Delete object',
+            message: 'Are you sure you want to delete this object? This cannot be undone.',
+            confirmLabel: 'Delete object',
+            tone: 'danger',
+          });
+          if (confirmed) {
             onDelete?.();
           }
           break;
+        }
       }
     };
 

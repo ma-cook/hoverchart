@@ -5,6 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useColorPickerStore } from '../stores';
 import useCameraFollowStore from '../stores/cameraFollowStore';
+import { confirmDialog } from '../stores/dialogStore';
 
 // Pre-allocated temp vector to avoid GC pressure in useFrame
 const _tempVec3 = new THREE.Vector3();
@@ -157,8 +158,14 @@ const ObjectUI = React.memo(
       {
         name: 'delete',
         icon: '🗑️', // <-- Add delete button with trash icon
-        onClick: () => {
-          if (window.confirm('Are you sure you want to delete this object?')) {
+        onClick: async () => {
+          const confirmed = await confirmDialog({
+            title: 'Delete object',
+            message: 'Are you sure you want to delete this object? This cannot be undone.',
+            confirmLabel: 'Delete object',
+            tone: 'danger',
+          });
+          if (confirmed) {
             onDelete?.();
           }
         },

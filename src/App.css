@@ -1876,47 +1876,63 @@ body {
 /* Notification Popup */
 .notification-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 9999;
-  cursor: pointer;
+  justify-content: flex-start;
+  align-items: flex-end;
+  padding: 24px;
+  z-index: 4000;
+  pointer-events: none;
+  background: transparent;
 }
 
 .notification-popup {
-  background-color: rgba(76, 175, 80, 0.95);
-  color: white;
-  padding: 20px 32px;
-  border-radius: 12px;
+  pointer-events: auto;
+  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-  animation: notificationFadeIn 0.3s ease;
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 13px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 3px solid #cc8500;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(30, 30, 34, 0.98) 0%, rgba(18, 18, 22, 0.98) 100%);
+  color: #e6e6e6;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+  animation: notificationFadeIn 0.2s ease;
 }
 
 .notification-icon {
-  font-size: 24px;
-  font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(204, 133, 0, 0.18);
+  color: #ffb733;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .notification-message {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 500;
+  line-height: 1.45;
+  color: #d6d6db;
 }
 
 @keyframes notificationFadeIn {
   from {
     opacity: 0;
-    transform: scale(0.9);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: translateY(0);
   }
 }
 

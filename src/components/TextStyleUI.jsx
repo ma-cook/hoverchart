@@ -5,6 +5,7 @@ import { useFrame } from '@react-three/fiber';
 import ColorPicker from './ColorPicker';
 import * as THREE from 'three';
 import { useColorPickerStore } from '../stores';
+import { confirmDialog } from '../stores/dialogStore';
 
 // Add export to the TextStyleUIContent component
 export const TextStyleUIContent = ({
@@ -332,23 +333,26 @@ export const TextStyleUIContent = ({
       )}
       {tools.includes('delete') && uiType === 'textObject' && onDelete && (
         <button
-          onClick={(e) => {
+          onClick={async (e) => {
             e.stopPropagation();
             e.nativeEvent?.preventDefault?.();
-            if (
-              window.confirm(
-                'Are you sure you want to delete this text object?'
-              )
-            ) {
+            const confirmed = await confirmDialog({
+              title: 'Delete text object',
+              message:
+                'Are you sure you want to delete this text object? This cannot be undone.',
+              confirmLabel: 'Delete object',
+              tone: 'danger',
+            });
+            if (confirmed) {
               onDelete();
             }
           }}
           className="face-tool-button delete-button"
           title="Delete text object"
           style={{
-            background: '#dc3545',
-            borderColor: '#dc3545',
-            color: 'white',
+            background: 'rgba(20, 20, 22, 0.92)',
+            borderColor: 'rgba(204, 133, 0, 0.6)',
+            color: '#ffb733',
           }}
         >
           🗑️

@@ -39,8 +39,8 @@
 
 /* SpacesTable leave button */
 .leave-space-btn:hover:not(:disabled) {
-  background-color: rgba(244, 67, 54, 0.25) !important;
-  border-color: rgba(244, 67, 54, 0.6) !important;
+  background-color: rgba(204, 133, 0, 0.25) !important;
+  border-color: rgba(204, 133, 0, 0.6) !important;
 }
 
 /* SpacesTable invite accept / decline buttons */

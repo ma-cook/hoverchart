@@ -12,6 +12,7 @@ import {
   getPendingInvitesForUser,
   PLAN_LIMITS,
 } from '../../services/organizationService';
+import { confirmDialog, notify } from '../../stores/dialogStore';
 
 const FONT_FAMILY =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif";
@@ -37,9 +38,10 @@ const btnPrimary = {
 const btnSecondary = { ...btnBase, backgroundColor: 'white', color: '#333' };
 const btnDanger = {
   ...btnBase,
-  backgroundColor: 'white',
-  color: '#e53e3e',
-  border: '1px solid #e53e3e',
+  backgroundColor: '#fff7ea',
+  color: '#8a5a00',
+  border: '1px solid #cc8500',
+  fontWeight: '600',
 };
 
 export const OrganizationManager = React.memo(({ user, show, onClose }) => {
@@ -137,24 +139,53 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
   };
 
   const handleRemoveMember = async (orgId, targetUserId) => {
+    const confirmed = await confirmDialog({
+      title: 'Remove member',
+      message:
+        'Remove this member from the organization? They will lose access to organization spaces.',
+      confirmLabel: 'Remove member',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
     setError('');
+    setSuccess('');
     try {
       await removeMemberFromOrganization(orgId, user.uid, targetUserId);
-      setSuccess('Member removed.');
       await refresh();
+      notify('Member removed.', { type: 'success', title: 'Member removed' });
     } catch (e) {
-      setError(e.message || 'Failed to remove member.');
+      notify(e.message || 'Failed to remove member.', {
+        type: 'error',
+        title: 'Could not remove member',
+      });
     }
   };
 
   const handleLeave = async (orgId) => {
+    const confirmed = await confirmDialog({
+      title: 'Leave organization',
+      message:
+        'You will lose access to this organization and any spaces shared through it. You can only rejoin by invitation.',
+      confirmLabel: 'Leave organization',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
     setError('');
+    setSuccess('');
     try {
       await leaveOrganization(orgId, user.uid);
-      setSuccess('You have left the organization.');
       await refresh();
+      notify('You have left the organization.', {
+        type: 'success',
+        title: 'Left organization',
+      });
     } catch (e) {
-      setError(e.message || 'Failed to leave organization.');
+      notify(e.message || 'Failed to leave organization.', {
+        type: 'error',
+        title: 'Could not leave organization',
+      });
     }
   };
 
@@ -172,20 +203,27 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
   };
 
   const handleDeleteOrg = async (orgId) => {
-    if (
-      !window.confirm(
-        'Are you sure you want to delete this organization? This cannot be undone.'
-      )
-    )
-      return;
+    const confirmed = await confirmDialog({
+      title: 'Delete organization',
+      message:
+        'This organization and its settings will be permanently deleted. Members will lose access. This cannot be undone.',
+      confirmLabel: 'Delete organization',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
     setError('');
+    setSuccess('');
     try {
       await deleteOrganization(orgId, user.uid);
-      setSuccess('Organization deleted.');
       setExpandedOrg(null);
       await refresh();
+      notify('Organization deleted.', { type: 'success', title: 'Deleted' });
     } catch (e) {
-      setError(e.message || 'Failed to delete organization.');
+      notify(e.message || 'Failed to delete organization.', {
+        type: 'error',
+        title: 'Delete failed',
+      });
     }
   };
 
@@ -274,13 +312,14 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
         {error && (
           <div
             style={{
-              color: '#e53e3e',
+              color: '#8a5a00',
               marginBottom: '12px',
               fontSize: '14px',
               padding: '8px 12px',
-              backgroundColor: '#fff5f5',
+              backgroundColor: '#fff7ea',
               borderRadius: '4px',
-              border: '1px solid #fed7d7',
+              border: '1px solid #e0a33a',
+              borderLeft: '3px solid #cc8500',
             }}
           >
             {error}
@@ -289,13 +328,14 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
         {success && (
           <div
             style={{
-              color: '#276749',
+              color: '#3a3a40',
               marginBottom: '12px',
               fontSize: '14px',
               padding: '8px 12px',
-              backgroundColor: '#f0fff4',
+              backgroundColor: '#f6f6f7',
               borderRadius: '4px',
-              border: '1px solid #c6f6d5',
+              border: '1px solid #d9d9dd',
+              borderLeft: '3px solid #cc8500',
             }}
           >
             {success}
@@ -595,7 +635,7 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                     <span
                       style={{
                         fontSize: '13px',
-                        color: isAtCapacity ? '#e53e3e' : '#666',
+                        color: isAtCapacity ? '#8a5a00' : '#666',
                         fontWeight: isAtCapacity ? '600' : '400',
                       }}
                     >
@@ -614,13 +654,14 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                     {isAtCapacity && (
                       <div
                         style={{
-                          color: '#e53e3e',
+                          color: '#8a5a00',
                           fontSize: '13px',
                           marginBottom: '12px',
                           padding: '8px 12px',
-                          backgroundColor: '#fff5f5',
+                          backgroundColor: '#fff7ea',
                           borderRadius: '4px',
-                          border: '1px solid #fed7d7',
+                          border: '1px solid #e0a33a',
+                          borderLeft: '3px solid #cc8500',
                         }}
                       >
                         Organization limit reached ({memberCount}/
@@ -725,11 +766,11 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                                   }}
                                   onMouseOver={(e) =>
                                     (e.currentTarget.style.backgroundColor =
-                                      '#fff5f5')
+                                      '#fff0d6')
                                   }
                                   onMouseOut={(e) =>
                                     (e.currentTarget.style.backgroundColor =
-                                      'white')
+                                      '#fff7ea')
                                   }
                                 >
                                   Remove
@@ -759,7 +800,7 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                           {inviteError[org.id] && (
                             <div
                               style={{
-                                color: '#e53e3e',
+                                color: '#8a5a00',
                                 fontSize: '13px',
                                 marginBottom: '8px',
                               }}
@@ -899,10 +940,11 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                             style={btnDanger}
                             onMouseOver={(e) =>
                               (e.currentTarget.style.backgroundColor =
-                                '#fff5f5')
+                                '#fff0d6')
                             }
                             onMouseOut={(e) =>
-                              (e.currentTarget.style.backgroundColor = 'white')
+                              (e.currentTarget.style.backgroundColor =
+                                '#fff7ea')
                             }
                           >
                             Delete Organization
@@ -917,10 +959,10 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
                         onClick={() => handleLeave(org.id)}
                         style={btnDanger}
                         onMouseOver={(e) =>
-                          (e.currentTarget.style.backgroundColor = '#fff5f5')
+                          (e.currentTarget.style.backgroundColor = '#fff0d6')
                         }
                         onMouseOut={(e) =>
-                          (e.currentTarget.style.backgroundColor = 'white')
+                          (e.currentTarget.style.backgroundColor = '#fff7ea')
                         }
                       >
                         Leave Organization

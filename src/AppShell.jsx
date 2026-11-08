@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import LandingApp from './landing/LandingApp';
 import DiagramApp from './App.jsx';
 import SharedCanvas from './components/SharedCanvas';
+import DialogHost from './components/DialogHost';
 import useSceneStore from './stores/sceneStore';
 import useObjectsStore from './stores/objectsStore';
 import useConnectionStore from './stores/connectionStore';
@@ -195,6 +196,8 @@ const AppShell = () => {
           )}
         </div>
       </div>
+
+      <DialogHost />
     </>
   );
 };

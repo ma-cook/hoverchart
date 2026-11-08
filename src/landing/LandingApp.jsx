@@ -9,6 +9,7 @@ import useSceneStore from '../stores/sceneStore';
 import useAuthStore from '../stores/authStore';
 import { api } from '../api-client';
 import { clearAllCellCaches } from '../services/cellObjectCache';
+import { confirmDialog, notify } from '../stores/dialogStore';
 
 import { CreateSpacePopup } from './components/CreateSpacePopup';
 import { ShareSpacePopup } from './components/ShareSpacePopup';
@@ -217,18 +218,31 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const handleDeleteSpace = useCallback(
     async (spaceId) => {
       if (!user || !spaceId || isDeleting) return;
-      if (!window.confirm('Are you sure you want to delete this space? This cannot be undone.')) return;
+
+      const confirmed = await confirmDialog({
+        title: 'Delete space',
+        message:
+          'This space and everything inside it will be permanently deleted. This cannot be undone.',
+        confirmLabel: 'Delete space',
+        tone: 'danger',
+      });
+      if (!confirmed) return;
 
       try {
         setIsDeleting(true);
         await api.delete(`/api/spaces/${spaceId}`);
-        // Drop cached cell→object entries for the deleted space so its objects
+        // Drop cached cell object entries for the deleted space so its objects
         // can never be re-hydrated into a subsequently opened space.
         clearAllCellCaches();
         await fetchUserSpaces();
+        notify('Space deleted.', { type: 'success', title: 'Deleted' });
       } catch (error) {
         console.error('Error deleting space:', error);
-        alert(`Failed to delete space: ${error.message}. Please try again.`);
+        notify(`Failed to delete space: ${error.message}. Please try again.`, {
+          type: 'error',
+          title: 'Delete failed',
+          duration: 6000,
+        });
       } finally {
         setIsDeleting(false);
       }
@@ -239,17 +253,27 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const handleLeaveSpace = useCallback(
     async (space) => {
       if (!user || !space || !space.owner_id) return;
-      if (!window.confirm(`Are you sure you want to leave "${space.name}"? You will lose access to this space.`)) return;
+
+      const confirmed = await confirmDialog({
+        title: 'Leave space',
+        message: `You will lose access to "${space.name}". You can only rejoin if the owner shares it with you again.`,
+        confirmLabel: 'Leave space',
+        tone: 'danger',
+      });
+      if (!confirmed) return;
 
       try {
         setIsDeleting(true);
         const sharedWith = (space.shared_with || []).filter((id) => id !== user.sub);
         await api.patch(`/api/spaces/${space.id}`, { shared_with: sharedWith });
         await fetchUserSpaces();
-        alert(`You have left "${space.name}".`);
+        notify(`You have left "${space.name}".`, { type: 'success', title: 'Left space' });
       } catch (error) {
         console.error('Error leaving space:', error);
-        alert('Failed to leave space. Please try again.');
+        notify('Failed to leave space. Please try again.', {
+          type: 'error',
+          title: 'Could not leave space',
+        });
       } finally {
         setIsDeleting(false);
       }

@@ -135,9 +135,10 @@ export const AdminOrgUsersTable = React.memo(({ orgs, orgId, onOrgChange }) => {
             borderRadius: '4px',
             fontSize: '12px',
             marginBottom: '10px',
-            background: '#fff5f5',
-            border: '1px solid #e53e3e',
-            color: '#c53030',
+            background: '#fff7ea',
+            border: '1px solid #e0a33a',
+            borderLeft: '3px solid #cc8500',
+            color: '#8a5a00',
           }}
         >
           {error}
