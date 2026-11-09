@@ -767,7 +767,17 @@ const UIOverlay = ({
   const [chatOpen, setChatOpen] = useState(false);
   const [loginTooltipVisible, setLoginTooltipVisible] = useState(false);
   const [chatTooltipVisible, setChatTooltipVisible] = useState(false);
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const [chatLaunchRequest, setChatLaunchRequest] = useState(null);
+  const chatSplitRef = useRef(null);
+  const chatMenuOpenTimerRef = useRef(null);
+  const chatMenuCloseTimerRef = useRef(null);
   const chatLocked = !user;
+
+  useEffect(() => () => {
+    clearTimeout(chatMenuOpenTimerRef.current);
+    clearTimeout(chatMenuCloseTimerRef.current);
+  }, []);
 
   // Remember that this user has logged in so the first-visit login tooltip
   // never shows again for previously-logged-in users.
@@ -939,6 +949,51 @@ const UIOverlay = ({
       return [...prev, ...toAdd];
     });
   }, [currentSpaceId, chatOpen, chatWindows, handleCloseChat, cascadeWindowLayout]);
+
+  // Open the primary chat directly in a specific mode. The launch request is
+  // passed down to SpaceChat, which applies it once per nonce so manually
+  // reopening the window later keeps the user's chosen mode.
+  const openChatMode = useCallback((mode, { showGithub = false } = {}) => {
+    if (!currentSpaceId || chatLocked) return;
+    setChatOpen(true);
+    setChatLaunchRequest((prev) => ({
+      mode,
+      showGithub,
+      id: (prev?.id || 0) + 1,
+    }));
+    setChatMenuOpen(false);
+  }, [currentSpaceId, chatLocked]);
+
+  const handleChatSplitEnter = useCallback(() => {
+    if (chatLocked) return;
+    clearTimeout(chatMenuOpenTimerRef.current);
+    clearTimeout(chatMenuCloseTimerRef.current);
+    chatMenuOpenTimerRef.current = setTimeout(() => setChatMenuOpen(true), 140);
+  }, [chatLocked]);
+
+  const handleChatSplitLeave = useCallback(() => {
+    clearTimeout(chatMenuOpenTimerRef.current);
+    clearTimeout(chatMenuCloseTimerRef.current);
+    chatMenuCloseTimerRef.current = setTimeout(() => setChatMenuOpen(false), 180);
+  }, []);
+
+  useEffect(() => {
+    if (!chatMenuOpen) return;
+    const handlePointerDown = (event) => {
+      if (chatSplitRef.current && !chatSplitRef.current.contains(event.target)) {
+        setChatMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setChatMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [chatMenuOpen]);
 
   // Keep the archive store's cached list in sync with the current space so the
   // numbered icon bar below the top bar reflects the persisted archive.
@@ -2809,35 +2864,89 @@ const UIOverlay = ({
                   <div className="chat-tooltip">login to access the chat window</div>
                 </>
               )}
-              <button
-                className={`shape-button${chatLocked ? ' shape-button--locked' : ''}`}
-                onClick={() => {
-                  if (chatLocked) {
-                    setChatTooltipVisible((v) => !v);
-                    return;
-                  }
-                  handleToggleAllChats();
-                }}
-                title={chatLocked ? 'login to access the chat window' : 'Toggle Space Chat'}
-                style={
-                  chatLocked
-                    ? undefined
-                    : {
-                        background: (chatOpen || chatWindows.length > 0) ? 'rgba(74,144,217,0.2)' : undefined,
-                        borderColor: (chatOpen || chatWindows.length > 0) ? '#4a90d9' : undefined,
-                        color: (chatOpen || chatWindows.length > 0) ? '#4a90d9' : undefined,
-                      }
-                }
+              <div
+                className="chat-split"
+                ref={chatSplitRef}
+                onMouseEnter={handleChatSplitEnter}
+                onMouseLeave={handleChatSplitLeave}
               >
-                💬
-              </button>
+                <button
+                  className={`shape-button chat-split-main${chatLocked ? ' shape-button--locked' : ''}${(chatOpen || chatWindows.length > 0) && !chatLocked ? ' shape-button--active' : ''}`}
+                  onClick={() => {
+                    if (chatLocked) {
+                      setChatTooltipVisible((v) => !v);
+                      return;
+                    }
+                    setChatMenuOpen(false);
+                    handleToggleAllChats();
+                  }}
+                  title={chatLocked ? 'login to access the chat window' : 'Chat & AI'}
+                  aria-label={chatLocked ? 'login to access the chat window' : 'Chat & AI'}
+                >
+                  ✦
+                </button>
+                {!chatLocked && (
+                  <button
+                    type="button"
+                    className={`chat-split-caret${chatMenuOpen ? ' open' : ''}`}
+                    onClick={() => setChatMenuOpen((v) => !v)}
+                    onFocus={() => setChatMenuOpen(true)}
+                    aria-label="Chat options"
+                    aria-haspopup="menu"
+                    aria-expanded={chatMenuOpen}
+                    title="Chat options"
+                  >
+                    ▾
+                  </button>
+                )}
+                {!chatLocked && chatMenuOpen && (
+                  <div className="chat-split-menu" role="menu" aria-label="Chat options">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="chat-split-item"
+                      onClick={() => openChatMode('group')}
+                    >
+                      <span className="chat-split-item-icon" aria-hidden="true">◎</span>
+                      <span className="chat-split-item-text">
+                        <strong>Group chat</strong>
+                        <small>Talk with everyone in this space</small>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="chat-split-item"
+                      onClick={() => openChatMode('plan')}
+                    >
+                      <span className="chat-split-item-icon" aria-hidden="true">✦</span>
+                      <span className="chat-split-item-text">
+                        <strong>Ask AI</strong>
+                        <small>Plan architecture or ask a question</small>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="chat-split-item"
+                      onClick={() => openChatMode('code', { showGithub: true })}
+                    >
+                      <span className="chat-split-item-icon" aria-hidden="true">⌁</span>
+                      <span className="chat-split-item-text">
+                        <strong>Code &amp; scan</strong>
+                        <small>Connect GitHub, pick a repo, scan</small>
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
       </div>
 
       {/* Group chat window - opens at the top-left of the chat area */}
-      {!trialMode && <ChatWindowInstance windowId={0} spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={handleClosePrimaryChat} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={() => handleAddChat(0)} />}
+      {!trialMode && <ChatWindowInstance windowId={0} spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={handleClosePrimaryChat} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={() => handleAddChat(0)} launchRequest={chatLaunchRequest} />}
 
       {/* Extra chat windows - each is an independent LLM chat */}
       {!trialMode && chatWindows.map((id) => (

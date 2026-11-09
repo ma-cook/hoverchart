@@ -196,7 +196,7 @@ function persistWindowLlm(windowId, key, value) {
   } catch { /* ignore */ }
 }
 
-const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGenerated, onAddChat, windowId = 0, layout, onLayoutChange }) => {
+const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGenerated, onAddChat, windowId = 0, layout, onLayoutChange, launchRequest }) => {
   const isPrimary = windowId === 0;
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -323,6 +323,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const abortControllerRef = useRef(null);
   const rafPendingRef = useRef(false);
   const correctionsRef = useRef([]);
+  const handledLaunchRequestRef = useRef(null);
 
   const githubConnected = useCodeStore(s => s.githubConnected);
   const selectedRepo = useCodeStore(s => s.selectedRepo);
@@ -1239,13 +1240,31 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     window.location.href = getGithubOAuthUrl();
   };
 
-  const handleFetchRepos = async () => {
+  const handleFetchRepos = useCallback(async () => {
     if (!isGithubAuthenticated()) return;
     try {
       const reposData = await fetchRepositories();
       setRepos(reposData);
     } catch { /* ignore */ }
-  };
+  }, []);
+
+  // Apply a one-shot launch request from the toolbar split menu. The nonce is
+  // tracked so closing and manually reopening the window keeps the user's mode.
+  useEffect(() => {
+    if (!isOpen || !launchRequest) return;
+    if (handledLaunchRequestRef.current === launchRequest.id) return;
+    handledLaunchRequestRef.current = launchRequest.id;
+
+    handleModeSwitch(launchRequest.mode);
+    if (launchRequest.showGithub) {
+      setShowGithubPanel(true);
+      if (isGithubAuthenticated() && !useCodeStore.getState().selectedRepo) {
+        setShowRepos(true);
+        handleFetchRepos();
+      }
+    }
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [isOpen, launchRequest, handleModeSwitch, handleFetchRepos]);
 
   const applyGithubSelection = (repo) => {
     const cs = useCodeStore.getState();

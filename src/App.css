@@ -325,6 +325,16 @@ canvas {
   background-color: #f0f0f0;
 }
 
+.shape-button--active {
+  background-color: rgba(204, 133, 0, 0.16);
+  border-color: #cc8500;
+  color: #cc8500;
+}
+
+.shape-button--active:hover {
+  background-color: rgba(204, 133, 0, 0.24);
+}
+
 .object-ui {
   background: rgb(0, 0, 0);
   border-radius: 4px;
@@ -1076,6 +1086,108 @@ body {
   align-items: center;
 }
 
+/* Chat split/hover launcher: main segment toggles all chats, the caret opens
+   a small menu that launches the primary chat directly in a specific mode. */
+.chat-split {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+
+.chat-split-main {
+  width: 100%;
+  height: 100%;
+}
+
+.chat-split-caret {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid #333;
+  border-radius: 3px 0 4px 0;
+  background: #1e1e22;
+  color: #ffb733;
+  font-size: 9px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.chat-split-caret:hover,
+.chat-split-caret.open {
+  background: #cc8500;
+  border-color: #cc8500;
+  color: #141418;
+}
+
+.chat-split-menu {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 8px);
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 232px;
+  padding: 6px;
+  background: #1e1e22;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+.chat-split-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #e6e6e6;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chat-split-item:hover,
+.chat-split-item:focus-visible {
+  background: rgba(204, 133, 0, 0.15);
+  outline: none;
+}
+
+.chat-split-item-icon {
+  width: 18px;
+  flex-shrink: 0;
+  color: #ffb733;
+  font-size: 16px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.chat-split-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-split-item-text strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chat-split-item-text small {
+  color: #999;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 /* Archived chat windows — numbered space-chat icons centered just below the
    top bar. Each represents a closed chat window that had an LLM provider
    configured or was interacted with; clicking reopens it. */
@@ -1096,9 +1208,9 @@ body {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: rgba(74, 144, 217, 0.15);
-  border: 1px solid rgba(74, 144, 217, 0.45);
-  color: #cfe0ff;
+  background: rgba(204, 133, 0, 0.15);
+  border: 1px solid rgba(204, 133, 0, 0.45);
+  color: #ffd08a;
   font-size: 16px;
   cursor: pointer;
   display: flex;
@@ -1110,8 +1222,8 @@ body {
 }
 
 .chat-archive-icon:hover {
-  background: rgba(74, 144, 217, 0.3);
-  border-color: #4a90d9;
+  background: rgba(204, 133, 0, 0.3);
+  border-color: #cc8500;
   transform: translateY(-1px);
 }
 
@@ -1319,7 +1431,7 @@ body {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: #4a90d9;
+  background: #cc8500;
   color: #fff;
   font-size: 10px;
   font-weight: 600;
@@ -1365,7 +1477,7 @@ body {
 }
 
 .space-chat-message.own .space-chat-bubble {
-  background: #4a90d9;
+  background: #cc8500;
   border-bottom-right-radius: 4px;
 }
 
@@ -1404,7 +1516,7 @@ body {
 }
 
 .space-chat-input:focus {
-  border-color: rgba(74,144,217,0.6);
+  border-color: rgba(204,133,0,0.6);
   background: rgba(255,255,255,0.13);
 }
 
@@ -1432,7 +1544,7 @@ body {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: #4a90d9;
+  background: #cc8500;
   color: #fff;
   border: none;
   cursor: pointer;
@@ -1485,8 +1597,8 @@ body {
 }
 
 .space-chat-mode-btn.active {
-  background: rgba(74,144,217,0.25);
-  border-color: #4a90d9;
+  background: rgba(204,133,0,0.22);
+  border-color: #cc8500;
   color: #fff;
 }
 
@@ -1556,11 +1668,11 @@ body {
 }
 
 .space-chat-model-option:hover {
-  background: rgba(74,144,217,0.2);
+  background: rgba(204,133,0,0.2);
 }
 
 .space-chat-model-option.selected {
-  color: #4a90d9;
+  color: #cc8500;
 }
 
 .space-chat-model-check {
@@ -1589,11 +1701,11 @@ body {
 }
 
 .space-chat-provider-option:hover {
-  background: #e3f2fd;
+  background: #fff4e0;
 }
 
 .space-chat-provider-option.selected {
-  color: #1976d2;
+  color: #cc8500;
   font-weight: 600;
 }
 
@@ -1605,12 +1717,12 @@ body {
 }
 
 .space-chat-provider-hint {
-  color: #e0a04a;
+  color: #ffb733;
   font-size: 12px;
   margin-top: 8px;
   padding: 8px 10px;
-  background: rgba(224, 160, 74, 0.1);
-  border: 1px solid rgba(224, 160, 74, 0.3);
+  background: rgba(204, 133, 0, 0.1);
+  border: 1px solid rgba(204, 133, 0, 0.3);
   border-radius: 6px;
   line-height: 1.4;
   word-break: break-word;
@@ -1621,13 +1733,13 @@ body {
 }
 
 .space-chat-message.llm-assistant .space-chat-bubble {
-  background: rgba(74,144,217,0.15);
+  background: rgba(204,133,0,0.15);
   border-bottom-left-radius: 4px;
   border-bottom-right-radius: 12px;
 }
 
 .space-chat-message.own.llm-user .space-chat-bubble {
-  background: #4a90d9;
+  background: #cc8500;
   border-bottom-right-radius: 4px;
   border-bottom-left-radius: 12px;
 }
@@ -1636,7 +1748,7 @@ body {
   display: inline-block;
   width: 2px;
   height: 1em;
-  background: #4a90d9;
+  background: #cc8500;
   animation: chat-blink 0.8s step-end infinite;
   vertical-align: text-bottom;
   margin-left: 1px;
@@ -1736,8 +1848,8 @@ body {
 .space-chat-spinner {
   width: 18px;
   height: 18px;
-  border: 2px solid rgba(74, 144, 217, 0.2);
-  border-top-color: #4a90d9;
+  border: 2px solid rgba(204, 133, 0, 0.2);
+  border-top-color: #cc8500;
   border-radius: 50%;
   animation: space-chat-spin 0.7s linear infinite;
 }
@@ -1766,6 +1878,33 @@ body {
   .coms-container {
     padding: 0;
     gap: 4px;
+  }
+
+  .ui-stack .chat-split {
+    width: 44px;
+    height: 44px;
+  }
+
+  .ui-stack .chat-split-main {
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+  }
+
+  .ui-stack .chat-split-caret {
+    min-width: 0;
+    min-height: 0;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    font-size: 10px;
+  }
+
+  .ui-stack .chat-split-item {
+    padding: 8px 10px;
+    font-size: 12px;
   }
 
   .space-chat-window {
@@ -2043,13 +2182,18 @@ body {
 
 /* ── SpaceChat GitHub Panel ─────────────────────────────────────────── */
 .space-chat-github-btn {
-  background: none;
-  border: 1px solid #ccc;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.25);
   border-radius: 4px;
   padding: 2px 6px;
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
+}
+
+.space-chat-github-btn:hover {
+  background: rgba(204, 133, 0, 0.15);
+  border-color: #cc8500;
 }
 
 .space-chat-new-window-btn {
