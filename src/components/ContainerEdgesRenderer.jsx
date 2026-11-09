@@ -1,15 +1,24 @@
 import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import useThemeStore from '../stores/themeStore';
 import { resolveEdgeColor } from '../utils/themeColors';
+import LineShaderMaterial from './LineShaderMaterial';
 import {
   BASE_CUBE_EDGES,
   EDGES_PER_CUBE,
   cubeTransformMap,
 } from './GlobalCubeEdgesRenderer';
 
-const VERTICES_PER_CUBE = EDGES_PER_CUBE * 2;
+// Shared base quad for the fat-line shader (same layout as the other line
+// renderers).  Container edges need real pixel thickness; WebGL ignores
+// LineBasicMaterial.linewidth, so use the app's LineShaderMaterial instead.
+const BASE_LINE_QUAD_POSITIONS = new Float32Array([
+  0, -1, 0, 1, -1, 0, 0, 1, 0,
+  1, -1, 0, 1,  1, 0, 0, 1, 0,
+]);
+
+const FLOATS_PER_CUBE = EDGES_PER_CUBE * 3;
 
 // Reusable objects to avoid GC pressure during frame updates
 const tempVec = new THREE.Vector3();
@@ -30,8 +39,9 @@ function applyUpdateRange(attr, offset, count) {
 
 /**
  * ContainerEdgesRenderer - Renders grouping/repo container edges in ONE
- * LineSegments draw call using the standard LineBasicMaterial (no custom
- * shaders) and is INDEPENDENT of the LOD system.
+ * instanced fat-line draw call using LineShaderMaterial and is INDEPENDENT of
+ * the LOD system.  WebGL ignores LineBasicMaterial.linewidth, so the shader is
+ * required to render these edges thinner than 1px.
  *
  * Grouping containers have no LOD level, so their edges should not be rebuilt
  * every time another object's LOD changes or when unrelated objects
@@ -39,7 +49,7 @@ function applyUpdateRange(attr, offset, count) {
  * buffers keyed only to the container set.
  *
  * @param {Array} cubes - Array of cube objects (containers are filtered out internally)
- * @param {number} defaultLineWidth - Line width for all edges
+ * @param {number} defaultLineWidth - Core line width in pixels for all edges
  */
 const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 }) => {
   const meshRef = useRef();
@@ -47,6 +57,7 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   // Track last-known transform/color per container to detect in-place mutations.
   const lastStateRef = useRef(new Map());
   const themeMode = useThemeStore((s) => s.mode);
+  const { size } = useThree();
 
   // Filter to grouping / repo containers only.  Containers have no LOD, so this
   // memo deliberately does NOT depend on _lodVersion.  Referential identity is
@@ -92,24 +103,43 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   const { geometry, material } = useMemo(() => {
     if (capacity === 0) return { geometry: null, material: null };
 
-    const geo = new THREE.BufferGeometry();
-    const positions = new Float32Array(capacity * 2 * 3);
-    const colors = new Float32Array(capacity * 2 * 3);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(BASE_LINE_QUAD_POSITIONS, 3));
+    geo.setAttribute(
+      'instanceStart',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
+    );
+    geo.setAttribute(
+      'instanceEnd',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
+    );
+    geo.setAttribute(
+      'instanceColor',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
+    );
+    geo.instanceCount = 0;
 
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.setDrawRange(0, 0);
-
-    const mat = new THREE.LineBasicMaterial({
-      vertexColors: true,
-      linewidth: defaultLineWidth,
-      transparent: false,
-      depthTest: true,
-      depthWrite: false,
-    });
+    const mat = LineShaderMaterial.clone();
+    // The shader's solid core is `linewidth` pixels; glowWidth expands the quad
+    // around it.  A 2x quad with no halo keeps a 0.5px core antialiased instead
+    // of letting it vanish into a hard sub-pixel line.
+    mat.uniforms.linewidth.value = defaultLineWidth;
+    mat.uniforms.glowWidth.value = 2.0;
+    mat.uniforms.glowIntensity.value = 0.0;
+    mat.uniforms.opacity.value = 1.0;
+    mat.uniforms.resolution.value.x = window.innerWidth;
+    mat.uniforms.resolution.value.y = window.innerHeight;
 
     return { geometry: geo, material: mat };
   }, [capacity, defaultLineWidth]);
+
+  // Keep resolution uniform in sync with the actual viewport size.
+  useEffect(() => {
+    if (material) {
+      material.uniforms.resolution.value.x = size.width;
+      material.uniforms.resolution.value.y = size.height;
+    }
+  }, [material, size.width, size.height]);
 
   // Dispose GPU resources when geometry/material change or on unmount
   useEffect(() => {
@@ -131,11 +161,12 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   // relying on array identity.
   useFrame(() => {
     if (!geometry || !meshRef.current) return;
-    geometry.setDrawRange(0, totalEdges * 2);
+    geometry.instanceCount = totalEdges;
     if (containers.length === 0) return;
 
-    const positionAttr = geometry.getAttribute('position');
-    const colorAttr = geometry.getAttribute('color');
+    const startAttr = geometry.getAttribute('instanceStart');
+    const endAttr = geometry.getAttribute('instanceEnd');
+    const colorAttr = geometry.getAttribute('instanceColor');
 
     let minDirty = needsFullUpdateRef.current ? 0 : Infinity;
 
@@ -162,30 +193,30 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
         color,
       });
 
-      // Write this container's 12 edges
+      // Write this container's 12 edges as line instances
       tempMatrix.makeScale(scale[0], scale[1], scale[2]);
       tempMatrix.setPosition(position[0], position[1], position[2]);
       tempColor.set(color);
       const edgeStartIndex = i * EDGES_PER_CUBE;
       for (let e = 0; e < EDGES_PER_CUBE; e++) {
-        const vertexIndex = (edgeStartIndex + e) * 2;
+        const edgeIndex = edgeStartIndex + e;
         const sp = BASE_CUBE_EDGES[e * 2];
         const ep = BASE_CUBE_EDGES[e * 2 + 1];
         tempVec.set(sp[0], sp[1], sp[2]).applyMatrix4(tempMatrix);
-        positionAttr.setXYZ(vertexIndex, tempVec.x, tempVec.y, tempVec.z);
+        startAttr.setXYZ(edgeIndex, tempVec.x, tempVec.y, tempVec.z);
         tempVec.set(ep[0], ep[1], ep[2]).applyMatrix4(tempMatrix);
-        positionAttr.setXYZ(vertexIndex + 1, tempVec.x, tempVec.y, tempVec.z);
-        colorAttr.setXYZ(vertexIndex, tempColor.r, tempColor.g, tempColor.b);
-        colorAttr.setXYZ(vertexIndex + 1, tempColor.r, tempColor.g, tempColor.b);
+        endAttr.setXYZ(edgeIndex, tempVec.x, tempVec.y, tempVec.z);
+        colorAttr.setXYZ(edgeIndex, tempColor.r, tempColor.g, tempColor.b);
       }
       if (i < minDirty) minDirty = i;
     }
 
     if (minDirty !== Infinity) {
-      const startF = minDirty * VERTICES_PER_CUBE * 3;
-      const endF = containers.length * VERTICES_PER_CUBE * 3;
+      const startF = minDirty * FLOATS_PER_CUBE;
+      const endF = containers.length * FLOATS_PER_CUBE;
       const lenF = endF - startF;
-      applyUpdateRange(positionAttr, startF, lenF);
+      applyUpdateRange(startAttr, startF, lenF);
+      applyUpdateRange(endAttr, startF, lenF);
       applyUpdateRange(colorAttr, startF, lenF);
     }
     needsFullUpdateRef.current = false;
@@ -196,7 +227,7 @@ const ContainerEdgesRenderer = React.memo(({ cubes = [], defaultLineWidth = 1 })
   }
 
   return (
-    <lineSegments
+    <mesh
       key={capacity}
       ref={meshRef}
       geometry={geometry}

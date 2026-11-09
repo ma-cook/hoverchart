@@ -1357,7 +1357,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
       <GlobalCubeEdgesRenderer cubes={cubeObjects} defaultLineWidth={1} />
 
       {/* Container edges rendered separately - no LOD, so they never rebuild on LOD changes */}
-      <ContainerEdgesRenderer cubes={cubeObjects} defaultLineWidth={1} />
+      <ContainerEdgesRenderer cubes={cubeObjects} defaultLineWidth={0.5} />
       
       {/* PERFORMANCE: Render all colored cube faces in a single draw call */}
       <GlobalCubeFaceRenderer cubes={cubeObjects} />
