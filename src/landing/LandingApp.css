@@ -166,7 +166,10 @@
   top: var(--landing-top);
   left: 0;
   right: 0;
-  bottom: 0;
+  /* dvh keeps the scrollable area in sync with mobile browser toolbars;
+     the vh line is the fallback for older browsers. */
+  height: calc(100vh - var(--landing-top));
+  height: calc(100dvh - var(--landing-top));
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -191,13 +194,16 @@
 .landing-inner {
   width: 100%;
   max-width: 1200px;
-  min-height: 100%;
-  margin: 0 auto;
+  /* Auto margins center the column when it fits the viewport and collapse to
+     0 when it does not. The previous min-height/justify-content:center combo
+     let tall content (mobile) overflow ABOVE the scroll origin, making the
+     top of the page - including the CTA - permanently unreachable. */
+  margin: auto;
+  flex-shrink: 0;
   padding: clamp(12px, 2.6vh, 36px) clamp(20px, 4vw, 40px)
     clamp(24px, 4vh, 48px);
   display: flex;
   flex-direction: column;
-  justify-content: center;
 }
 
 /* ---- Hero ---- */
