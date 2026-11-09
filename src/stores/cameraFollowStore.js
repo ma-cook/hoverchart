@@ -1,17 +1,24 @@
 import { create } from 'zustand';
 
 /**
- * Camera "follow" mode: when active, the camera rig (camera + orbit target)
- * translates along every connection line incident to `activeObjectId`, out to
- * the far endpoint and back, one connection at a time, until all are traversed.
+ * Camera "follow" mode. Two scopes:
  *
- * Only the intent (which object) lives here — the traversal plan and per-frame
- * progress live in the CameraFollowController's refs so this store never updates
- * per frame / never triggers React re-renders during the animation.
+ *  - 'object'      – traverse every connection line incident to `activeObjectId`.
+ *  - 'connections' – traverse only the highlighted data path
+ *                    (`followConnectionIds`) that contains `activeConnectionId`.
+ *
+ * Only the intent lives here — the traversal plan and per-frame progress live in
+ * the CameraFollowController's refs so this store never updates per frame /
+ * never triggers React re-renders during the animation.
  */
 const useCameraFollowStore = create((set, get) => ({
-  // Object whose connection lines are being traversed (null when idle).
+  followMode: null, // 'object' | 'connections' | null
+  // Object whose connection lines are being traversed (object mode only).
   activeObjectId: null,
+  // Selected connection whose highlighted path is being traversed.
+  activeConnectionId: null,
+  // Highlighted data-path connection ids (connections mode, ordered at start).
+  followConnectionIds: [],
   isFollowing: false,
 
   // Every object endpoint on the connection lines currently being followed.
@@ -22,7 +29,26 @@ const useCameraFollowStore = create((set, get) => ({
   startFollow(objectId) {
     if (objectId == null) return;
     set({
+      followMode: 'object',
       activeObjectId: String(objectId),
+      activeConnectionId: null,
+      followConnectionIds: [],
+      isFollowing: true,
+      followPathObjectIds: [],
+    });
+  },
+
+  startFollowConnections(connectionId, connectionIds) {
+    if (connectionId == null) return;
+    const ids =
+      Array.isArray(connectionIds) && connectionIds.length
+        ? Array.from(new Set(connectionIds.map((id) => String(id))))
+        : [String(connectionId)];
+    set({
+      followMode: 'connections',
+      activeObjectId: null,
+      activeConnectionId: String(connectionId),
+      followConnectionIds: ids,
       isFollowing: true,
       followPathObjectIds: [],
     });
@@ -33,16 +59,49 @@ const useCameraFollowStore = create((set, get) => ({
   },
 
   stopFollow() {
-    if (!get().isFollowing && get().activeObjectId == null) return;
-    set({ activeObjectId: null, isFollowing: false, followPathObjectIds: [] });
+    const state = get();
+    if (
+      !state.isFollowing &&
+      state.activeObjectId == null &&
+      state.activeConnectionId == null
+    ) {
+      return;
+    }
+    set({
+      followMode: null,
+      activeObjectId: null,
+      activeConnectionId: null,
+      followConnectionIds: [],
+      isFollowing: false,
+      followPathObjectIds: [],
+    });
   },
 
   toggleFollow(objectId) {
     if (objectId == null) return;
-    if (get().isFollowing && get().activeObjectId === String(objectId)) {
+    const state = get();
+    if (
+      state.isFollowing &&
+      state.followMode === 'object' &&
+      state.activeObjectId === String(objectId)
+    ) {
       get().stopFollow();
     } else {
       get().startFollow(objectId);
+    }
+  },
+
+  toggleFollowConnections(connectionId, connectionIds) {
+    if (connectionId == null) return;
+    const state = get();
+    if (
+      state.isFollowing &&
+      state.followMode === 'connections' &&
+      state.activeConnectionId === String(connectionId)
+    ) {
+      get().stopFollow();
+    } else {
+      get().startFollowConnections(connectionId, connectionIds);
     }
   },
 }));

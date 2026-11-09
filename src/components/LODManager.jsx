@@ -98,6 +98,7 @@ const wasImportActiveRef = useRef(false);
     shallow
   );
 
+  const followActive = useCameraFollowStore((s) => s.isFollowing);
   const followObjectId = useCameraFollowStore((s) => s.activeObjectId);
   const followPathObjectIds = useCameraFollowStore((s) => s.followPathObjectIds);
 
@@ -138,7 +139,13 @@ const wasImportActiveRef = useRef(false);
   // Camera follow mode overrides distance LOD: line endpoints (and their
   // ancestor parents) stay FULL, everything else stays MEDIUM.
   useEffect(() => {
-    if (!followObjectId) {
+    // Connections mode has no followed object and publishes its endpoint ids
+    // one render after `isFollowing` flips true. Wait for them so the first
+    // follow pass doesn't downgrade the whole scene before endpoints are known.
+    const hasFollowTarget =
+      followObjectId != null ||
+      (Array.isArray(followPathObjectIds) && followPathObjectIds.length > 0);
+    if (!followActive || !hasFollowTarget) {
       if (followModeRef.current) {
         followModeRef.current = null;
         upgradeQueueRef.current.clear();
@@ -149,13 +156,14 @@ const wasImportActiveRef = useRef(false);
     }
 
     followModeRef.current = {
-      objectId: String(followObjectId),
+      // Object mode has a followed object; connections mode only has endpoints.
+      objectId: followObjectId != null ? String(followObjectId) : null,
       pathObjectIds: (followPathObjectIds || []).map(String),
     };
     upgradeQueueRef.current.clear();
     downgradeQueueRef.current.clear();
     needsImmediateUpdateRef.current = true;
-  }, [followObjectId, followPathObjectIds]);
+  }, [followActive, followObjectId, followPathObjectIds]);
 
   // WORKER: Sync objects to the spatial index worker whenever they change.
   // Also request spatial containment computation (replaces the O(N²) loop below).
@@ -358,7 +366,7 @@ const wasImportActiveRef = useRef(false);
     const { childParentMap, lodLevels, faceTextVisible } = useLODStore.getState();
 
     const fullIds = new Set(follow.pathObjectIds);
-    fullIds.add(follow.objectId);
+    if (follow.objectId != null) fullIds.add(follow.objectId);
 
     const ancestorQueue = [...fullIds];
     for (let i = 0; i < ancestorQueue.length; i++) {

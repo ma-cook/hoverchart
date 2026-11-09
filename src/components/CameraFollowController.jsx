@@ -7,6 +7,7 @@ import useObjectsStore from '../stores/objectsStore';
 import { objectHasCode } from '../services/objectCodeService';
 import {
   buildFollowPaths,
+  buildFollowPathsForConnections,
   resamplePath,
   samplePathAt,
 } from '../utils/connectionFollowPath';
@@ -14,11 +15,15 @@ import {
 /**
  * Camera "follow" mode controller.
  *
- * Mounted once in the scene. When cameraFollowStore reports an active object,
- * this walks the camera rig (camera + orbit target) along every connection line
- * incident to that object - out to the far endpoint and back - one connection
- * at a time. The camera keeps a FIXED offset from the look-at point, so the
- * viewpoint (angle + distance) never changes; only translation occurs.
+ * Mounted once in the scene. Two scopes:
+ *  - object:      walks every connection line incident to the followed object,
+ *                 out to the far endpoint and back, one connection at a time.
+ *  - connections: walks the highlighted data-path connections as directional
+ *                 runs (branching produces several runs), pausing at every
+ *                 intermediate node on the way out, then returning pause-free.
+ *
+ * The camera keeps a FIXED offset from the look-at point, so the viewpoint
+ * (angle + distance) never changes; only translation occurs.
  *
  * Any user interaction (pointer / wheel / key) or stopping the follow restores
  * orbit control.
@@ -33,31 +38,51 @@ const CameraFollowController = () => {
   const invalidate = useThree((s) => s.invalidate);
 
   // Traversal state lives in refs to avoid per-frame store/render churn.
-  const activeRef = useRef(null); // { objectId, paths }
+  const activeRef = useRef(null); // { mode, objectId, connectionId, paths }
   const offsetRef = useRef(new THREE.Vector3()); // camera - target (fixed)
   const pathIndexRef = useRef(0);
   const distanceRef = useRef(0);
   const controlsEnabledRef = useRef(true);
   const lookAtRef = useRef(new THREE.Vector3());
   const phaseRef = useRef('OUTBOUND'); // OUTBOUND | PAUSED | RETURNING
+  const pauseResumePhaseRef = useRef('RETURNING'); // phase to resume after a pause
   const pauseUntilRef = useRef(0);
   const lastFollowPairRef = useRef(null);
   const lookAtMarkerRef = useRef(null);
 
-  const syncFollowCodeWindows = (pathMeta) => {
+  const syncFollowCodeWindows = (pathMeta, segmentMeta) => {
     if (!pathMeta) return;
     const codeStore = useCodeStore.getState();
     const objectsStore = useObjectsStore.getState();
-    const activeId = String(activeRef.current?.objectId || '');
+    const active = activeRef.current;
+    const isConnections = active?.mode === 'connections';
+    const segment = segmentMeta || pathMeta.segments?.[0] || pathMeta;
+
+    const activeId = isConnections
+      ? segment?.startObjectId != null
+        ? String(segment.startObjectId)
+        : ''
+      : String(active?.objectId || '');
     if (!activeId) return;
-    const startId = pathMeta.startObjectId ? String(pathMeta.startObjectId) : null;
-    const endId = pathMeta.endObjectId ? String(pathMeta.endObjectId) : null;
-    const farId = startId === activeId ? endId : (endId === activeId ? startId : (endId || startId));
+
+    const startId = segment?.startObjectId != null ? String(segment.startObjectId) : null;
+    const endId = segment?.endObjectId != null ? String(segment.endObjectId) : null;
+    // Connections mode follows the segment direction: active = start node,
+    // far = end node. Object mode keeps the followed object as active.
+    const farId = isConnections
+      ? endId || startId
+      : startId === activeId
+        ? endId
+        : endId === activeId
+          ? startId
+          : endId || startId;
     if (!farId) return;
 
+    const connectionId = segment?.connectionId ?? pathMeta.connectionId;
+
     const last = lastFollowPairRef.current;
-    if (last && last.connectionId === pathMeta.connectionId && last.farId === farId) {
-      codeStore.setFollowActiveConnectionId(pathMeta.connectionId);
+    if (last && last.connectionId === connectionId && last.farId === farId) {
+      codeStore.setFollowActiveConnectionId(connectionId);
       layoutFollowWindows(activeId, farId);
       return;
     }
@@ -67,8 +92,16 @@ const CameraFollowController = () => {
     const activeObj = getObj(activeId);
     const farObj = getObj(farId);
 
-    // Close previous follow far window if different
-    if (last && last.farId && last.farId !== farId) {
+    if (isConnections) {
+      // Keep only the current node pair; close stale follow-opened windows.
+      const keep = new Set([activeId, farId]);
+      for (const cw of codeStore.codeWindows || []) {
+        if (!codeStore.followOpenedWindowIds?.has(cw.id)) continue;
+        const oid = cw.objectId != null ? String(cw.objectId) : null;
+        if (!oid || !keep.has(oid)) codeStore.closeCodeWindow(cw.id);
+      }
+    } else if (last && last.farId && last.farId !== farId) {
+      // Close previous follow far window if different
       const prevWinId = codeStore.followWindowByObjectId?.[last.farId];
       if (prevWinId && codeStore.followOpenedWindowIds?.has(prevWinId)) {
         codeStore.closeCodeWindow(prevWinId);
@@ -108,8 +141,8 @@ const CameraFollowController = () => {
       }
     }
 
-    codeStore.setFollowActiveConnectionId(pathMeta.connectionId);
-    lastFollowPairRef.current = { connectionId: pathMeta.connectionId, activeId, farId };
+    codeStore.setFollowActiveConnectionId(connectionId);
+    lastFollowPairRef.current = { connectionId, activeId, farId };
     try {
       requestAnimationFrame(() => layoutFollowWindows(activeId, farId));
     } catch {
@@ -171,12 +204,64 @@ const CameraFollowController = () => {
     }
   };
 
+  const getPathSegments = (meta, turnaround) => {
+    if (Array.isArray(meta?.segments) && meta.segments.length) {
+      return meta.segments;
+    }
+    return [
+      {
+        connectionId: meta?.connectionId,
+        startObjectId: meta?.startObjectId,
+        endObjectId: meta?.endObjectId,
+        startDistance: 0,
+        endDistance: turnaround,
+        speedMultiplier: meta?.speedMultiplier ?? 1,
+      },
+    ];
+  };
+
+  // Arc-length position on the OUTBOUND leg. The return leg mirrors it.
+  const mirrorDistance = (distance, turnaround, total) => {
+    if (distance <= turnaround) return Math.max(0, distance);
+    return Math.max(0, Math.min(turnaround, total - distance));
+  };
+
+  const segmentAtOutbound = (segments, outbound) => {
+    for (const segment of segments) {
+      if (outbound <= segment.endDistance + 1e-6) return segment;
+    }
+    return segments[segments.length - 1];
+  };
+
+  // Distance of the next intermediate node ahead (excludes the turnaround).
+  const nextNodeDistance = (segments, distance, turnaround) => {
+    let best = Infinity;
+    for (const segment of segments) {
+      if (
+        segment.endDistance > distance + 1e-6 &&
+        segment.endDistance < turnaround - 1e-6 &&
+        segment.endDistance < best
+      ) {
+        best = segment.endDistance;
+      }
+    }
+    return best;
+  };
+
+  const nextSegmentAfter = (segments, distance) => {
+    for (const segment of segments) {
+      if (segment.endDistance > distance + 1e-6) return segment;
+    }
+    return null;
+  };
+
   const stop = () => {
     const controls = window.orbitControls;
     if (controls) controls.enabled = controlsEnabledRef.current;
     hideLookAtMarker();
     activeRef.current = null;
     phaseRef.current = 'OUTBOUND';
+    pauseResumePhaseRef.current = 'RETURNING';
     pauseUntilRef.current = 0;
     lastFollowPairRef.current = null;
     useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
@@ -184,9 +269,12 @@ const CameraFollowController = () => {
   };
 
   // React to follow start/stop.
+  const followMode = useCameraFollowStore((s) => s.followMode);
   const activeObjectId = useCameraFollowStore((s) => s.activeObjectId);
+  const activeConnectionId = useCameraFollowStore((s) => s.activeConnectionId);
+  const followConnectionIds = useCameraFollowStore((s) => s.followConnectionIds);
   useEffect(() => {
-    if (!activeObjectId) {
+    if (!followMode) {
       // Follow ended externally - restore controls if we were driving them.
       if (activeRef.current) {
         const controls = window.orbitControls;
@@ -194,6 +282,7 @@ const CameraFollowController = () => {
         hideLookAtMarker();
         activeRef.current = null;
         phaseRef.current = 'OUTBOUND';
+        pauseResumePhaseRef.current = 'RETURNING';
         pauseUntilRef.current = 0;
         lastFollowPairRef.current = null;
         useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
@@ -210,7 +299,10 @@ const CameraFollowController = () => {
       return;
     }
 
-    const paths = buildFollowPaths(activeObjectId);
+    const paths =
+      followMode === 'connections'
+        ? buildFollowPathsForConnections(followConnectionIds, activeConnectionId)
+        : buildFollowPaths(activeObjectId);
     if (!paths.length) {
       useCameraFollowStore.getState().stopFollow();
       return;
@@ -245,23 +337,39 @@ const CameraFollowController = () => {
       seenPathObjectIds.add(key);
       followPathObjectIds.push(key);
     };
-    addPathObjectId(activeObjectId);
+    if (followMode === 'object') addPathObjectId(activeObjectId);
     for (const path of prepared) {
       addPathObjectId(path.meta?.startObjectId);
       addPathObjectId(path.meta?.endObjectId);
+      for (const segment of path.meta?.segments || []) {
+        addPathObjectId(segment.startObjectId);
+        addPathObjectId(segment.endObjectId);
+      }
     }
     useCameraFollowStore.getState().setFollowPathObjectIds(followPathObjectIds);
 
-    activeRef.current = { objectId: activeObjectId, paths: prepared };
+    activeRef.current = {
+      mode: followMode,
+      objectId: followMode === 'object' ? String(activeObjectId) : null,
+      connectionId:
+        followMode === 'connections' && activeConnectionId != null
+          ? String(activeConnectionId)
+          : null,
+      paths: prepared,
+    };
     pathIndexRef.current = 0;
     distanceRef.current = 0;
     phaseRef.current = 'OUTBOUND';
+    pauseResumePhaseRef.current = 'RETURNING';
     pauseUntilRef.current = 0;
     lastFollowPairRef.current = null;
     hideLookAtMarker();
-    if (prepared[0]?.meta) syncFollowCodeWindows(prepared[0].meta);
+    if (prepared[0]?.meta) {
+      const firstMeta = prepared[0].meta;
+      syncFollowCodeWindows(firstMeta, firstMeta.segments?.[0] || firstMeta);
+    }
     invalidate();
-  }, [activeObjectId, gl, invalidate]);
+  }, [followMode, activeObjectId, activeConnectionId, followConnectionIds, gl, invalidate]);
 
   // Cancel on user interaction while following.
   useEffect(() => {
@@ -292,6 +400,7 @@ const CameraFollowController = () => {
         hideLookAtMarker();
         activeRef.current = null;
         phaseRef.current = 'OUTBOUND';
+        pauseResumePhaseRef.current = 'RETURNING';
         pauseUntilRef.current = 0;
         lastFollowPairRef.current = null;
         useCodeStore.getState().endFollowSession({ closeFollowOpened: true });
@@ -316,42 +425,17 @@ const CameraFollowController = () => {
 
     const now = performance.now();
 
-    // Handle pause at turnaround (far endpoint)
     if (phaseRef.current === 'PAUSED') {
       if (now >= pauseUntilRef.current) {
-        phaseRef.current = 'RETURNING';
+        phaseRef.current = pauseResumePhaseRef.current;
       } else {
         invalidate();
         return;
       }
     }
 
-    const dt = Math.min(delta, 0.1); // clamp after stalls / tab switches
-    if (phaseRef.current !== 'PAUSED') {
-      // Per-connection speed multiplier (short=1x, medium=1.5x, long=2x),
-      // classified in buildFollowPaths from how the endpoint objects relate.
-      const speedMult = active.paths[pathIndexRef.current]?.meta?.speedMultiplier ?? 1;
-      distanceRef.current += SPEED * speedMult * dt;
-    }
-
-    let resampled = active.paths[pathIndexRef.current];
-    if (!resampled) {
-      stop();
-      return;
-    }
-
-    const meta = resampled.meta;
-    const turnaround = typeof meta?.turnaroundDistance === 'number' ? meta.turnaroundDistance : Infinity;
-
-    // Check for turnaround/pause
-    if (phaseRef.current === 'OUTBOUND' && distanceRef.current >= turnaround) {
-      // Clamp to turnaround point for pause
-      distanceRef.current = Math.min(distanceRef.current, turnaround);
-      phaseRef.current = 'PAUSED';
-      pauseUntilRef.current = now + PAUSE_DURATION_MS;
-      // Ensure windows are synced for this connection at pause point
-      if (meta) syncFollowCodeWindows(meta);
-      const point = samplePathAt(resampled, distanceRef.current, lookAtRef.current);
+    const poseTo = (resampled, distance) => {
+      const point = samplePathAt(resampled, distance, lookAtRef.current);
       controls.target.set(point[0], point[1], point[2]);
       camera.position.set(
         point[0] + offsetRef.current.x,
@@ -360,22 +444,104 @@ const CameraFollowController = () => {
       );
       camera.lookAt(controls.target);
       controls.update();
-      const markerPause = ensureLookAtMarker();
-      markerPause.position.set(point[0], point[1], point[2]);
-      markerPause.visible = true;
+      const marker = ensureLookAtMarker();
+      marker.position.set(point[0], point[1], point[2]);
+      marker.visible = true;
       invalidate();
+    };
+
+    let resampled = active.paths[pathIndexRef.current];
+    if (!resampled) {
+      stop();
       return;
     }
 
-    // Check if current path completed
+    let meta = resampled.meta;
+    let turnaround =
+      typeof meta?.turnaroundDistance === 'number'
+        ? meta.turnaroundDistance
+        : resampled.total / 2;
+    let segments = getPathSegments(meta, turnaround);
+
+    // Advance at the speed of the segment currently under the camera. On the
+    // return leg the outbound distance is mirrored, so each connection keeps
+    // its own speed in both directions.
+    const dt = Math.min(delta, 0.1); // clamp after stalls / tab switches
+    if (phaseRef.current !== 'PAUSED') {
+      const outbound = mirrorDistance(
+        distanceRef.current,
+        turnaround,
+        resampled.total
+      );
+      const segment = segmentAtOutbound(segments, outbound);
+      const speedMult = segment?.speedMultiplier ?? meta?.speedMultiplier ?? 1;
+      distanceRef.current += SPEED * speedMult * dt;
+    }
+
+    if (phaseRef.current === 'OUTBOUND') {
+      // Pause at every intermediate node before the turnaround.
+      const nodeDistance = nextNodeDistance(
+        segments,
+        distanceRef.current,
+        turnaround
+      );
+      if (distanceRef.current >= nodeDistance) {
+        distanceRef.current = nodeDistance;
+        phaseRef.current = 'PAUSED';
+        pauseResumePhaseRef.current = 'OUTBOUND';
+        pauseUntilRef.current = now + PAUSE_DURATION_MS;
+        if (meta) {
+          // Show the node we just reached and the node ahead.
+          const upcoming =
+            nextSegmentAfter(segments, nodeDistance) ||
+            segmentAtOutbound(segments, nodeDistance);
+          syncFollowCodeWindows(meta, upcoming);
+        }
+        poseTo(resampled, distanceRef.current);
+        return;
+      }
+
+      if (distanceRef.current >= turnaround) {
+        // Clamp to the turnaround point for the far-end pause.
+        distanceRef.current = Math.min(distanceRef.current, turnaround);
+        phaseRef.current = 'PAUSED';
+        pauseResumePhaseRef.current = 'RETURNING';
+        pauseUntilRef.current = now + PAUSE_DURATION_MS;
+        if (meta) {
+          const lastSegment = segments[segments.length - 1];
+          // Connections mode sits on the turnaround node, so show it as the
+          // active window heading back to the previous node.
+          syncFollowCodeWindows(
+            meta,
+            active.mode === 'connections'
+              ? {
+                  ...lastSegment,
+                  startObjectId: lastSegment.endObjectId,
+                  endObjectId: lastSegment.startObjectId,
+                }
+              : lastSegment
+          );
+        }
+        poseTo(resampled, distanceRef.current);
+        return;
+      }
+    }
+
+    // Path complete → advance to the next path.
     while (resampled && distanceRef.current >= resampled.total) {
       distanceRef.current -= resampled.total;
       pathIndexRef.current += 1;
       phaseRef.current = 'OUTBOUND';
+      pauseResumePhaseRef.current = 'RETURNING';
       resampled = active.paths[pathIndexRef.current];
-      if (resampled?.meta) {
-        syncFollowCodeWindows(resampled.meta);
-      }
+      if (!resampled) break;
+      meta = resampled.meta;
+      turnaround =
+        typeof meta?.turnaroundDistance === 'number'
+          ? meta.turnaroundDistance
+          : resampled.total / 2;
+      segments = getPathSegments(meta, turnaround);
+      if (meta) syncFollowCodeWindows(meta, segments[0]);
     }
 
     if (!resampled) {
@@ -384,23 +550,7 @@ const CameraFollowController = () => {
       return;
     }
 
-    const point = samplePathAt(resampled, distanceRef.current, lookAtRef.current);
-
-    // Rig translation: target + camera move by the same fixed offset.
-    controls.target.set(point[0], point[1], point[2]);
-    camera.position.set(
-      point[0] + offsetRef.current.x,
-      point[1] + offsetRef.current.y,
-      point[2] + offsetRef.current.z
-    );
-    camera.lookAt(controls.target);
-    controls.update();
-    const marker = ensureLookAtMarker();
-    marker.position.set(point[0], point[1], point[2]);
-    marker.visible = true;
-
-    // Keep demand-driven frameloops alive while following.
-    invalidate();
+    poseTo(resampled, distanceRef.current);
   });
 
   return null;

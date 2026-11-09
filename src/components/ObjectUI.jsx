@@ -3,7 +3,7 @@ import { Html } from '@react-three/drei';
 import ColorPicker from './ColorPicker';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useColorPickerStore } from '../stores';
+import { useColorPickerStore, useConnectionStore } from '../stores';
 import useCameraFollowStore from '../stores/cameraFollowStore';
 import { confirmDialog } from '../stores/dialogStore';
 
@@ -46,6 +46,25 @@ const ObjectUI = React.memo(
         state.isFollowing && state.activeObjectId === String(objectId)
     );
     const toggleFollow = useCameraFollowStore((state) => state.toggleFollow);
+    const followMode = useCameraFollowStore((state) => state.followMode);
+    const activeConnectionId = useCameraFollowStore(
+      (state) => state.activeConnectionId
+    );
+    const toggleFollowConnections = useCameraFollowStore(
+      (state) => state.toggleFollowConnections
+    );
+
+    // When a connection's highlighted data path is selected, the follow tool
+    // traverses that path instead of this object's incident lines.
+    const selectedConnection = useConnectionStore(
+      (state) => state.selectedConnection
+    );
+    const pathConnectionId =
+      selectedConnection != null ? String(selectedConnection) : null;
+    const isFollowingThisPath =
+      followMode === 'connections' &&
+      pathConnectionId != null &&
+      activeConnectionId === pathConnectionId;
 
     // Initialize position immediately on mount to avoid 1-frame flash at origin
     const { camera } = useThree();
@@ -152,8 +171,18 @@ const ObjectUI = React.memo(
       {
         name: 'follow',
         icon: '🎥',
-        active: isFollowingThis,
-        onClick: () => toggleFollow(objectId),
+        active: pathConnectionId ? isFollowingThisPath : isFollowingThis,
+        onClick: () => {
+          if (!pathConnectionId) {
+            toggleFollow(objectId);
+            return;
+          }
+          const connectionState = useConnectionStore.getState();
+          const ids = connectionState.highlightedFlowPathIds?.size
+            ? Array.from(connectionState.highlightedFlowPathIds)
+            : [pathConnectionId];
+          toggleFollowConnections(pathConnectionId, ids);
+        },
       },
       {
         name: 'delete',

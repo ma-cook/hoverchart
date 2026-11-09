@@ -178,9 +178,72 @@ function resolveEndpoint(endpoint, objectsById, allObjects) {
   return obj?.position || null;
 }
 
+const _normalizeEndpointId = (endpoint) =>
+  (endpoint?.objectId ?? endpoint?.cube?.id ?? endpoint?.id)?.toString() ?? null;
+
+const _polylineLength = (points) => {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    total += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }
+  return total;
+};
+
+/**
+ * Build the outbound polyline (plus its speed classification) for one
+ * connection, or null when the connection cannot be resolved.
+ */
+function _buildConnectionLeg(conn, objectsById, allObjects, containers) {
+  if (!conn?.id) return null;
+  const startObjId = _normalizeEndpointId(conn.start);
+  const endObjId = _normalizeEndpointId(conn.end);
+  if (!startObjId || !endObjId) return null;
+
+  const startPos = resolveEndpoint(conn.start, objectsById, allObjects);
+  const endPos = resolveEndpoint(conn.end, objectsById, allObjects);
+  if (!startPos || !endPos) return null;
+
+  const { pathPoints } = computeConnectionPath(
+    startPos,
+    endPos,
+    allObjects,
+    startObjId,
+    endObjId
+  );
+  const points =
+    Array.isArray(pathPoints) && pathPoints.length >= 2
+      ? pathPoints
+      : [startPos, endPos];
+
+  return {
+    connectionId: String(conn.id),
+    startObjectId: startObjId,
+    endObjectId: endObjId,
+    points,
+    speedMultiplier: classifyFollowSpeed(
+      conn,
+      startObjId,
+      endObjId,
+      objectsById,
+      containers
+    ),
+  };
+}
+
+const _singleSegment = (leg, endDistance) => ({
+  connectionId: leg.connectionId,
+  startObjectId: leg.startObjectId,
+  endObjectId: leg.endObjectId,
+  startDistance: 0,
+  endDistance,
+  speedMultiplier: leg.speedMultiplier,
+});
+
 /**
  * Build round-trip follow paths for every connection incident to objectId.
- * @returns {Array<{ connectionId: string, startObjectId: string, endObjectId: string, points: number[][], turnaroundDistance: number, speedMultiplier: number }>}
+ * @returns {Array<{ connectionId: string, startObjectId: string, endObjectId: string, points: number[][], turnaroundDistance: number, speedMultiplier: number, segments: Array }>}
  */
 export function buildFollowPaths(objectId) {
   const idStr = objectId != null ? String(objectId) : null;
@@ -198,52 +261,207 @@ export function buildFollowPaths(objectId) {
 
   const paths = [];
   for (const conn of connections) {
-    if (!conn?.id) continue;
-    const startObjId = (
-      conn.start?.objectId ?? conn.start?.cube?.id ?? conn.start?.id
-    )?.toString();
-    const endObjId = (
-      conn.end?.objectId ?? conn.end?.cube?.id ?? conn.end?.id
-    )?.toString();
+    const leg = _buildConnectionLeg(conn, objectsById, allObjects, containers);
+    if (!leg) continue;
 
-    if (!startObjId || !endObjId) continue;
-
-    const startPos = resolveEndpoint(conn.start, objectsById, allObjects);
-    const endPos = resolveEndpoint(conn.end, objectsById, allObjects);
-    if (!startPos || !endPos) continue;
-
-    const { pathPoints } = computeConnectionPath(
-      startPos,
-      endPos,
-      allObjects,
-      startObjId,
-      endObjId
-    );
-    const out = Array.isArray(pathPoints) && pathPoints.length >= 2
-      ? pathPoints
-      : [startPos, endPos];
-
-    // Compute turnaround distance (arc length of outbound leg)
-    let turnaroundDistance = 0;
-    for (let i = 1; i < out.length; i++) {
-      const a = out[i - 1];
-      const b = out[i];
-      const dx = b[0] - a[0];
-      const dy = b[1] - a[1];
-      const dz = b[2] - a[2];
-      turnaroundDistance += Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }
-
-    // Round trip: out along the line, then back along it.
-    const roundTrip = out.concat(out.slice(0, -1).reverse());
+    const turnaroundDistance = _polylineLength(leg.points);
+    const roundTrip = leg.points.concat(leg.points.slice(0, -1).reverse());
     paths.push({
-      connectionId: String(conn.id),
-      startObjectId: startObjId,
-      endObjectId: endObjId,
+      connectionId: leg.connectionId,
+      startObjectId: leg.startObjectId,
+      endObjectId: leg.endObjectId,
       points: roundTrip,
       turnaroundDistance,
-      speedMultiplier: classifyFollowSpeed(conn, startObjId, endObjId, objectsById, containers),
+      speedMultiplier: leg.speedMultiplier,
+      segments: [_singleSegment(leg, turnaroundDistance)],
     });
+  }
+  return paths;
+}
+
+/**
+ * Order the highlighted connections into directional runs.
+ *
+ * Starts at the highlighted chain containing `startConnectionId` (walking
+ * upstream through unvisited highlighted edges to its head), then follows
+ * outgoing edges one run at a time. At a fork the first outgoing edge continues
+ * the current run and the other branches are picked up as separate runs from
+ * the fork node. Cycles are traversed once (visited-edge guard); disconnected
+ * leftovers become their own runs.
+ *
+ * @returns {Array<Array<Object>>} runs of connection objects, each in flow order.
+ */
+function _orderConnectionRuns(connectionIds, startConnectionId) {
+  const connectionStore = useConnectionStore.getState();
+  const allConnections = connectionStore.connections || [];
+  const byId = new Map();
+  for (const conn of allConnections) {
+    if (conn?.id != null) byId.set(String(conn.id), conn);
+  }
+
+  const edges = [];
+  const seen = new Set();
+  for (const rawId of connectionIds) {
+    const id = String(rawId);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const conn = byId.get(id);
+    if (!conn) continue;
+    const startId = _normalizeEndpointId(conn.start);
+    const endId = _normalizeEndpointId(conn.end);
+    if (!startId || !endId) continue;
+    edges.push({ conn, id, startId, endId });
+  }
+  if (!edges.length) return [];
+
+  const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+  const outgoing = new Map();
+  const incoming = new Map();
+  for (const edge of edges) {
+    if (!outgoing.has(edge.startId)) outgoing.set(edge.startId, []);
+    outgoing.get(edge.startId).push(edge);
+    if (!incoming.has(edge.endId)) incoming.set(edge.endId, []);
+    incoming.get(edge.endId).push(edge);
+  }
+
+  const visitedEdges = new Set();
+
+  const findHead = (edge) => {
+    let head = edge.startId;
+    const walkedNodes = new Set([head]);
+    for (;;) {
+      const upstream = (incoming.get(head) || []).find(
+        (candidate) => !visitedEdges.has(candidate.id)
+      );
+      if (!upstream) break;
+      if (walkedNodes.has(upstream.startId)) break; // cycle guard
+      walkedNodes.add(upstream.startId);
+      head = upstream.startId;
+    }
+    return head;
+  };
+
+  const buildRun = (headNode) => {
+    const run = [];
+    let node = headNode;
+    for (;;) {
+      const candidates = (outgoing.get(node) || []).filter(
+        (edge) => !visitedEdges.has(edge.id)
+      );
+      if (!candidates.length) break;
+      const edge = candidates[0];
+      visitedEdges.add(edge.id);
+      run.push(edge.conn);
+      node = edge.endId;
+    }
+    return run;
+  };
+
+  const runs = [];
+  const startId =
+    startConnectionId != null ? String(startConnectionId) : null;
+  const seed = (startId && edgeById.get(startId)) || edges[0];
+
+  const seedRun = buildRun(findHead(seed));
+  if (seedRun.length) runs.push(seedRun);
+
+  for (const edge of edges) {
+    if (visitedEdges.has(edge.id)) continue;
+    const run = buildRun(findHead(edge));
+    if (run.length) runs.push(run);
+  }
+
+  return runs;
+}
+
+/**
+ * Concatenate one directional run into a single round-trip follow path.
+ * Segment boundaries carry their own speed multiplier and arc-length offsets
+ * so the controller can pause at every node and pick per-segment speeds.
+ */
+function _buildRunFollowPath(run, objectsById, allObjects, containers) {
+  const points = [];
+  const segments = [];
+  let cumulative = 0;
+
+  for (const conn of run) {
+    const leg = _buildConnectionLeg(conn, objectsById, allObjects, containers);
+    if (!leg) continue;
+
+    let startIndex = 0;
+    if (points.length) {
+      const prev = points[points.length - 1];
+      const first = leg.points[0];
+      const gap = Math.hypot(
+        first[0] - prev[0],
+        first[1] - prev[1],
+        first[2] - prev[2]
+      );
+      if (gap > 1e-6) {
+        points.push([first[0], first[1], first[2]]);
+        cumulative += gap;
+      }
+      // The leg's first point coincides with the connector target (or the
+      // previous point when the gap is negligible).
+      startIndex = 1;
+    }
+
+    const startDistance = cumulative;
+    for (let i = startIndex; i < leg.points.length; i++) {
+      if (i > 0) {
+        const a = leg.points[i - 1];
+        const b = leg.points[i];
+        cumulative += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      }
+      points.push([leg.points[i][0], leg.points[i][1], leg.points[i][2]]);
+    }
+
+    segments.push({
+      connectionId: leg.connectionId,
+      startObjectId: leg.startObjectId,
+      endObjectId: leg.endObjectId,
+      startDistance,
+      endDistance: cumulative,
+      speedMultiplier: leg.speedMultiplier,
+    });
+  }
+
+  if (!segments.length || points.length < 2) return null;
+
+  const turnaroundDistance = cumulative;
+  const roundTrip = points.concat(points.slice(0, -1).reverse());
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+
+  return {
+    connectionId: first.connectionId,
+    startObjectId: first.startObjectId,
+    endObjectId: last.endObjectId,
+    points: roundTrip,
+    turnaroundDistance,
+    speedMultiplier: first.speedMultiplier,
+    segments,
+  };
+}
+
+/**
+ * Build follow paths for the highlighted data path (a set of connection ids).
+ * Only the listed connections are traversed; they are ordered into directional
+ * runs starting from `startConnectionId`'s chain.
+ */
+export function buildFollowPathsForConnections(connectionIds, startConnectionId) {
+  if (!Array.isArray(connectionIds) || !connectionIds.length) return [];
+
+  const objects = useObjectsStore.getState().objects || [];
+  const objectsById = _objectsById(objects);
+  const allObjects = _pathfindingObjects(objects);
+  const containers = _groupContainers(objects);
+
+  const runs = _orderConnectionRuns(connectionIds, startConnectionId);
+  const paths = [];
+  for (const run of runs) {
+    const path = _buildRunFollowPath(run, objectsById, allObjects, containers);
+    if (path) paths.push(path);
   }
   return paths;
 }
