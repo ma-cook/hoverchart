@@ -6,11 +6,12 @@ const FONT_FAMILY =
 
 const selectStyle = {
   padding: '7px 10px',
-  border: '1px solid #ddd',
+  border: '1px solid #3a3a40',
   borderRadius: '4px',
   fontSize: '13px',
   fontFamily: FONT_FAMILY,
-  background: '#fff',
+  background: '#141417',
+  color: '#e6e6e6',
   cursor: 'pointer',
   minWidth: '240px',
 };
@@ -19,21 +20,27 @@ const tableStyle = { width: '100%', borderCollapse: 'collapse', fontSize: '12px'
 const thStyle = {
   textAlign: 'left',
   padding: '7px 8px',
-  borderBottom: '1px solid #ddd',
-  color: '#777',
+  borderBottom: '1px solid #3a3a40',
+  color: '#999999',
   fontWeight: '600',
   whiteSpace: 'nowrap',
 };
-const tdStyle = { padding: '7px 8px', borderBottom: '1px solid #f0f0f0', verticalAlign: 'middle' };
-const emptyStyle = { textAlign: 'center', color: '#999', padding: '28px 0', fontSize: '13px' };
+const tdStyle = {
+  padding: '7px 8px',
+  borderBottom: '1px solid #2a2a30',
+  verticalAlign: 'middle',
+  color: '#e6e6e6',
+};
+const emptyStyle = { textAlign: 'center', color: '#888888', padding: '28px 0', fontSize: '13px' };
 
 const memberRoleSelect = {
   padding: '4px 6px',
-  border: '1px solid #ddd',
+  border: '1px solid #3a3a40',
   borderRadius: '4px',
   fontSize: '12px',
   fontFamily: FONT_FAMILY,
-  background: '#fff',
+  background: '#141417',
+  color: '#e6e6e6',
   cursor: 'pointer',
 };
 
@@ -135,10 +142,10 @@ export const AdminOrgUsersTable = React.memo(({ orgs, orgId, onOrgChange }) => {
             borderRadius: '4px',
             fontSize: '12px',
             marginBottom: '10px',
-            background: '#fff7ea',
+            background: 'rgba(204, 133, 0, 0.1)',
             border: '1px solid #e0a33a',
             borderLeft: '3px solid #cc8500',
-            color: '#8a5a00',
+            color: '#ffb733',
           }}
         >
           {error}
@@ -180,7 +187,7 @@ export const AdminOrgUsersTable = React.memo(({ orgs, orgId, onOrgChange }) => {
                     {member.is_owner ? (
                       // The owner's role is fixed and can't be changed through
                       // the API, so render it as text rather than a dead select.
-                      <span style={{ fontSize: '11px', color: '#553c9a', fontWeight: '600' }}>
+                      <span style={{ fontSize: '11px', color: '#ffb733', fontWeight: '600' }}>
                         admin (owner)
                       </span>
                     ) : (
@@ -205,7 +212,7 @@ export const AdminOrgUsersTable = React.memo(({ orgs, orgId, onOrgChange }) => {
       )}
 
       {activeOrg && (
-        <div style={{ marginTop: '12px', fontSize: '11px', color: '#aaa' }}>
+        <div style={{ marginTop: '12px', fontSize: '11px', color: '#888888' }}>
           {loading
             ? 'Loading members…'
             : `${members.length} member${members.length === 1 ? '' : 's'} in ${activeOrg.name}.`}

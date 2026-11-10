@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { getUserOrganizations } from '../../services/organizationService';
 import { AdminUsersTable } from './AdminUsersTable';
 import { AdminOrgUsersTable } from './AdminOrgUsersTable';
+import { AdminFeedbackTable } from './AdminFeedbackTable';
 
 const FONT_FAMILY =
   "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif";
@@ -25,6 +26,13 @@ const ADMIN_SECTIONS = [
     subtitle: 'Members of the organizations you administer.',
     requires: 'isOrgAdmin',
   },
+  {
+    id: 'feedback',
+    label: 'Feedback',
+    title: 'Feedback & Issues',
+    subtitle: 'Tickets submitted by users. Open, update status and add notes.',
+    requires: 'isAdmin',
+  },
 ];
 
 const overlayStyle = {
@@ -46,17 +54,19 @@ const panelStyle = {
   flexDirection: 'column',
   width: 'min(1040px, 94vw)',
   height: 'min(760px, 90vh)',
-  background: '#fff',
+  background: '#1e1e22',
+  color: '#e6e6e6',
+  border: '1px solid #3a3a40',
   borderRadius: '10px',
-  boxShadow: '0 12px 48px rgba(0, 0, 0, 0.45)',
+  boxShadow: '0 12px 48px rgba(0, 0, 0, 0.6)',
   overflow: 'hidden',
 };
 
 const navRailStyle = {
   width: '180px',
   flexShrink: 0,
-  borderRight: '1px solid #e5e5e5',
-  background: '#fafafa',
+  borderRight: '1px solid #3a3a40',
+  background: '#18181c',
   padding: '12px 0',
 };
 
@@ -67,6 +77,7 @@ const navItemBase = {
   padding: '9px 16px',
   border: 'none',
   background: 'transparent',
+  color: '#c8c8c8',
   cursor: 'pointer',
   fontSize: '13px',
   fontFamily: FONT_FAMILY,
@@ -75,8 +86,9 @@ const navItemBase = {
 
 const navItemActive = {
   ...navItemBase,
-  background: '#f0f0f0',
-  borderLeft: '2px solid #111',
+  background: '#2a2a30',
+  borderLeft: '2px solid #cc8500',
+  color: '#ffffff',
   fontWeight: '600',
 };
 
@@ -172,14 +184,15 @@ export const AdminDashboard = React.memo(
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '14px 18px',
-              borderBottom: '1px solid #e5e5e5',
+              borderBottom: '1px solid #3a3a40',
+              background: '#18181c',
             }}
           >
             <div>
-              <div style={{ fontSize: '16px', fontWeight: '600', color: '#111' }}>
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#ffffff' }}>
                 Admin Dashboard
               </div>
-              <div style={{ fontSize: '12px', color: '#777', marginTop: '2px' }}>
+              <div style={{ fontSize: '12px', color: '#999999', marginTop: '2px' }}>
                 {scopeLabel(isAdmin, isOrgAdmin)}
               </div>
             </div>
@@ -193,7 +206,7 @@ export const AdminDashboard = React.memo(
                 fontSize: '20px',
                 lineHeight: 1,
                 cursor: 'pointer',
-                color: '#666',
+                color: '#999999',
                 padding: '4px 8px',
                 borderRadius: '4px',
                 fontFamily: FONT_FAMILY,
@@ -220,11 +233,11 @@ export const AdminDashboard = React.memo(
               style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
             >
               <div style={{ padding: '16px 20px 0' }}>
-                <div style={{ fontSize: '15px', fontWeight: '600', color: '#111' }}>
+                <div style={{ fontSize: '15px', fontWeight: '600', color: '#ffffff' }}>
                   {section?.title}
                 </div>
                 {section?.subtitle && (
-                  <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>
+                  <div style={{ fontSize: '12px', color: '#999999', marginTop: '2px' }}>
                     {section.subtitle}
                   </div>
                 )}
@@ -234,7 +247,7 @@ export const AdminDashboard = React.memo(
                 style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 20px 20px' }}
               >
                 {sections.length === 0 && (
-                  <div style={{ color: '#999', fontSize: '13px', padding: '24px 0' }}>
+                  <div style={{ color: '#999999', fontSize: '13px', padding: '24px 0' }}>
                     You don&apos;t administer any organization.
                   </div>
                 )}
@@ -246,6 +259,8 @@ export const AdminDashboard = React.memo(
                 {activeSection === 'org-users' && isOrgAdmin && (
                   <AdminOrgUsersTable orgs={orgs} orgId={orgId} onOrgChange={setOrgId} />
                 )}
+
+                {activeSection === 'feedback' && isAdmin && <AdminFeedbackTable />}
               </div>
             </div>
           </div>

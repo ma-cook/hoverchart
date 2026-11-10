@@ -23,21 +23,24 @@ const toolbarStyle = {
 
 const inputStyle = {
   padding: '7px 10px',
-  border: '1px solid #ddd',
+  border: '1px solid #3a3a40',
   borderRadius: '4px',
   fontSize: '13px',
   fontFamily: FONT_FAMILY,
   minWidth: '240px',
   outline: 'none',
+  background: '#141417',
+  color: '#e6e6e6',
 };
 
 const selectStyle = {
   padding: '5px 6px',
-  border: '1px solid #ddd',
+  border: '1px solid #3a3a40',
   borderRadius: '4px',
   fontSize: '12px',
   fontFamily: FONT_FAMILY,
-  background: '#fff',
+  background: '#141417',
+  color: '#e6e6e6',
   cursor: 'pointer',
 };
 
@@ -47,15 +50,15 @@ const smallBtn = {
   cursor: 'pointer',
   fontSize: '12px',
   fontFamily: FONT_FAMILY,
-  border: '1px solid #ddd',
-  background: '#fff',
-  color: '#333',
+  border: '1px solid #3a3a40',
+  background: '#2a2a30',
+  color: '#e6e6e6',
 };
 
 const dangerBtn = {
   ...smallBtn,
-  color: '#8a5a00',
-  background: '#fff7ea',
+  color: '#ffb733',
+  background: 'rgba(204, 133, 0, 0.12)',
   border: '1px solid #cc8500',
   fontWeight: '600',
 };
@@ -69,21 +72,22 @@ const tableStyle = {
 const thStyle = {
   textAlign: 'left',
   padding: '7px 8px',
-  borderBottom: '1px solid #ddd',
-  color: '#777',
+  borderBottom: '1px solid #3a3a40',
+  color: '#999999',
   fontWeight: '600',
   whiteSpace: 'nowrap',
 };
 
 const tdStyle = {
   padding: '7px 8px',
-  borderBottom: '1px solid #f0f0f0',
+  borderBottom: '1px solid #2a2a30',
   verticalAlign: 'middle',
+  color: '#e6e6e6',
 };
 
 const emptyStyle = {
   textAlign: 'center',
-  color: '#999',
+  color: '#888888',
   padding: '28px 0',
   fontSize: '13px',
 };
@@ -265,7 +269,7 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
             Clear
           </button>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#888' }}>
+        <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#888888' }}>
           {loading ? 'Loading…' : `${total} user${total === 1 ? '' : 's'}`}
         </span>
       </div>
@@ -274,10 +278,10 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
         <div
           style={{
             ...bannerBase,
-            background: '#fff7ea',
+            background: 'rgba(204, 133, 0, 0.1)',
             border: '1px solid #e0a33a',
             borderLeft: '3px solid #cc8500',
-            color: '#8a5a00',
+            color: '#ffb733',
           }}
         >
           {error}
@@ -287,10 +291,10 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
         <div
           style={{
             ...bannerBase,
-            background: '#f6f6f7',
-            border: '1px solid #d9d9dd',
+            background: '#232328',
+            border: '1px solid #3a3a40',
             borderLeft: '3px solid #cc8500',
-            color: '#3a3a40',
+            color: '#e6e6e6',
           }}
         >
           {notice}
@@ -331,7 +335,7 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
                       {user.display_name || '—'}
                     </span>
                     {isSelf && (
-                      <span style={{ fontSize: '10px', color: '#888' }}>(you)</span>
+                      <span style={{ fontSize: '10px', color: '#888888' }}>(you)</span>
                     )}
                   </span>
                 </td>
@@ -366,7 +370,7 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
                 <td style={tdStyle}>{formatDate(user.created_at)}</td>
                 <td style={tdStyle}>
                   {isSelf ? (
-                    <span style={{ fontSize: '11px', color: '#aaa' }}>—</span>
+                    <span style={{ fontSize: '11px', color: '#888888' }}>—</span>
                   ) : (
                     <button
                       onClick={() => handleDelete(user)}
@@ -391,7 +395,7 @@ export const AdminUsersTable = React.memo(({ currentUserId }) => {
           justifyContent: 'space-between',
           marginTop: '12px',
           fontSize: '12px',
-          color: '#888',
+          color: '#888888',
         }}
       >
         <button

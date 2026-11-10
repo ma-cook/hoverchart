@@ -18,6 +18,7 @@ import TopBar from '../components/TopBar';
 import { LandingPage } from './components/LandingPage';
 import { OrganizationManager } from './components/OrganizationManager';
 import { AdminDashboard } from './components/AdminDashboard';
+import { FeedbackPanel } from './components/FeedbackPanel';
 import { UpgradePrompt, TIER_LIMITS } from './components/UpgradePrompt';
 import {
   getUserOrganizations,
@@ -74,6 +75,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [activeOrgMembers, setActiveOrgMembers] = useState([]);
   const [showOrgManager, setShowOrgManager] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pendingInvites, setPendingInvites] = useState([]);
 
@@ -477,6 +479,12 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         isOrgAdmin={isOrgAdmin}
         currentUserId={user?.uid || user?.sub || null}
       />
+      <FeedbackPanel
+        show={showFeedback}
+        onClose={() => setShowFeedback(false)}
+        currentUser={user}
+        isAdmin={isAppAdmin}
+      />
 
       <TopBar
         view="landing"
@@ -558,12 +566,14 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
               pointerEvents: 'auto',
             }}
           >
-            <button
-              style={footerBtnStyle}
-              onClick={() => window.open('https://volscape.com', '_blank')}
-            >
-              Feedback
-            </button>
+            {!user.isGuest && (
+              <button
+                style={footerBtnStyle}
+                onClick={() => setShowFeedback(true)}
+              >
+                Feedback
+              </button>
+            )}
             <button style={footerBtnStyle}>Docs</button>
             <button style={footerBtnStyle}>Shortcuts</button>
             <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, userSelect: 'none' }}>

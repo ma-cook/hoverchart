@@ -71,6 +71,7 @@ import { router as plansRouter } from './api/plans.js';
 import { router as githubRouter } from './api/github.js';
 import { router as scanJobsRouter } from './api/scanJobs.js';
 import { router as adminRouter } from './api/admin.js';
+import { router as feedbackRouter } from './api/feedback.js';
 
 app.use('/api/users', authenticate, usersRouter);
 app.use('/api/spaces', authenticate, spacesRouter);
@@ -84,6 +85,7 @@ app.use('/api/updates', authenticate, updatesRouter);
 app.use('/api/plans', authenticate, plansRouter);
 app.use('/api/github', authenticate, githubRouter);
 app.use('/api/scan-jobs', authenticate, scanJobsRouter);
+app.use('/api/feedback', authenticate, feedbackRouter);
 
 // Platform-wide admin surface. Separate from organization admin
 // (`org_members.role`), which is enforced per-organization inside
