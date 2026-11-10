@@ -10,7 +10,19 @@ router.get('/:uid/spaces/:spaceId', async (req, res) => {
   const { uid, spaceId } = req.params;
   try {
     const result = await pool.query(
-      `SELECT * FROM spaces WHERE id = $1 AND (owner_id = $2 OR shared_with @> $3::jsonb)`,
+      `SELECT s.* FROM spaces s
+       WHERE s.id = $1
+         AND (
+           s.owner_id = $2
+           OR s.shared_with @> $3::jsonb
+           OR EXISTS (
+             SELECT 1
+             FROM organizations o
+             LEFT JOIN org_members m ON m.org_id = o.id AND m.user_id = $3
+             WHERE (o.owner_id = $3 OR m.user_id = $3)
+               AND s.shared_with_orgs ? o.id::text
+           )
+         )`,
       [spaceId, uid, JSON.stringify([userId])]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Space not found' });
@@ -27,8 +39,19 @@ router.get('/:uid/shared-spaces/:spaceId', async (req, res) => {
   const { spaceId } = req.params;
   try {
     const result = await pool.query(
-      `SELECT * FROM spaces WHERE id = $1 AND shared_with @> $2::jsonb`,
-      [spaceId, JSON.stringify([userId])]
+      `SELECT s.* FROM spaces s
+       WHERE s.id = $1
+         AND (
+           s.shared_with @> $2::jsonb
+           OR EXISTS (
+             SELECT 1
+             FROM organizations o
+             LEFT JOIN org_members m ON m.org_id = o.id AND m.user_id = $3
+             WHERE (o.owner_id = $3 OR m.user_id = $3)
+               AND s.shared_with_orgs ? o.id::text
+           )
+         )`,
+      [spaceId, JSON.stringify([userId]), userId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Shared space not found' });
     const space = result.rows[0];

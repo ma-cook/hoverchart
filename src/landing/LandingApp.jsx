@@ -52,7 +52,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   // GET /api/auth/verify. isAdmin = platform-wide (all users);
   // isOrgAdmin = administers at least one org (that org's users only).
   const isAppAdmin = authState.isAdmin === true;
-  const isOrgAdmin = authState.isOrgAdmin === true;
+  const isOrgAdminFromAuth = authState.isOrgAdmin === true;
   const initializeAuth = useAuthStore((s) => s.initializeAuth);
   const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
   const signOut = useAuthStore((s) => s.signOut);
@@ -76,6 +76,10 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pendingInvites, setPendingInvites] = useState([]);
+
+  const isOrgAdmin =
+    isOrgAdminFromAuth ||
+    userOrganizations.some((org) => org.isOwner || org.is_owner || org.role === 'admin');
 
   useEffect(() => {
     initializeAuth();
@@ -101,28 +105,44 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     }
   }, [user]);
 
+  const refreshOrganizations = useCallback(async () => {
+    if (!user) {
+      setUserOrganizations([]);
+      setActiveOrgMembers([]);
+      setPendingInvites([]);
+      return;
+    }
+
+    try {
+      const [orgs, invites] = await Promise.all([
+        getUserOrganizations(),
+        getPendingInvitesForUser(),
+      ]);
+      setUserOrganizations(orgs);
+      setPendingInvites(invites);
+      if (orgs.length > 0) {
+        const members = await getOrganizationMembers(orgs[0].id);
+        setActiveOrgMembers(members);
+      } else {
+        setActiveOrgMembers([]);
+      }
+    } catch (err) {
+      console.error('Failed to load organizations:', err);
+      setUserOrganizations([]);
+      setActiveOrgMembers([]);
+      setPendingInvites([]);
+    }
+  }, [user]);
+
+  const refreshOrgAndSpaces = useCallback(async () => {
+    await Promise.all([refreshOrganizations(), fetchUserSpaces()]);
+  }, [refreshOrganizations, fetchUserSpaces]);
+
   useEffect(() => {
     if (user) {
       setSpacesLoading(true);
       fetchUserSpaces();
-      getUserOrganizations(user.sub)
-        .then((orgs) => {
-          setUserOrganizations(orgs);
-          if (orgs.length > 0) {
-            getOrganizationMembers(orgs[0].id)
-              .then(setActiveOrgMembers)
-              .catch(() => setActiveOrgMembers([]));
-          } else {
-            setActiveOrgMembers([]);
-          }
-        })
-        .catch((err) => {
-          console.error('Failed to load organizations:', err);
-          setUserOrganizations([]);
-        });
-      getPendingInvitesForUser(user.email)
-        .then(setPendingInvites)
-        .catch(() => setPendingInvites([]));
+      refreshOrganizations();
     } else {
       setUserSpaces({ owned: [], shared: [] });
       setSpacesLoading(false);
@@ -131,7 +151,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       setPendingInvites([]);
       setAccountTier('free');
     }
-  }, [user, fetchUserSpaces]);
+  }, [user, fetchUserSpaces, refreshOrganizations]);
 
   const handleLogin = useCallback(async () => {
     const store = useAuthStore.getState();
@@ -189,15 +209,28 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   );
 
   const handleShareSpace = useCallback(
-    async (emailOrEveryone) => {
+    async (share) => {
       if (!selectedSpaceForSharing || !user) return;
       try {
         setIsSharing(true);
         setShareError('');
 
-        const sharedWith = emailOrEveryone === 'everyone'
-          ? { is_public: true }
-          : { shared_with: [emailOrEveryone] };
+        let sharedWith;
+        if (share.type === 'everyone') {
+          sharedWith = { is_public: true };
+        } else if (share.type === 'organization') {
+          const existingOrgs = selectedSpaceForSharing.shared_with_orgs || [];
+          sharedWith = {
+            is_public: false,
+            shared_with_orgs: [...new Set([...existingOrgs, share.orgId])],
+          };
+        } else {
+          const existingUsers = selectedSpaceForSharing.shared_with || [];
+          sharedWith = {
+            is_public: false,
+            shared_with: [...new Set([...existingUsers, ...share.userIds])],
+          };
+        }
 
         await api.patch(`/api/spaces/${selectedSpaceForSharing.id}`, sharedWith);
 
@@ -285,33 +318,34 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
     async (orgId) => {
       if (!user) return;
       try {
-        await acceptInvite(orgId, user.sub, user.email);
-        setPendingInvites((prev) => prev.filter((p) => p.org.id !== orgId));
-        const orgs = await getUserOrganizations(user.sub);
-        setUserOrganizations(orgs);
-        if (orgs.length > 0) {
-          getOrganizationMembers(orgs[0].id)
-            .then(setActiveOrgMembers)
-            .catch(() => setActiveOrgMembers([]));
-        }
+        await acceptInvite(orgId, user.sub);
+        await refreshOrgAndSpaces();
       } catch (err) {
         console.error('Failed to accept invite:', err);
+        notify(err.message || 'Failed to accept invite.', {
+          type: 'error',
+          title: 'Could not accept invite',
+        });
       }
     },
-    [user]
+    [user, refreshOrgAndSpaces]
   );
 
   const handleDeclineInvite = useCallback(
     async (orgId) => {
       if (!user) return;
       try {
-        await declineInvite(orgId, user.email);
-        setPendingInvites((prev) => prev.filter((p) => p.org.id !== orgId));
+        await declineInvite(orgId);
+        await refreshOrgAndSpaces();
       } catch (err) {
         console.error('Failed to decline invite:', err);
+        notify(err.message || 'Failed to decline invite.', {
+          type: 'error',
+          title: 'Could not decline invite',
+        });
       }
     },
-    [user]
+    [user, refreshOrgAndSpaces]
   );
 
   const spaceTableProps = useMemo(
@@ -375,6 +409,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       email: shareEmail,
       isSharing,
       error: shareError,
+      organization: userOrganizations[0] || null,
       organizationMembers: activeOrgMembers,
       currentUserId: user?.sub,
       onChangeEmail: setShareEmail,
@@ -386,7 +421,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
       },
       onShare: handleShareSpace,
     }),
-    [handleShareSpace, isSharing, selectedSpaceForSharing, shareEmail, shareError, showSharePopup, activeOrgMembers, user?.sub]
+    [handleShareSpace, isSharing, selectedSpaceForSharing, shareEmail, shareError, showSharePopup, activeOrgMembers, userOrganizations, user?.sub]
   );
 
   const footerBtnStyle = {
@@ -433,6 +468,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         user={user}
         show={showOrgManager}
         onClose={() => setShowOrgManager(false)}
+        onChanged={refreshOrgAndSpaces}
       />
       <AdminDashboard
         show={showAdminDashboard}
@@ -451,6 +487,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         onOpenOrgManager={() => setShowOrgManager(true)}
         onOpenAdmin={() => setShowAdminDashboard(true)}
         isAdmin={isAppAdmin || isOrgAdmin}
+        organizationName={userOrganizations[0]?.name || null}
         pendingInviteCount={pendingInvites.length}
       />
 

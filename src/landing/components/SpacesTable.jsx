@@ -40,19 +40,6 @@ const LEAVE_BTN_STYLES = {
   color: '#cc8500',
   transition: 'all 0.2s',
 };
-const INVITE_BANNER_BASE = {
-  marginTop: '12px',
-  backgroundColor: 'var(--panel-hover-bg)',
-  border: '1px solid var(--panel-border)',
-  borderRadius: '6px',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  flexWrap: 'wrap',
-  gap: '10px',
-  fontFamily:
-    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif",
-};
 const INVITE_TEXT_STYLES = { fontSize: '14px', color: 'var(--panel-text)', fontWeight: '400' };
 const INVITE_BTN_ROW = { display: 'flex', gap: '8px' };
 const ACCEPT_BTN_STYLES = {
@@ -133,8 +120,13 @@ export const SpacesTable = React.memo(
       }),
       [isSmall]
     );
-    const inviteBannerStyle = useMemo(
-      () => ({ ...INVITE_BANNER_BASE, padding: isSmall ? '12px' : '14px 16px' }),
+    const inviteCellStyle = useMemo(
+      () => ({
+        padding: isSmall ? '10px' : '12px 14px',
+        borderBottom: '1px solid var(--panel-border)',
+        backgroundColor: 'rgba(204, 133, 0, 0.08)',
+        borderLeft: '3px solid #cc8500',
+      }),
       [isSmall]
     );
 
@@ -184,6 +176,51 @@ export const SpacesTable = React.memo(
             </tr>
           </thead>
           <tbody>
+            {Array.isArray(pendingInvites) && pendingInvites.length > 0 && (
+              <>
+                <tr>
+                  <td colSpan="5" style={{ ...tdStyles, ...categoryRowStyles }}>
+                    Invitations
+                  </td>
+                </tr>
+                {pendingInvites.map(({ org }) => (
+                  <tr key={`invite-${org.id}`}>
+                    <td colSpan="5" style={inviteCellStyle}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          flexWrap: 'wrap',
+                          gap: '10px',
+                        }}
+                      >
+                        <span style={INVITE_TEXT_STYLES}>
+                          You&apos;ve been invited to join <strong>{org.name}</strong>
+                        </span>
+                        <div style={INVITE_BTN_ROW}>
+                          <button
+                            onClick={() => onAcceptInvite(org.id)}
+                            className="invite-accept-btn"
+                            style={ACCEPT_BTN_STYLES}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={() => onDeclineInvite(org.id)}
+                            className="invite-decline-btn"
+                            style={ACCEPT_BTN_STYLES}
+                          >
+                            Decline
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </>
+            )}
+
             {/* Owned Spaces */}
             {hasOwnedSpaces && (
               <>
@@ -217,7 +254,8 @@ export const SpacesTable = React.memo(
                           (space.shared_with.includes('everyone') ||
                             space.shared_with === 'everyone'))
                           ? 'Open'
-                          : space.shared_with && space.shared_with.length > 0
+                          : (space.shared_with && space.shared_with.length > 0) ||
+                            (space.shared_with_orgs && space.shared_with_orgs.length > 0)
                           ? 'Shared'
                           : 'Private'}
                         <button
@@ -307,54 +345,25 @@ export const SpacesTable = React.memo(
             )}
 
             {/* No spaces message */}
-            {!hasOwnedSpaces && !hasSharedSpaces && (
-              <tr>
-                <td colSpan="5" style={emptyRowStyle}>
-                  {spacesLoading ? (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-                      <span className="app-loading-spinner app-loading-spinner--sm" />
-                      <span>Loading your spaces…</span>
-                    </div>
-                  ) : (
-                    'No spaces found. Create your first space!'
-                  )}
-                </td>
-              </tr>
-            )}
+            {!hasOwnedSpaces &&
+              !hasSharedSpaces &&
+              !(Array.isArray(pendingInvites) && pendingInvites.length > 0) && (
+                <tr>
+                  <td colSpan="5" style={emptyRowStyle}>
+                    {spacesLoading ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+                        <span className="app-loading-spinner app-loading-spinner--sm" />
+                        <span>Loading your spaces…</span>
+                      </div>
+                    ) : (
+                      'No spaces found. Create your first space!'
+                    )}
+                  </td>
+                </tr>
+              )}
 
           </tbody>
         </table>
-
-        {/* Pending organization invites */}
-        {Array.isArray(pendingInvites) &&
-          pendingInvites.length > 0 &&
-          pendingInvites.map(({ org }) => (
-            <div
-              key={org.id}
-              style={inviteBannerStyle}
-            >
-              <span style={INVITE_TEXT_STYLES}>
-                You&apos;ve been invited to join{' '}
-                <strong>{org.name}</strong>
-              </span>
-              <div style={INVITE_BTN_ROW}>
-                <button
-                  onClick={() => onAcceptInvite(org.id)}
-                  className="invite-accept-btn"
-                  style={ACCEPT_BTN_STYLES}
-                >
-                  Accept
-                </button>
-                <button
-                  onClick={() => onDeclineInvite(org.id)}
-                  className="invite-decline-btn"
-                  style={ACCEPT_BTN_STYLES}
-                >
-                  Decline
-                </button>
-              </div>
-            </div>
-          ))}
       </div>
     );
   }

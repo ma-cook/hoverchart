@@ -79,24 +79,25 @@ const TopBar = ({
   onOpenOrgManager,
   onOpenAdmin,
   isAdmin,
+  organizationName: organizationNameProp,
   pendingInviteCount,
   actions,
   presence,
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
-  const [organizationName, setOrganizationName] = useState(null);
+  const [organizationName, setOrganizationName] = useState(organizationNameProp || null);
   const [pendingCount, setPendingCount] = useState(0);
 
   const hasExplicitPendingCount = typeof pendingInviteCount === 'number';
+  const hasOrganizationNameProp = organizationNameProp !== undefined;
 
   useEffect(() => {
-    if (hasExplicitPendingCount) {
-      setPendingCount(pendingInviteCount);
+    if (hasOrganizationNameProp) {
+      setOrganizationName(organizationNameProp || null);
       return;
     }
     if (!user || user.isGuest) {
-      setPendingCount(0);
       setOrganizationName(null);
       return;
     }
@@ -109,9 +110,24 @@ const TopBar = ({
         if (!cancelled) setOrganizationName(null);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, organizationNameProp, hasOrganizationNameProp]);
+
+  useEffect(() => {
+    if (hasExplicitPendingCount) {
+      setPendingCount(pendingInviteCount);
+      return;
+    }
+    if (!user || user.isGuest) {
+      setPendingCount(0);
+      return;
+    }
+    let cancelled = false;
     (async () => {
       try {
-        const invites = await getPendingInvitesForUser(user.email);
+        const invites = await getPendingInvitesForUser();
         if (!cancelled) setPendingCount(invites?.length || 0);
       } catch {
         if (!cancelled) setPendingCount(0);

@@ -1,9 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import './ShareSpacePopup.css';
 
-const FONT_FAMILY =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif";
-
-// Generate a consistent color from a string (for avatar backgrounds)
 const stringToColor = (str) => {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -33,16 +30,23 @@ export const ShareSpacePopup = React.memo(
     error,
     onCancel,
     onShare,
+    organization,
     organizationMembers,
     currentUserId,
   }) => {
     const [isUnrestricted, setIsUnrestricted] = useState(false);
+    const [shareWithOrg, setShareWithOrg] = useState(false);
     const [selectedMembers, setSelectedMembers] = useState(new Set());
     const [searchQuery, setSearchQuery] = useState('');
 
-    // Filter out current user, only show other org members.
-    // Memoized so the identity is stable and `filteredMembers` below is not
-    // invalidated on every render.
+    useEffect(() => {
+      if (!show) return;
+      setIsUnrestricted(false);
+      setShareWithOrg(false);
+      setSelectedMembers(new Set());
+      setSearchQuery('');
+    }, [show, space?.id]);
+
     const otherMembers = useMemo(
       () =>
         Array.isArray(organizationMembers)
@@ -51,7 +55,6 @@ export const ShareSpacePopup = React.memo(
       [organizationMembers, currentUserId]
     );
 
-    // Only show the member list when there are other members in the org (>1 total including current user)
     const hasOrgMembers = otherMembers.length > 0;
 
     const filteredMembers = useMemo(() => {
@@ -67,6 +70,8 @@ export const ShareSpacePopup = React.memo(
     if (!show || !space) return null;
 
     const toggleMember = (userId) => {
+      setIsUnrestricted(false);
+      setShareWithOrg(false);
       setSelectedMembers((prev) => {
         const next = new Set(prev);
         if (next.has(userId)) {
@@ -78,210 +83,128 @@ export const ShareSpacePopup = React.memo(
       });
     };
 
-    const handleShare = () => {
-      if (isUnrestricted) {
-        onShare('everyone');
-      } else if (hasOrgMembers && selectedMembers.size > 0) {
-        // Share with all selected members
-        const emails = otherMembers
-          .filter((m) => selectedMembers.has(m.userId))
-          .map((m) => m.email);
-        // Call onShare for each selected member
-        for (const email of emails) {
-          onShare(email);
-        }
+    const handleUnrestrictedChange = (checked) => {
+      setIsUnrestricted(checked);
+      if (checked) {
+        setShareWithOrg(false);
+        setSelectedMembers(new Set());
       }
     };
 
+    const handleOrgChange = (checked) => {
+      setShareWithOrg(checked);
+      if (checked) {
+        setIsUnrestricted(false);
+        setSelectedMembers(new Set());
+      }
+    };
+
+    const handleShare = () => {
+      if (isUnrestricted) {
+        onShare({ type: 'everyone' });
+      } else if (shareWithOrg && organization) {
+        onShare({ type: 'organization', orgId: organization.id });
+      } else if (selectedMembers.size > 0) {
+        onShare({ type: 'members', userIds: [...selectedMembers] });
+      }
+    };
+
+    const membersDisabled = isUnrestricted || shareWithOrg;
     const isShareDisabled =
-      isSharing || (!isUnrestricted && selectedMembers.size === 0);
+      isSharing || (!isUnrestricted && !shareWithOrg && selectedMembers.size === 0);
 
     return (
-      <div
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000,
-          pointerEvents: 'auto',
-        }}
-      >
-        <div
-          style={{
-            backgroundColor: 'white',
-            padding: '20px',
-            borderRadius: '8px',
-            width: '340px',
-            maxWidth: '90vw',
-            border: '1px solid rgba(0,0,0,0.1)',
-            color: '#333',
-            fontFamily: FONT_FAMILY,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-          }}
-        >
-          <h3
-            style={{
-              margin: '0 0 15px 0',
-              fontWeight: '500',
-              fontSize: '18px',
-            }}
-          >
-            Share
-          </h3>
+      <div className="share-popup-overlay">
+        <div className="share-popup-card">
+          <h3 className="share-popup-title">Share</h3>
 
-          {/* Member list — only when org has other members */}
-          {hasOrgMembers && (
-            <div style={{ marginBottom: '15px' }}>
+          {organization && (
+            <div className="share-popup-section">
+              <span className="share-popup-label">Organization</span>
               <label
-                style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontWeight: '500',
-                  fontSize: '14px',
-                }}
+                className={`share-popup-option ${
+                  shareWithOrg ? 'share-popup-option--active' : ''
+                }`}
               >
-                Share with members:
+                <input
+                  type="checkbox"
+                  checked={shareWithOrg}
+                  onChange={(e) => handleOrgChange(e.target.checked)}
+                />
+                <span className="share-popup-option-text">
+                  <span className="share-popup-option-title">
+                    All members of {organization.name}
+                  </span>
+                  <span className="share-popup-option-meta">
+                    Everyone in the organization gets access
+                  </span>
+                </span>
               </label>
-              {/* Search input */}
+            </div>
+          )}
+
+          {hasOrgMembers && (
+            <div className="share-popup-section">
+              <span className="share-popup-label">Share with members</span>
               <input
                 type="text"
+                className="share-popup-search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search members..."
-                disabled={isUnrestricted}
-                style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px 4px 0 0',
-                  boxSizing: 'border-box',
-                  fontSize: '13px',
-                  fontFamily: FONT_FAMILY,
-                  opacity: isUnrestricted ? 0.5 : 1,
-                }}
+                disabled={membersDisabled}
               />
-              {/* Member list with checkboxes */}
               <div
-                style={{
-                  border: '1px solid #ddd',
-                  borderTop: 'none',
-                  borderRadius: '0 0 4px 4px',
-                  maxHeight: '200px',
-                  overflowY: 'auto',
-                  opacity: isUnrestricted ? 0.5 : 1,
-                  pointerEvents: isUnrestricted ? 'none' : 'auto',
-                }}
+                className={`share-popup-member-list ${
+                  membersDisabled ? 'share-popup-member-list--disabled' : ''
+                }`}
               >
                 {filteredMembers.length === 0 ? (
-                  <div
-                    style={{
-                      padding: '12px',
-                      fontSize: '13px',
-                      color: '#999',
-                      textAlign: 'center',
-                    }}
-                  >
-                    No members found
-                  </div>
+                  <div className="share-popup-empty">No members found</div>
                 ) : (
                   filteredMembers.map((member) => {
                     const isChecked = selectedMembers.has(member.userId);
+                    const displayName = member.displayName || member.email;
                     const initials = getInitials(member.displayName, member.email);
                     const avatarColor = stringToColor(member.email || member.userId);
 
                     return (
                       <label
                         key={member.userId}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          padding: '8px 10px',
-                          cursor: 'pointer',
-                          borderBottom: '1px solid #f5f5f5',
-                          backgroundColor: isChecked ? '#f0f7ff' : 'white',
-                          transition: 'background-color 0.15s',
-                          userSelect: 'none',
-                        }}
-                        onMouseOver={(e) => {
-                          if (!isChecked) e.currentTarget.style.backgroundColor = '#fafafa';
-                        }}
-                        onMouseOut={(e) => {
-                          e.currentTarget.style.backgroundColor = isChecked ? '#f0f7ff' : 'white';
-                        }}
+                        className={`share-popup-member ${
+                          isChecked ? 'share-popup-member--checked' : ''
+                        }`}
                       >
                         <input
                           type="checkbox"
                           checked={isChecked}
                           onChange={() => toggleMember(member.userId)}
-                          style={{ marginRight: '10px', flexShrink: 0 }}
+                          disabled={membersDisabled}
                         />
-                        {/* Avatar */}
                         {member.photoURL ? (
                           <img
                             src={member.photoURL}
                             alt=""
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              borderRadius: '50%',
-                              marginRight: '10px',
-                              flexShrink: 0,
-                              objectFit: 'cover',
-                            }}
+                            className="share-popup-avatar"
                           />
                         ) : (
-                          <div
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              borderRadius: '50%',
-                              marginRight: '10px',
-                              flexShrink: 0,
-                              backgroundColor: avatarColor,
-                              color: 'white',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '12px',
-                              fontWeight: '600',
-                            }}
+                          <span
+                            className="share-popup-avatar"
+                            style={{ backgroundColor: avatarColor }}
                           >
                             {initials}
-                          </div>
+                          </span>
                         )}
-                        {/* Name and email */}
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontSize: '13px',
-                              fontWeight: '500',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {member.displayName || member.email}
-                          </div>
-                          {member.displayName && member.email !== member.displayName && (
-                            <div
-                              style={{
-                                fontSize: '11px',
-                                color: '#999',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {member.email}
-                            </div>
-                          )}
-                        </div>
+                        <span className="share-popup-member-main">
+                          <span className="share-popup-member-name">{displayName}</span>
+                          {member.displayName &&
+                            member.email &&
+                            member.email !== member.displayName && (
+                              <span className="share-popup-member-email">
+                                {member.email}
+                              </span>
+                            )}
+                        </span>
                       </label>
                     );
                   })
@@ -290,95 +213,42 @@ export const ShareSpacePopup = React.memo(
             </div>
           )}
 
-          {/* Unrestricted checkbox — always shown */}
-          <div style={{ marginBottom: '15px' }}>
+          <div className="share-popup-section">
             <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                cursor: 'pointer',
-                userSelect: 'none',
-              }}
+              className={`share-popup-option ${
+                isUnrestricted ? 'share-popup-option--active' : ''
+              }`}
             >
               <input
                 type="checkbox"
                 checked={isUnrestricted}
-                onChange={(e) => {
-                  setIsUnrestricted(e.target.checked);
-                  if (e.target.checked) setSelectedMembers(new Set());
-                }}
-                style={{ marginRight: '8px' }}
+                onChange={(e) => handleUnrestrictedChange(e.target.checked)}
               />
-              <span style={{ fontSize: '14px', fontWeight: '500' }}>
-                Unrestricted (open to everyone)
+              <span className="share-popup-option-text">
+                <span className="share-popup-option-title">
+                  Unrestricted (open to everyone)
+                </span>
+                <span className="share-popup-option-meta">
+                  Anyone with the link can open this space
+                </span>
               </span>
             </label>
           </div>
 
-          {error && (
-            <div
-              style={{
-                color: '#e53e3e',
-                marginBottom: '15px',
-                fontSize: '14px',
-                fontWeight: '400',
-              }}
-            >
-              {error}
-            </div>
-          )}
+          {error && <div className="share-popup-error">{error}</div>}
 
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '10px',
-            }}
-          >
+          <div className="share-popup-actions">
             <button
+              className="share-popup-btn share-popup-btn--secondary"
               onClick={onCancel}
-              style={{
-                padding: '10px 16px',
-                backgroundColor: 'white',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontFamily: 'inherit',
-                fontWeight: '500',
-                transition: 'background-color 0.2s',
-              }}
               disabled={isSharing}
-              onMouseOver={(e) =>
-                (e.currentTarget.style.backgroundColor = '#f5f5f5')
-              }
-              onMouseOut={(e) =>
-                (e.currentTarget.style.backgroundColor = 'white')
-              }
             >
               Cancel
             </button>
             <button
+              className="share-popup-btn share-popup-btn--primary"
               onClick={handleShare}
-              style={{
-                padding: '10px 16px',
-                backgroundColor: 'black',
-                color: 'white',
-                border: '1px solid black',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontFamily: 'inherit',
-                fontWeight: '500',
-                transition: 'background-color 0.2s',
-              }}
               disabled={isShareDisabled}
-              onMouseOver={(e) =>
-                (e.currentTarget.style.backgroundColor = '#333')
-              }
-              onMouseOut={(e) =>
-                (e.currentTarget.style.backgroundColor = 'black')
-              }
             >
               {isSharing ? 'Sharing...' : 'Share'}
             </button>

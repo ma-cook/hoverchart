@@ -6,8 +6,8 @@ export const PLAN_LIMITS = {
   business: 50,
 };
 
-export const createOrganization = async (orgName, _plan = 'free') => {
-  const response = await api.post('/api/organizations', { name: orgName });
+export const createOrganization = async (orgName, plan = 'free') => {
+  const response = await api.post('/api/organizations', { name: orgName, plan });
   return response.data || response;
 };
 
@@ -49,27 +49,15 @@ export const isOrganizationAdmin = async (orgId, userId) => {
   );
 };
 
-export const inviteUserToOrganization = async (orgId, adminUserId, email) => {
+export const inviteUserToOrganization = async (orgId, email) => {
   const response = await api.post(`/api/organizations/${orgId}/invites`, { email });
   return response.data || response;
 };
 
-export const getPendingInvitesForUser = async (userEmail) => {
+export const getPendingInvitesForUser = async () => {
   try {
-    const response = await api.get('/api/organizations');
-    const orgs = response.data || response || [];
-    const results = [];
-
-    for (const org of orgs) {
-      const pendingInvites = (org.invites || []).filter(
-        (i) => i.email.toLowerCase() === userEmail.toLowerCase() && i.status === 'pending'
-      );
-      for (const invite of pendingInvites) {
-        results.push({ org, invite });
-      }
-    }
-
-    return results;
+    const response = await api.get('/api/organizations/pending-invites');
+    return response.data || response || [];
   } catch (err) {
     console.error('Failed to fetch pending invites:', err);
     return [];
@@ -81,11 +69,12 @@ export const acceptInvite = async (orgId, userId) => {
   return response.data || response;
 };
 
-export const declineInvite = async (_orgId) => {
-  console.warn('declineInvite is not supported in the new API');
+export const declineInvite = async (orgId) => {
+  const response = await api.delete(`/api/organizations/${orgId}/invites`);
+  return response.data || response;
 };
 
-export const removeMemberFromOrganization = async (orgId, adminUserId, targetUserId) => {
+export const removeMemberFromOrganization = async (orgId, targetUserId) => {
   await api.delete(`/api/organizations/${orgId}/members/${targetUserId}`);
 };
 
@@ -93,16 +82,12 @@ export const leaveOrganization = async (orgId, userId) => {
   await api.delete(`/api/organizations/${orgId}/members/${userId}`);
 };
 
-export const updateOrganizationPlan = async (orgId, adminUserId, newPlan) => {
-  const isAdmin = await isOrganizationAdmin(orgId, adminUserId);
-  if (!isAdmin) throw new Error('Only admins can update the plan');
-
-  const newLimit = PLAN_LIMITS[newPlan];
-  if (!newLimit) throw new Error('Invalid plan');
-
-  console.warn('updateOrganizationPlan is not supported in the new API');
+export const updateOrganizationPlan = async (orgId, newPlan) => {
+  const response = await api.patch(`/api/organizations/${orgId}`, { plan: newPlan });
+  return response.data || response;
 };
 
-export const deleteOrganization = async (_orgId) => {
-  console.warn('deleteOrganization is not supported in the new API');
+export const deleteOrganization = async (orgId) => {
+  const response = await api.delete(`/api/organizations/${orgId}`);
+  return response.data || response;
 };

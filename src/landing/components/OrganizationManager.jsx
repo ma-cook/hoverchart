@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   createOrganization,
   getUserOrganizations,
+  getOrganizationById,
   inviteUserToOrganization,
   acceptInvite,
   declineInvite,
@@ -13,57 +14,30 @@ import {
   PLAN_LIMITS,
 } from '../../services/organizationService';
 import { confirmDialog, notify } from '../../stores/dialogStore';
-
-const FONT_FAMILY =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif";
+import './OrganizationManager.css';
 
 const PLAN_LABELS = { free: 'Free', team: 'Team', business: 'Business' };
 
-const btnBase = {
-  padding: '8px 14px',
-  borderRadius: '4px',
-  cursor: 'pointer',
-  fontSize: '13px',
-  fontFamily: FONT_FAMILY,
-  fontWeight: '500',
-  transition: 'background-color 0.2s',
-  border: '1px solid #ddd',
-};
-const btnPrimary = {
-  ...btnBase,
-  backgroundColor: 'black',
-  color: 'white',
-  border: '1px solid black',
-};
-const btnSecondary = { ...btnBase, backgroundColor: 'white', color: '#333' };
-const btnDanger = {
-  ...btnBase,
-  backgroundColor: '#fff7ea',
-  color: '#8a5a00',
-  border: '1px solid #cc8500',
-  fontWeight: '600',
-};
-
-export const OrganizationManager = React.memo(({ user, show, onClose }) => {
+export const OrganizationManager = React.memo(({ user, show, onClose, onChanged }) => {
+  const userId = user?.sub || user?.uid;
   const [orgs, setOrgs] = useState([]);
   const [pendingInvites, setPendingInvites] = useState([]);
   const [expandedOrg, setExpandedOrg] = useState(null);
+  const [orgDetails, setOrgDetails] = useState({});
+  const [detailsLoading, setDetailsLoading] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Create org form
   const [createMode, setCreateMode] = useState(false);
   const [newOrgName, setNewOrgName] = useState('');
   const [newOrgPlan, setNewOrgPlan] = useState('free');
   const [isCreating, setIsCreating] = useState(false);
 
-  // Invite form state per org (keyed by orgId)
+  const [inviteOpen, setInviteOpen] = useState({});
   const [inviteEmail, setInviteEmail] = useState({});
   const [inviteLoading, setInviteLoading] = useState({});
   const [inviteError, setInviteError] = useState({});
-
-  // Plan upgrade state per org
   const [upgradePlan, setUpgradePlan] = useState({});
 
   const refresh = useCallback(async () => {
@@ -71,31 +45,51 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     setLoading(true);
     try {
       const [fetchedOrgs, fetchedInvites] = await Promise.allSettled([
-        getUserOrganizations(user.uid),
-        getPendingInvitesForUser(user.email),
+        getUserOrganizations(),
+        getPendingInvitesForUser(),
       ]);
-      // Only update orgs if the fetch succeeded — don't wipe existing local state on failure
       if (fetchedOrgs.status === 'fulfilled') {
-        setOrgs(fetchedOrgs.value);
+        setOrgs(fetchedOrgs.value || []);
       }
       if (fetchedInvites.status === 'fulfilled') {
-        setPendingInvites(fetchedInvites.value);
+        setPendingInvites(fetchedInvites.value || []);
       }
-    } catch {
-      // Don't wipe existing state on error
     } finally {
       setLoading(false);
     }
   }, [user]);
 
+  const loadDetails = useCallback(async (orgId) => {
+    if (!orgId) return;
+    setDetailsLoading(orgId);
+    try {
+      const org = await getOrganizationById(orgId);
+      if (org) {
+        setOrgDetails((prev) => ({ ...prev, [orgId]: org }));
+      }
+    } finally {
+      setDetailsLoading((current) => (current === orgId ? null : current));
+    }
+  }, []);
+
+  const refreshAll = useCallback(async () => {
+    await refresh();
+    if (expandedOrg) await loadDetails(expandedOrg);
+  }, [refresh, expandedOrg, loadDetails]);
+
   useEffect(() => {
     if (show && user) {
-      // Clear notifications from previous session
       setError('');
       setSuccess('');
       refresh();
     }
   }, [show, user, refresh]);
+
+  useEffect(() => {
+    if (show && expandedOrg) {
+      loadDetails(expandedOrg);
+    }
+  }, [show, expandedOrg, loadDetails]);
 
   if (!show) return null;
 
@@ -103,14 +97,17 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     if (!newOrgName.trim()) return;
     setIsCreating(true);
     setError('');
+    setSuccess('');
     try {
-      const newOrg = await createOrganization(user.uid, newOrgName.trim(), newOrgPlan);
+      const newOrg = await createOrganization(newOrgName.trim(), newOrgPlan);
       setNewOrgName('');
       setNewOrgPlan('free');
       setCreateMode(false);
       setSuccess('Organization created!');
-      // Use the returned org data directly — avoids any Firestore read-after-write timing issues
       setOrgs((prev) => [...prev, newOrg]);
+      setExpandedOrg(newOrg.id);
+      onChanged?.();
+      await refresh();
     } catch (e) {
       setError(e.message || 'Failed to create organization.');
     } finally {
@@ -124,10 +121,12 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     setInviteLoading((prev) => ({ ...prev, [orgId]: true }));
     setInviteError((prev) => ({ ...prev, [orgId]: '' }));
     try {
-      await inviteUserToOrganization(orgId, user.uid, email);
+      await inviteUserToOrganization(orgId, email);
       setInviteEmail((prev) => ({ ...prev, [orgId]: '' }));
+      setInviteOpen((prev) => ({ ...prev, [orgId]: false }));
       setSuccess('Invite sent!');
-      await refresh();
+      await refreshAll();
+      onChanged?.();
     } catch (e) {
       setInviteError((prev) => ({
         ...prev,
@@ -151,8 +150,9 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     setError('');
     setSuccess('');
     try {
-      await removeMemberFromOrganization(orgId, user.uid, targetUserId);
-      await refresh();
+      await removeMemberFromOrganization(orgId, targetUserId);
+      await refreshAll();
+      onChanged?.();
       notify('Member removed.', { type: 'success', title: 'Member removed' });
     } catch (e) {
       notify(e.message || 'Failed to remove member.', {
@@ -175,8 +175,10 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     setError('');
     setSuccess('');
     try {
-      await leaveOrganization(orgId, user.uid);
+      await leaveOrganization(orgId, userId);
+      setExpandedOrg(null);
       await refresh();
+      onChanged?.();
       notify('You have left the organization.', {
         type: 'success',
         title: 'Left organization',
@@ -193,10 +195,13 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     const plan = upgradePlan[orgId];
     if (!plan) return;
     setError('');
+    setSuccess('');
     try {
-      await updateOrganizationPlan(orgId, user.uid, plan);
+      await updateOrganizationPlan(orgId, plan);
+      setUpgradePlan((prev) => ({ ...prev, [orgId]: undefined }));
       setSuccess('Plan updated.');
-      await refresh();
+      await refreshAll();
+      onChanged?.();
     } catch (e) {
       setError(e.message || 'Failed to update plan.');
     }
@@ -215,9 +220,10 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
     setError('');
     setSuccess('');
     try {
-      await deleteOrganization(orgId, user.uid);
+      await deleteOrganization(orgId);
       setExpandedOrg(null);
       await refresh();
+      onChanged?.();
       notify('Organization deleted.', { type: 'success', title: 'Deleted' });
     } catch (e) {
       notify(e.message || 'Failed to delete organization.', {
@@ -229,10 +235,12 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
 
   const handleAcceptInvite = async (orgId) => {
     setError('');
+    setSuccess('');
     try {
-      await acceptInvite(orgId, user.uid, user.email);
+      await acceptInvite(orgId, userId);
       setSuccess('You have joined the organization!');
       await refresh();
+      onChanged?.();
     } catch (e) {
       setError(e.message || 'Failed to accept invite.');
     }
@@ -240,298 +248,124 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
 
   const handleDeclineInvite = async (orgId) => {
     setError('');
+    setSuccess('');
     try {
-      await declineInvite(orgId, user.email);
+      await declineInvite(orgId);
       setSuccess('Invite declined.');
       await refresh();
+      onChanged?.();
     } catch (e) {
       setError(e.message || 'Failed to decline invite.');
     }
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 1000,
-        fontFamily: FONT_FAMILY,
-        pointerEvents: 'auto',
-      }}
-    >
-      <div
-        style={{
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          width: '480px',
-          maxWidth: '95vw',
-          maxHeight: '85vh',
-          overflowY: 'auto',
-          padding: '24px',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
-          border: '1px solid rgba(0,0,0,0.1)',
-          color: '#333',
-          position: 'relative',
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '20px',
-          }}
-        >
-          <h3 style={{ margin: 0, fontWeight: '600', fontSize: '18px' }}>
-            Organization
-          </h3>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '20px',
-              cursor: 'pointer',
-              color: '#666',
-              lineHeight: 1,
-            }}
-          >
+    <div className="org-manager-overlay">
+      <div className="org-manager-card">
+        <div className="org-manager-header">
+          <h3 className="org-manager-title">Organization</h3>
+          <button className="org-manager-close" onClick={onClose} aria-label="Close">
             ×
           </button>
         </div>
 
-        {/* Notifications */}
-        {error && (
-          <div
-            style={{
-              color: '#8a5a00',
-              marginBottom: '12px',
-              fontSize: '14px',
-              padding: '8px 12px',
-              backgroundColor: '#fff7ea',
-              borderRadius: '4px',
-              border: '1px solid #e0a33a',
-              borderLeft: '3px solid #cc8500',
-            }}
-          >
-            {error}
-          </div>
-        )}
-        {success && (
-          <div
-            style={{
-              color: '#3a3a40',
-              marginBottom: '12px',
-              fontSize: '14px',
-              padding: '8px 12px',
-              backgroundColor: '#f6f6f7',
-              borderRadius: '4px',
-              border: '1px solid #d9d9dd',
-              borderLeft: '3px solid #cc8500',
-            }}
-          >
-            {success}
-          </div>
-        )}
+        {error && <div className="org-alert org-alert--error">{error}</div>}
+        {success && <div className="org-alert org-alert--success">{success}</div>}
 
-        {/* Pending Invites */}
         {pendingInvites.length > 0 && (
-          <div style={{ marginBottom: '24px' }}>
-            <h4
-              style={{
-                margin: '0 0 12px 0',
-                fontSize: '14px',
-                fontWeight: '600',
-                color: '#555',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-              }}
-            >
-              Pending Invites
-            </h4>
-            {pendingInvites.map(({ org }) => (
-              <div
-                key={org.id}
-                style={{
-                  padding: '12px',
-                  border: '1px solid #ddd',
-                  borderRadius: '6px',
-                  marginBottom: '8px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: '500', fontSize: '14px' }}>
-                    {org.name}
+          <div className="org-section">
+            <h4 className="org-section-title">Pending Invites</h4>
+            {pendingInvites.map(({ org }) => {
+              const memberLimit = org.memberLimit ?? org.member_limit;
+              const memberCount = org.memberCount ?? org.member_count ?? 0;
+              return (
+                <div key={org.id} className="org-invite-card">
+                  <div>
+                    <div className="org-invite-name">{org.name}</div>
+                    <div className="org-invite-meta">
+                      {PLAN_LABELS[org.plan] || org.plan} plan · {memberCount}/{memberLimit} members
+                    </div>
                   </div>
-                  <div style={{ fontSize: '12px', color: '#888' }}>
-                    {PLAN_LABELS[org.plan] || org.plan} plan ·{' '}
-                    {(org.members || []).length}/{org.memberLimit} members
+                  <div className="org-invite-actions">
+                    <button
+                      className="org-btn org-btn--primary"
+                      onClick={() => handleAcceptInvite(org.id)}
+                    >
+                      Accept
+                    </button>
+                    <button
+                      className="org-btn org-btn--secondary"
+                      onClick={() => handleDeclineInvite(org.id)}
+                    >
+                      Decline
+                    </button>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    onClick={() => handleAcceptInvite(org.id)}
-                    style={btnPrimary}
-                    onMouseOver={(e) =>
-                      (e.currentTarget.style.backgroundColor = '#333')
-                    }
-                    onMouseOut={(e) =>
-                      (e.currentTarget.style.backgroundColor = 'black')
-                    }
-                  >
-                    Accept
-                  </button>
-                  <button
-                    onClick={() => handleDeclineInvite(org.id)}
-                    style={btnSecondary}
-                    onMouseOver={(e) =>
-                      (e.currentTarget.style.backgroundColor = '#f5f5f5')
-                    }
-                    onMouseOut={(e) =>
-                      (e.currentTarget.style.backgroundColor = 'white')
-                    }
-                  >
-                    Decline
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
-        {/* Organizations */}
-        <div>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              marginBottom: '12px',
-            }}
-          >
+        <div className="org-section">
+          <div className="org-toolbar">
             {!createMode && orgs.length === 0 && (
               <button
+                className="org-btn org-btn--primary"
                 onClick={() => {
                   setCreateMode(true);
                   setError('');
                   setSuccess('');
                 }}
-                style={btnPrimary}
-                onMouseOver={(e) =>
-                  (e.currentTarget.style.backgroundColor = '#333')
-                }
-                onMouseOut={(e) =>
-                  (e.currentTarget.style.backgroundColor = 'black')
-                }
               >
-                + New
+                + New organization
               </button>
             )}
           </div>
 
-          {/* Create Org Form */}
           {createMode && (
-            <div
-              style={{
-                padding: '16px',
-                border: '1px solid #ddd',
-                borderRadius: '6px',
-                marginBottom: '16px',
-                backgroundColor: '#fafafa',
-              }}
-            >
-              <div style={{ marginBottom: '12px' }}>
-                <label
-                  style={{
-                    display: 'block',
-                    marginBottom: '6px',
-                    fontWeight: '500',
-                    fontSize: '13px',
-                  }}
-                >
+            <div className="org-create-form">
+              <div className="org-field">
+                <label className="org-label" htmlFor="org-name">
                   Organization Name
                 </label>
                 <input
+                  id="org-name"
+                  className="org-input"
                   type="text"
                   value={newOrgName}
                   onChange={(e) => setNewOrgName(e.target.value)}
                   placeholder="Enter organization name"
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    fontFamily: FONT_FAMILY,
-                    boxSizing: 'border-box',
-                  }}
                 />
               </div>
-              <div style={{ marginBottom: '16px' }}>
-                <label
-                  style={{
-                    display: 'block',
-                    marginBottom: '6px',
-                    fontWeight: '500',
-                    fontSize: '13px',
-                  }}
-                >
+              <div className="org-field">
+                <label className="org-label" htmlFor="org-plan">
                   Plan
                 </label>
                 <select
+                  id="org-plan"
+                  className="org-select"
                   value={newOrgPlan}
                   onChange={(e) => setNewOrgPlan(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    fontSize: '14px',
-                    fontFamily: FONT_FAMILY,
-                    boxSizing: 'border-box',
-                  }}
                 >
-                  <option value="free">Free (up to 3 members)</option>
-                  <option value="team">Team (up to 10 members)</option>
-                  <option value="business">Business (up to 50 members)</option>
+                  <option value="free">Free (up to {PLAN_LIMITS.free} members)</option>
+                  <option value="team">Team (up to {PLAN_LIMITS.team} members)</option>
+                  <option value="business">Business (up to {PLAN_LIMITS.business} members)</option>
                 </select>
               </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="org-actions">
                 <button
+                  className="org-btn org-btn--primary"
                   onClick={handleCreateOrg}
                   disabled={!newOrgName.trim() || isCreating}
-                  style={btnPrimary}
-                  onMouseOver={(e) =>
-                    (e.currentTarget.style.backgroundColor = '#333')
-                  }
-                  onMouseOut={(e) =>
-                    (e.currentTarget.style.backgroundColor = 'black')
-                  }
                 >
                   {isCreating ? 'Creating…' : 'Create Organization'}
                 </button>
                 <button
+                  className="org-btn org-btn--secondary"
                   onClick={() => {
                     setCreateMode(false);
                     setNewOrgName('');
                   }}
-                  style={btnSecondary}
-                  onMouseOver={(e) =>
-                    (e.currentTarget.style.backgroundColor = '#f5f5f5')
-                  }
-                  onMouseOut={(e) =>
-                    (e.currentTarget.style.backgroundColor = 'white')
-                  }
                 >
                   Cancel
                 </button>
@@ -539,431 +373,216 @@ export const OrganizationManager = React.memo(({ user, show, onClose }) => {
             </div>
           )}
 
-          {/* Org List */}
           {!loading && orgs.length === 0 && !createMode && (
-            <div
-              style={{
-                textAlign: 'center',
-                padding: '24px',
-                color: '#999',
-                fontSize: '14px',
-                border: '1px dashed #ddd',
-                borderRadius: '6px',
-              }}
-            >
-              No organizations yet. Create one to get started.
-            </div>
+            <div className="org-empty">No organizations yet. Create one to get started.</div>
           )}
 
           {orgs.map((org) => {
-            const isAdmin = (org.members || []).some(
-              (m) => m.userId === user.uid && m.role === 'admin'
+            const details = orgDetails[org.id];
+            const members = details?.members || [];
+            const memberCount =
+              details?.members?.length ?? org.memberCount ?? org.member_count ?? 0;
+            const memberLimit =
+              details?.memberLimit ??
+              details?.member_limit ??
+              org.memberLimit ??
+              org.member_limit ??
+              PLAN_LIMITS[org.plan] ??
+              3;
+            const ownerId =
+              org.ownerId || org.owner_id || details?.ownerId || details?.owner_id;
+            const isOwner = Boolean(org.isOwner || org.is_owner);
+            const isAdmin = Boolean(
+              isOwner ||
+                org.role === 'admin' ||
+                members.some((m) => m.userId === userId && m.role === 'admin')
             );
-            const memberCount = (org.members || []).length;
-            const isAtCapacity = memberCount >= org.memberLimit;
+            const isAtCapacity = memberCount >= memberLimit;
             const isExpanded = expandedOrg === org.id;
+            const isLoadingDetails = detailsLoading === org.id;
 
             return (
-              <div
-                key={org.id}
-                style={{
-                  border: '1px solid #ddd',
-                  borderRadius: '6px',
-                  marginBottom: '10px',
-                  overflow: 'hidden',
-                }}
-              >
-                {/* Org Header Row */}
+              <div key={org.id} className="org-org-card">
                 <div
-                  onClick={() =>
-                    setExpandedOrg(isExpanded ? null : org.id)
-                  }
-                  style={{
-                    padding: '12px 16px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    cursor: 'pointer',
-                    backgroundColor: isExpanded ? '#fafafa' : 'white',
-                    borderBottom: isExpanded ? '1px solid #eee' : 'none',
-                  }}
+                  className={`org-org-header ${isExpanded ? 'org-org-header--expanded' : ''}`}
+                  onClick={() => setExpandedOrg(isExpanded ? null : org.id)}
                 >
-                  <div>
-                    <span style={{ fontWeight: '500', fontSize: '15px' }}>
-                      {org.name}
-                    </span>
-                    <span
-                      style={{
-                        marginLeft: '10px',
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        fontSize: '11px',
-                        fontWeight: '600',
-                        backgroundColor:
-                          org.plan === 'business'
-                            ? '#ebf8ff'
-                            : org.plan === 'team'
-                              ? '#f0fff4'
-                              : '#fffff0',
-                        color:
-                          org.plan === 'business'
-                            ? '#2b6cb0'
-                            : org.plan === 'team'
-                              ? '#276749'
-                              : '#744210',
-                      }}
-                    >
+                  <div className="org-org-heading">
+                    <span className="org-org-name">{org.name}</span>
+                    <span className="org-badge org-badge--plan">
                       {PLAN_LABELS[org.plan] || org.plan}
                     </span>
-                    {isAdmin && (
-                      <span
-                        style={{
-                          marginLeft: '6px',
-                          padding: '2px 8px',
-                          borderRadius: '12px',
-                          fontSize: '11px',
-                          fontWeight: '600',
-                          backgroundColor: '#e9d8fd',
-                          color: '#553c9a',
-                        }}
-                      >
-                        Admin
-                      </span>
-                    )}
+                    {isAdmin && <span className="org-badge org-badge--admin">Admin</span>}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span
-                      style={{
-                        fontSize: '13px',
-                        color: isAtCapacity ? '#8a5a00' : '#666',
-                        fontWeight: isAtCapacity ? '600' : '400',
-                      }}
-                    >
-                      {memberCount}/{org.memberLimit}
+                  <div className="org-org-meta">
+                    <span className={`org-count ${isAtCapacity ? 'org-count--full' : ''}`}>
+                      {memberCount}/{memberLimit}
                     </span>
-                    <span style={{ color: '#999', fontSize: '12px' }}>
-                      {isExpanded ? '▲' : '▼'}
-                    </span>
+                    <span className="org-chevron">{isExpanded ? '▲' : '▼'}</span>
                   </div>
                 </div>
 
-                {/* Expanded Panel */}
                 {isExpanded && (
-                  <div style={{ padding: '16px' }}>
-                    {/* Capacity warning */}
+                  <div className="org-expanded">
                     {isAtCapacity && (
-                      <div
-                        style={{
-                          color: '#8a5a00',
-                          fontSize: '13px',
-                          marginBottom: '12px',
-                          padding: '8px 12px',
-                          backgroundColor: '#fff7ea',
-                          borderRadius: '4px',
-                          border: '1px solid #e0a33a',
-                          borderLeft: '3px solid #cc8500',
-                        }}
-                      >
-                        Organization limit reached ({memberCount}/
-                        {org.memberLimit}). Upgrade your plan to add more
-                        members.
+                      <div className="org-warning">
+                        Organization limit reached ({memberCount}/{memberLimit}). Upgrade
+                        your plan to add more members.
                       </div>
                     )}
 
-                    {/* Member List */}
-                    <div style={{ marginBottom: '16px' }}>
-                      <div
-                        style={{
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          color: '#555',
-                          marginBottom: '8px',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <span>Members ({memberCount}/{org.memberLimit})</span>
+                    <div className="org-control-block">
+                      <div className="org-members-header">
+                        <span>
+                          Members ({memberCount}/{memberLimit})
+                        </span>
                         {isAdmin && (
                           <button
+                            className="org-btn org-btn--primary org-btn--small"
                             onClick={(e) => {
                               e.stopPropagation();
-                              // Toggle invite form visibility
-                              setInviteEmail((prev) => {
-                                const isShowing = prev[`_show_${org.id}`];
-                                return { ...prev, [`_show_${org.id}`]: !isShowing };
-                              });
-                            }}
-                            style={{
-                              ...btnPrimary,
-                              padding: '2px 10px',
-                              fontSize: '14px',
-                              lineHeight: '1',
-                              opacity: isAtCapacity ? 0.5 : 1,
-                              cursor: isAtCapacity ? 'not-allowed' : 'pointer',
+                              setInviteOpen((prev) => ({
+                                ...prev,
+                                [org.id]: !prev[org.id],
+                              }));
                             }}
                             disabled={isAtCapacity}
-                            title={isAtCapacity ? 'Organization at capacity' : 'Invite member'}
+                            title={isAtCapacity ? 'Organization at capacity' : 'Invite users'}
                           >
-                            +
+                            Invite users
                           </button>
                         )}
                       </div>
-                      <div
-                        style={{
-                          maxHeight: '180px',
-                          overflowY: 'auto',
-                          border: '1px solid #eee',
-                          borderRadius: '4px',
-                        }}
-                      >
-                        {(org.members || []).map((member) => (
-                          <div
-                            key={member.userId}
-                            style={{
-                              padding: '8px 12px',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              borderBottom: '1px solid #f5f5f5',
-                              fontSize: '13px',
-                            }}
-                          >
-                            <div>
-                              <span style={{ fontWeight: '500' }}>
-                                {member.displayName || member.email}
-                              </span>
-                              {member.displayName &&
-                                member.email !== member.displayName && (
-                                  <span style={{ color: '#999', marginLeft: '6px' }}>
-                                    {member.email}
+
+                      <div className="org-member-list">
+                        {isLoadingDetails && members.length === 0 ? (
+                          <div className="org-empty">Loading members…</div>
+                        ) : members.length === 0 ? (
+                          <div className="org-empty">No members found.</div>
+                        ) : (
+                          members.map((member) => {
+                            const memberId = member.userId || member.user_id || member.id;
+                            const displayName =
+                              member.displayName || member.display_name || member.email;
+                            return (
+                              <div key={memberId} className="org-member-row">
+                                <div className="org-member-main">
+                                  <span className="org-member-name">{displayName}</span>
+                                  {displayName &&
+                                    member.email &&
+                                    member.email !== displayName && (
+                                      <span className="org-member-email">{member.email}</span>
+                                    )}
+                                  <span
+                                    className={`org-member-role ${
+                                      member.role === 'admin' ? 'org-member-role--admin' : ''
+                                    }`}
+                                  >
+                                    {member.role}
                                   </span>
+                                </div>
+                                {isAdmin && memberId !== userId && memberId !== ownerId && (
+                                  <button
+                                    className="org-btn org-btn--danger org-btn--small"
+                                    onClick={() => handleRemoveMember(org.id, memberId)}
+                                  >
+                                    Remove
+                                  </button>
                                 )}
-                              <span
-                                style={{
-                                  marginLeft: '8px',
-                                  fontSize: '11px',
-                                  color:
-                                    member.role === 'admin' ? '#553c9a' : '#666',
-                                  fontWeight:
-                                    member.role === 'admin' ? '600' : '400',
-                                }}
-                              >
-                                {member.role}
-                              </span>
-                            </div>
-                            {isAdmin &&
-                              member.userId !== user.uid &&
-                              member.role !== 'admin' && (
-                                <button
-                                  onClick={() =>
-                                    handleRemoveMember(org.id, member.userId)
-                                  }
-                                  style={{
-                                    ...btnDanger,
-                                    padding: '4px 10px',
-                                    fontSize: '12px',
-                                  }}
-                                  onMouseOver={(e) =>
-                                    (e.currentTarget.style.backgroundColor =
-                                      '#fff0d6')
-                                  }
-                                  onMouseOut={(e) =>
-                                    (e.currentTarget.style.backgroundColor =
-                                      '#fff7ea')
-                                  }
-                                >
-                                  Remove
-                                </button>
-                              )}
-                          </div>
-                        ))}
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
                     </div>
 
-                    {/* Admin Controls */}
-                    {isAdmin && (
-                      <>
-                        {/* Invite - shown when + is clicked */}
-                        {inviteEmail[`_show_${org.id}`] && (
-                        <div style={{ marginBottom: '16px' }}>
-                          <div
-                            style={{
-                              fontSize: '13px',
-                              fontWeight: '600',
-                              color: '#555',
-                              marginBottom: '8px',
-                            }}
-                          >
-                            Invite Member
-                          </div>
-                          {inviteError[org.id] && (
-                            <div
-                              style={{
-                                color: '#8a5a00',
-                                fontSize: '13px',
-                                marginBottom: '8px',
-                              }}
-                            >
-                              {inviteError[org.id]}
-                            </div>
-                          )}
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <input
-                              type="email"
-                              value={inviteEmail[org.id] || ''}
-                              onChange={(e) =>
-                                setInviteEmail((prev) => ({
-                                  ...prev,
-                                  [org.id]: e.target.value,
-                                }))
-                              }
-                              placeholder="Email address"
-                              disabled={isAtCapacity}
-                              style={{
-                                flex: 1,
-                                padding: '8px 10px',
-                                border: '1px solid #ddd',
-                                borderRadius: '4px',
-                                fontSize: '13px',
-                                fontFamily: FONT_FAMILY,
-                                opacity: isAtCapacity ? 0.5 : 1,
-                              }}
-                            />
-                            <button
-                              onClick={() => handleInvite(org.id)}
-                              disabled={
-                                isAtCapacity ||
-                                !inviteEmail[org.id]?.trim() ||
-                                inviteLoading[org.id]
-                              }
-                              style={{
-                                ...btnPrimary,
-                                opacity:
-                                  isAtCapacity ||
-                                  !inviteEmail[org.id]?.trim() ||
-                                  inviteLoading[org.id]
-                                    ? 0.5
-                                    : 1,
-                                cursor:
-                                  isAtCapacity ? 'not-allowed' : 'pointer',
-                              }}
-                              onMouseOver={(e) => {
-                                if (!isAtCapacity)
-                                  e.currentTarget.style.backgroundColor =
-                                    '#333';
-                              }}
-                              onMouseOut={(e) => {
-                                if (!isAtCapacity)
-                                  e.currentTarget.style.backgroundColor =
-                                    'black';
-                              }}
-                            >
-                              {inviteLoading[org.id] ? 'Sending…' : 'Send Invite'}
-                            </button>
-                          </div>
-                        </div>
+                    {isAdmin && inviteOpen[org.id] && (
+                      <div className="org-invite-form">
+                        <div className="org-control-title">Invite users</div>
+                        {inviteError[org.id] && (
+                          <div className="org-invite-error">{inviteError[org.id]}</div>
                         )}
-
-                        {/* Plan Upgrade */}
-                        <div style={{ marginBottom: '16px' }}>
-                          <div
-                            style={{
-                              fontSize: '13px',
-                              fontWeight: '600',
-                              color: '#555',
-                              marginBottom: '8px',
-                            }}
-                          >
-                            Change Plan
-                          </div>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <select
-                              value={upgradePlan[org.id] || org.plan}
-                              onChange={(e) =>
-                                setUpgradePlan((prev) => ({
-                                  ...prev,
-                                  [org.id]: e.target.value,
-                                }))
-                              }
-                              style={{
-                                flex: 1,
-                                padding: '8px 10px',
-                                border: '1px solid #ddd',
-                                borderRadius: '4px',
-                                fontSize: '13px',
-                                fontFamily: FONT_FAMILY,
-                              }}
-                            >
-                              <option value="free">
-                                Free (up to {PLAN_LIMITS.free} members)
-                              </option>
-                              <option value="team">
-                                Team (up to {PLAN_LIMITS.team} members)
-                              </option>
-                              <option value="business">
-                                Business (up to {PLAN_LIMITS.business} members)
-                              </option>
-                            </select>
-                            <button
-                              onClick={() => handleUpgradePlan(org.id)}
-                              disabled={
-                                !upgradePlan[org.id] ||
-                                upgradePlan[org.id] === org.plan
-                              }
-                              style={{
-                                ...btnSecondary,
-                                opacity:
-                                  !upgradePlan[org.id] ||
-                                  upgradePlan[org.id] === org.plan
-                                    ? 0.5
-                                    : 1,
-                              }}
-                              onMouseOver={(e) =>
-                                (e.currentTarget.style.backgroundColor =
-                                  '#f5f5f5')
-                              }
-                              onMouseOut={(e) =>
-                                (e.currentTarget.style.backgroundColor =
-                                  'white')
-                              }
-                            >
-                              Update
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Delete Org */}
-                        <div>
+                        <div className="org-invite-form-row">
+                          <input
+                            className="org-input"
+                            type="email"
+                            value={inviteEmail[org.id] || ''}
+                            onChange={(e) =>
+                              setInviteEmail((prev) => ({
+                                ...prev,
+                                [org.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Email address"
+                            disabled={isAtCapacity}
+                          />
                           <button
-                            onClick={() => handleDeleteOrg(org.id)}
-                            style={btnDanger}
-                            onMouseOver={(e) =>
-                              (e.currentTarget.style.backgroundColor =
-                                '#fff0d6')
-                            }
-                            onMouseOut={(e) =>
-                              (e.currentTarget.style.backgroundColor =
-                                '#fff7ea')
+                            className="org-btn org-btn--primary"
+                            onClick={() => handleInvite(org.id)}
+                            disabled={
+                              isAtCapacity ||
+                              !inviteEmail[org.id]?.trim() ||
+                              inviteLoading[org.id]
                             }
                           >
-                            Delete Organization
+                            {inviteLoading[org.id] ? 'Sending…' : 'Send invite'}
                           </button>
                         </div>
-                      </>
+                      </div>
                     )}
 
-                    {/* Non-admin leave button */}
-                    {!isAdmin && (
+                    {isAdmin && (
+                      <div className="org-control-block">
+                        <div className="org-control-title">Change Plan</div>
+                        <div className="org-invite-form-row">
+                          <select
+                            className="org-select"
+                            value={upgradePlan[org.id] || org.plan}
+                            onChange={(e) =>
+                              setUpgradePlan((prev) => ({
+                                ...prev,
+                                [org.id]: e.target.value,
+                              }))
+                            }
+                          >
+                            <option value="free">
+                              Free (up to {PLAN_LIMITS.free} members)
+                            </option>
+                            <option value="team">
+                              Team (up to {PLAN_LIMITS.team} members)
+                            </option>
+                            <option value="business">
+                              Business (up to {PLAN_LIMITS.business} members)
+                            </option>
+                          </select>
+                          <button
+                            className="org-btn org-btn--secondary"
+                            onClick={() => handleUpgradePlan(org.id)}
+                            disabled={
+                              !upgradePlan[org.id] || upgradePlan[org.id] === org.plan
+                            }
+                          >
+                            Update
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {isOwner && (
+                      <div className="org-actions">
+                        <button
+                          className="org-btn org-btn--danger"
+                          onClick={() => handleDeleteOrg(org.id)}
+                        >
+                          Delete Organization
+                        </button>
+                      </div>
+                    )}
+
+                    {!isOwner && (
                       <button
+                        className="org-btn org-btn--danger"
                         onClick={() => handleLeave(org.id)}
-                        style={btnDanger}
-                        onMouseOver={(e) =>
-                          (e.currentTarget.style.backgroundColor = '#fff0d6')
-                        }
-                        onMouseOut={(e) =>
-                          (e.currentTarget.style.backgroundColor = '#fff7ea')
-                        }
                       >
                         Leave Organization
                       </button>

@@ -34,9 +34,17 @@ router.get('/', async (req, res) => {
   const userId = req.user.sub;
   try {
     const result = await pool.query(
-      `SELECT * FROM spaces
-       WHERE owner_id = $1 OR shared_with @> $2::jsonb
-       ORDER BY updated_at DESC`,
+      `SELECT s.* FROM spaces s
+       WHERE s.owner_id = $1
+          OR s.shared_with @> $2::jsonb
+          OR EXISTS (
+            SELECT 1
+            FROM organizations o
+            LEFT JOIN org_members m ON m.org_id = o.id AND m.user_id = $1
+            WHERE (o.owner_id = $1 OR m.user_id = $1)
+              AND s.shared_with_orgs ? o.id::text
+          )
+       ORDER BY s.updated_at DESC`,
       [userId, JSON.stringify([userId])]
     );
     res.json(result.rows.map(serializeSpace));
@@ -119,7 +127,19 @@ router.get('/:id', async (req, res) => {
   const userId = req.user.sub;
   try {
     const result = await pool.query(
-      `SELECT * FROM spaces WHERE id = $1 AND (owner_id = $2 OR shared_with @> $3::jsonb)`,
+      `SELECT s.* FROM spaces s
+       WHERE s.id = $1
+         AND (
+           s.owner_id = $2
+           OR s.shared_with @> $3::jsonb
+           OR EXISTS (
+             SELECT 1
+             FROM organizations o
+             LEFT JOIN org_members m ON m.org_id = o.id AND m.user_id = $2
+             WHERE (o.owner_id = $2 OR m.user_id = $2)
+               AND s.shared_with_orgs ? o.id::text
+           )
+         )`,
       [req.params.id, userId, JSON.stringify([userId])]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Space not found' });
@@ -136,12 +156,34 @@ router.patch('/:id', async (req, res) => {
     name,
     is_public,
     shared_with,
+    shared_with_orgs,
     metadata,
     markdown_storage_url = pick(req, 'markdownStorageUrl', 'markdown_storage_url'),
     diagram_commit_sha = pick(req, 'diagramCommitSha', 'diagram_commit_sha'),
     diagram_repo = pick(req, 'diagramRepo', 'diagram_repo'),
   } = req.body;
   try {
+    let orgIds;
+    if (shared_with_orgs !== undefined) {
+      if (!Array.isArray(shared_with_orgs)) {
+        return res.status(400).json({ error: 'shared_with_orgs must be an array' });
+      }
+      orgIds = [...new Set(shared_with_orgs.filter((id) => typeof id === 'string'))];
+      if (orgIds.length > 0) {
+        const allowed = await pool.query(
+          `SELECT o.id::text AS id
+           FROM organizations o
+           LEFT JOIN org_members m ON m.org_id = o.id AND m.user_id = $1
+           WHERE o.id::text = ANY($2::text[])
+             AND (o.owner_id = $1 OR m.user_id = $1)`,
+          [userId, orgIds]
+        );
+        if (allowed.rows.length !== orgIds.length) {
+          return res.status(403).json({ error: 'You can only share with organizations you belong to' });
+        }
+      }
+    }
+
     const result = await pool.query(
       `UPDATE spaces SET
         name = COALESCE($1, name),
@@ -151,10 +193,22 @@ router.patch('/:id', async (req, res) => {
         markdown_storage_url = COALESCE($5, markdown_storage_url),
         diagram_commit_sha = COALESCE($6, diagram_commit_sha),
         diagram_repo = COALESCE($7, diagram_repo),
+        shared_with_orgs = COALESCE($8, shared_with_orgs),
         updated_at = NOW()
-       WHERE id = $8 AND owner_id = $9
+       WHERE id = $9 AND owner_id = $10
        RETURNING *`,
-      [name, is_public, shared_with, metadata, markdown_storage_url, diagram_commit_sha, diagram_repo, req.params.id, userId]
+      [
+        name,
+        is_public,
+        shared_with === undefined ? undefined : JSON.stringify(shared_with),
+        metadata,
+        markdown_storage_url,
+        diagram_commit_sha,
+        diagram_repo,
+        orgIds === undefined ? undefined : JSON.stringify(orgIds),
+        req.params.id,
+        userId,
+      ]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Space not found or not owner' });
     res.json(serializeSpace(result.rows[0]));
