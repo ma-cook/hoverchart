@@ -325,6 +325,37 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const correctionsRef = useRef([]);
   const handledLaunchRequestRef = useRef(null);
 
+  // Pending clarification from the LLM's ask_user tool. While set, the run is
+  // paused waiting on the user; the resolver carries their answer back to the
+  // harness so it can continue.
+  const [clarification, setClarification] = useState(null);
+  const [clarificationText, setClarificationText] = useState('');
+  const clarificationResolverRef = useRef(null);
+
+  // Called by the harness (via sendWithRetrieval's onClarify) when the model
+  // asks the user a question. Returns a promise resolved by the user's answer.
+  // Declared before the send handlers so its dependency-array reference is not
+  // in the temporal dead zone.
+  const handleClarify = useCallback(({ question, options, context }) => {
+    return new Promise((resolve) => {
+      clarificationResolverRef.current = resolve;
+      setClarification({
+        question: String(question || '').trim(),
+        options: Array.isArray(options) && options.length > 0 ? options.map(String) : null,
+        context: context ? String(context).trim() : '',
+      });
+      setClarificationText('');
+    });
+  }, []);
+
+  const resolveClarification = useCallback((answer) => {
+    const resolve = clarificationResolverRef.current;
+    clarificationResolverRef.current = null;
+    setClarification(null);
+    setClarificationText('');
+    if (resolve) resolve(answer ?? '');
+  }, []);
+
   const githubConnected = useCodeStore(s => s.githubConnected);
   const selectedRepo = useCodeStore(s => s.selectedRepo);
   const selectedBranch = useCodeStore(s => s.selectedBranch);
@@ -597,6 +628,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
 
       const planResponse = await sendWithRetrieval({
         messages: zenMessages,
+        onClarify: handleClarify,
         signal: abortController.signal,
         llmConfig: { providerId: windowLlm.providerId, apiKey: windowLlm.apiKey, selectedModel: windowLlm.selectedModel },
         githubContext,
@@ -726,7 +758,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       streamingRef.current = '';
       abortControllerRef.current = null;
     }
-  }, [input, streaming, planMessages, spaceId, user, windowLlm, selectedRepo, selectedBranch, onDiagramGenerated, markSignificant]);
+  }, [input, streaming, planMessages, spaceId, user, windowLlm, selectedRepo, selectedBranch, onDiagramGenerated, markSignificant, handleClarify]);
 
   const handleCodeSend = useCallback(async () => {
     const text = input.trim();
@@ -841,6 +873,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       console.log('[CodeSend] Sending to LLM...');
       const codeResponse = await sendWithRetrieval({
         messages: codeGenMessages,
+        onClarify: handleClarify,
         signal: abortController.signal,
         llmConfig: { providerId: windowLlm.providerId, apiKey: windowLlm.apiKey, selectedModel: windowLlm.selectedModel },
         githubContext,
@@ -1110,7 +1143,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       // if the run exited early (abort, error) before its own endRun().
       useLlmEditActivityStore.getState().endRun();
     }
-  }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack, windowLlm, markSignificant]);
+  }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack, windowLlm, markSignificant, handleClarify]);
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -1134,6 +1167,15 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   }, [spaceId, windowId]);
 
   const handleStop = useCallback(() => {
+    // Unblock a pending clarification so the harness's awaited promise settles
+    // and the run can unwind cleanly.
+    if (clarificationResolverRef.current) {
+      const resolve = clarificationResolverRef.current;
+      clarificationResolverRef.current = null;
+      setClarification(null);
+      setClarificationText('');
+      resolve('');
+    }
     abortControllerRef.current?.abort();
   }, []);
 
@@ -2077,6 +2119,97 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {clarification && (
+        <div
+          className="space-chat-clarify"
+          style={{
+            margin: '0 12px 8px',
+            padding: '12px 14px',
+            border: '1px solid #3a3a40',
+            borderLeft: '3px solid #cc8500',
+            borderRadius: '8px',
+            background: '#1e1e22',
+            color: '#e6e6e6',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          }}
+        >
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#ffb733' }}>
+            The assistant needs clarification
+          </div>
+          <div style={{ fontSize: '13px', lineHeight: 1.45 }}>{clarification.question}</div>
+          {clarification.context && (
+            <div style={{ fontSize: '11px', color: '#999' }}>{clarification.context}</div>
+          )}
+          {clarification.options && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {clarification.options.map((opt, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => resolveClarification(opt)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontFamily: 'inherit',
+                    border: '1px solid #cc8500',
+                    background: 'rgba(204, 133, 0, 0.12)',
+                    color: '#ffb733',
+                  }}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="text"
+              value={clarificationText}
+              onChange={(e) => setClarificationText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  resolveClarification(clarificationText);
+                }
+              }}
+              placeholder={clarification.options ? 'Or type your own answer…' : 'Type your answer…'}
+              autoFocus
+              style={{
+                flex: 1,
+                padding: '8px 10px',
+                borderRadius: '6px',
+                border: '1px solid #3a3a40',
+                background: '#141417',
+                color: '#e6e6e6',
+                fontSize: '13px',
+                fontFamily: 'inherit',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => resolveClarification(clarificationText)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                border: '1px solid #cc8500',
+                background: '#cc8500',
+                color: '#111',
+              }}
+            >
+              Send
+            </button>
           </div>
         </div>
       )}

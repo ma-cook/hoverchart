@@ -1,4 +1,33 @@
-const CODE_BLOCK_REGEX = /```(\w+)(?::([^\n]*?))?\n([\s\S]*?)```/g;
+// The info string after the opening fence is everything up to the newline. It
+// may be just a language (`jsx`), a language + path with either a colon or a
+// space (`jsx:src/App.jsx`, `jsx src/App.jsx`), or a bare path
+// (`src/App.jsx`). Accepting all of these is what lets a model that "just
+// outputs code" (instead of calling the edit tool) still produce a change that
+// the harness can route to the right file.
+const CODE_BLOCK_REGEX = /```([^\n`]*)\n([\s\S]*?)```/g;
+
+// Parse an info string into { lang, path }. Conservative: only treat a token
+// as a path when it looks like one (contains a slash or a dot), so a stray
+// word like `copy` in "```jsx copy" is not mistaken for a filename.
+function parseInfoString(info) {
+  const s = (info || '').trim();
+  if (!s) return { lang: '', path: null };
+
+  const hasPathChars = (t) => /[./]/.test(t);
+
+  const colon = s.match(/^([A-Za-z0-9_+#.-]+)\s*:\s*(.+)$/);
+  if (colon && hasPathChars(colon[2].trim())) {
+    return { lang: colon[1], path: colon[2].trim() };
+  }
+
+  const space = s.match(/^([A-Za-z0-9_+#.-]+)\s+(.+)$/);
+  if (space && !hasPathChars(space[1]) && hasPathChars(space[2].trim())) {
+    return { lang: space[1], path: space[2].trim() };
+  }
+
+  if (hasPathChars(s)) return { lang: '', path: s };
+  return { lang: s, path: null };
+}
 
 const FILE_DIRECTIVE_REGEX = /\/\/\s*FILE:\s*(.+)/m;
 const NODE_DIRECTIVE_REGEX = /\/\/\s*NODE:\s*(\S+)/m;
@@ -10,14 +39,17 @@ const PY_NODE_DIRECTIVE = /^#\s*NODE:\s*(\S+)/m;
 export function extractCodeBlocks(text) {
   if (!text) return [];
   const blocks = [];
-  const seenPaths = new Set();
+  // Maps a `${filePath||nodeId}_${lang}` key to its index in `blocks`, so a
+  // second code block for the same file can be MERGED into the first instead
+  // of dropped. A model commonly emits one block per changed region; dropping
+  // every block after the first silently discarded most of the edit.
+  const indexByKey = new Map();
   let match;
 
   CODE_BLOCK_REGEX.lastIndex = 0;
   while ((match = CODE_BLOCK_REGEX.exec(text)) !== null) {
-    const lang = match[1];
-    const pathFromLabel = match[2] ? match[2].trim() : null;
-    const code = match[3].trim();
+    const { lang, path: pathFromLabel } = parseInfoString(match[1]);
+    const code = match[2].trim();
     if (!code) continue;
 
     let filePath = pathFromLabel;
@@ -52,19 +84,35 @@ export function extractCodeBlocks(text) {
       bodyLines.push(line);
     }
 
+    // A fence with no language and no path (a plain ``` block) carries no
+    // routing information — skip it rather than inventing a `generated.` file.
+    if (!filePath && !lang && !nodeId) continue;
+
     if (!filePath) {
       filePath = inferFilePathFromLang(lang, nodeId);
     }
 
+    const bodyCode = bodyLines.join('\n').trim();
     const dedupKey = `${filePath || nodeId || 'unknown'}_${lang}`;
-    if (seenPaths.has(dedupKey)) continue;
-    seenPaths.add(dedupKey);
+    const existingIndex = indexByKey.get(dedupKey);
+    if (existingIndex !== undefined) {
+      const existing = blocks[existingIndex];
+      // Multiple SEARCH/REPLACE hunks for the same file must ALL survive: join
+      // them so the apply/push step sees every hunk. Plain full-file duplicates
+      // stay deduped (merging identical whole files would corrupt the result).
+      if (hasSearchReplaceMarkers(bodyCode) && hasSearchReplaceMarkers(existing.code)) {
+        existing.code = `${existing.code}\n\n${bodyCode}`;
+        existing.rawCode = `${existing.rawCode}\n\n${code}`;
+      }
+      continue;
+    }
+    indexByKey.set(dedupKey, blocks.length);
 
     blocks.push({
       filePath,
       nodeId,
       language: mapLanguage(lang),
-      code: bodyLines.join('\n').trim(),
+      code: bodyCode,
       rawCode: code,
     });
   }

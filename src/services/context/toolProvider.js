@@ -55,6 +55,16 @@ export const CONTROL_TOOLS = [
     },
     required: ['mode'],
   }),
+  new ToolDefinition({
+    name: 'ask_user',
+    description: 'Ask the user a clarifying question and WAIT for their answer before continuing. Use this instead of guessing when a genuine ambiguity would change what you build or edit — e.g. which of two approaches to take, which file to modify, or an undefined requirement. Prefer ONE well-formed question with mutually exclusive options. Do not use it to ask permission to proceed, to confirm an approach you already recommended, or for anything you can reasonably decide yourself. Ask at most once per decision point.',
+    parameters: {
+      question: { type: 'string', description: 'The single question to ask. Keep it short and specific.' },
+      options: { type: 'string', required: false, description: 'Optional JSON array of 2-4 short option strings the user can pick (e.g. \'["Use the existing store","Create a new module","Smallest change only"]\'). Omit to allow a free-text answer.' },
+      context: { type: 'string', required: false, description: 'Optional one-line note on why you are asking / what you already know, shown under the question.' },
+    },
+    required: ['question'],
+  }),
 ];
 
 export const NAVIGATION_TOOLS = [
@@ -309,7 +319,7 @@ export const SKILL_MANAGEMENT_TOOLS = [
 // search/list/graph/skill tools drop off until set_mode("research").
 // Plan tools are always available in every mode.
 const EDIT_MODE_TOOL_NAMES = new Set([
-  'edit', 'write', 'read_file', 'set_mode',
+  'edit', 'write', 'read_file', 'set_mode', 'ask_user',
   'get_lsp_definition', 'get_lsp_references', 'get_lsp_type_info', 'get_lsp_call_graph', 'get_lsp_overview',
   'create_plan', 'add_task', 'complete_task', 'get_plan',
 ]);

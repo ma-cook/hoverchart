@@ -1740,6 +1740,19 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       return { success: true, content: `Successfully wrote ${content.length} chars to ${filePath}` };
     }
 
+    case 'ask_user': {
+      // Normally intercepted in the orchestrator (which owns the UI round-trip).
+      // Reaching here means the tool was called outside a user-interactive run
+      // (e.g. a sub-agent), so no answer can be collected — tell the caller to
+      // proceed on a stated assumption instead of blocking.
+      const question = typeof args.question === 'string' ? args.question.trim() : '';
+      if (!question) return { success: false, content: 'ask_user requires a "question" parameter' };
+      if (depth >= 1) {
+        return { success: false, content: 'ask_user is unavailable inside a sub-agent. Decide on a reasonable assumption, state it in your summary, and continue.' };
+      }
+      return { success: false, content: `ask_user is unavailable in this context. Proceed on a reasonable assumption and state it clearly in your response.` };
+    }
+
     case 'task': {
       if (depth >= 1) {
         return { success: false, content: 'Sub-agents cannot spawn further sub-agents. Complete your research with the available tools instead.' };

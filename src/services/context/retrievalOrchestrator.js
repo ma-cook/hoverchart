@@ -46,6 +46,9 @@ const MAX_SUMMARIZER_CALLS_PER_PASS = 1;
 // finish. Retry a bounded number of times (with compaction + a nudge) so a
 // context overrun cannot silently end the run with no code produced.
 const MAX_EMPTY_COMPLETIONS = 2;
+// Cap how many times the agent may pause to ask the user, so a confused model
+// can't turn the run into a questionnaire. Each ask blocks on the user's reply.
+const MAX_CLARIFICATIONS = 6;
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
 
 const stripLineNumberPrefixes = (s) => s.split('\n').map(l => l.replace(/^\d+:\s*/, '')).join('\n');
@@ -824,6 +827,7 @@ export async function sendWithRetrieval({
   signal,
   onRetrieval,
   onToolProgress,
+  onClarify,
   githubContext,
   fileTree,
   _fileSizes,
@@ -892,6 +896,8 @@ export async function sendWithRetrieval({
   let lastNewInfoRound = -Infinity;
   // Bounded retries when a round returns neither text nor tool calls.
   let emptyCompletions = 0;
+  // How many times the agent has paused to ask the user this run.
+  let clarifyCount = 0;
   // Names of tools actually sent to the model this round. Used by the
   // execution-time gate to block hallucinated calls to tools that are not in
   // the round's tool list.
@@ -1486,6 +1492,70 @@ export async function sendWithRetrieval({
               success: true,
               content: `[Mode set to "${targetMode}". ${targetMode === 'edit' ? `Available tools now: ${editToolList}. If you need to search the codebase again, call set_mode("research").` : 'All search, read, graph and editing tools are available again.'}]`,
             },
+            error: null,
+          });
+          continue;
+        }
+        if (tc.name === 'ask_user') {
+          // Clarification is a harness pause: hand the question to the caller's
+          // UI and block until the user answers, then feed the answer back as
+          // the tool result so the model continues with real requirements.
+          const question = typeof tc.arguments?.question === 'string' ? tc.arguments.question.trim() : '';
+          let options = tc.arguments?.options;
+          if (typeof options === 'string') {
+            const raw = options.trim();
+            try {
+              const parsed = JSON.parse(raw);
+              options = Array.isArray(parsed) ? parsed : undefined;
+            } catch {
+              options = raw ? raw.split(/\s*\n\s*/).map(s => s.trim()).filter(Boolean) : undefined;
+            }
+          }
+          if (!Array.isArray(options)) options = undefined;
+          const context = typeof tc.arguments?.context === 'string' ? tc.arguments.context.trim() : '';
+
+          if (!question) {
+            console.warn(`[ToolRound] ask_user with no question — returning refusal`);
+            onToolProgress?.({ tool: 'ask_user', index: idx + 1, total: totalTools, status: 'done' });
+            toolResults.push({
+              tc,
+              result: { success: false, content: 'ask_user requires a non-empty "question" parameter. Either ask one clear question, or proceed with your best assumption and state it.' },
+              error: null,
+            });
+            continue;
+          }
+
+          if (typeof onClarify !== 'function' || clarifyCount >= MAX_CLARIFICATIONS) {
+            const why = typeof onClarify !== 'function'
+              ? 'the user cannot be reached in this context'
+              : `the clarification limit (${MAX_CLARIFICATIONS}) for this task has been reached`;
+            console.warn(`[ToolRound] ask_user unavailable — ${why}`);
+            onToolProgress?.({ tool: 'ask_user', index: idx + 1, total: totalTools, status: 'done' });
+            toolResults.push({
+              tc,
+              result: { success: true, content: `[You cannot ask the user right now (${why}). Decide using your best judgment, state the assumption explicitly in your response, and continue the task.]` },
+              error: null,
+            });
+            continue;
+          }
+
+          clarifyCount++;
+          console.warn(`[ToolRound] ask_user (${clarifyCount}/${MAX_CLARIFICATIONS}) at round ${rounds + 1}: "${question.slice(0, 120)}"`);
+          onToolProgress?.({ tool: 'ask_user', index: idx + 1, total: totalTools, status: 'executing' });
+          let answer = '';
+          try {
+            answer = await onClarify({ question, options, context, round: rounds + 1 });
+          } catch (e) {
+            console.warn(`[ToolRound] ask_user onClarify failed: ${e.message}`);
+            answer = '';
+          }
+          onToolProgress?.({ tool: 'ask_user', index: idx + 1, total: totalTools, status: 'done' });
+          const answerText = answer == null || String(answer).trim() === ''
+            ? '(the user gave no answer — proceed with your best assumption and state it clearly)'
+            : String(answer).trim();
+          toolResults.push({
+            tc,
+            result: { success: true, content: `[User answered: ${answerText}]` },
             error: null,
           });
           continue;
