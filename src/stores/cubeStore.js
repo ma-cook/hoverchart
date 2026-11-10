@@ -74,7 +74,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
   cubes: new Map(), // Map of cubeId -> cube state
   selectedCubes: new Set(), // Set of selected cube IDs
   transformingCubes: new Set(), // Set of cubes currently being transformed
-  _unmodifiedVersion: 0, // Version counter bumped only when unmodified-relevant data changes
+  _unmodifiedVersion: 0, // Version counter bumped when unmodified- or label-relevant data changes
 
   // Actions
   createCube: (cubeId, initialState = {}) =>
@@ -150,7 +150,7 @@ const useCubeStore = createWithEqualityFn((set, get) => ({
       const newCubes = new Map(state.cubes);
       newCubes.set(cubeId, { ...existing, ...updates });
 
-      const relevantKeys = ['faceColors', 'faceTexts', 'headerText'];
+      const relevantKeys = ['faceColors', 'faceTexts', 'headerText', 'textStyle'];
       const hasRelevantChange =
         relevantKeys.some((k) => k in updates && !Object.is(existing[k], updates[k]));
       return {

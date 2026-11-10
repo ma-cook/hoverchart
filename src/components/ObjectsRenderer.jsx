@@ -1175,6 +1175,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
   const namedCubeLabels = useMemo(() => {
     void mountedVersion; // invalidation: cubeArrRef content changes bump it
     void lodVersion; // invalidation: LOD transitions add/remove labels
+    void unmodifiedVersion; // invalidation: header text/style edits
     const lodLevels = useLODStore.getState().lodLevels;
     const childParentMap = useLODStore.getState().childParentMap;
     const parentIds = useLODStore.getState().parentIds;
@@ -1184,11 +1185,10 @@ const [mountedVersion, setMountedVersion] = useState(0);
       if (!obj.headerText) continue;
       if (obj.merfolkData?.isContainer || obj.merfolkData?.isRepoContainer) continue;
       // LOD-aware: only cubes actually drawn at full detail get instanced name
-      // labels — that includes internal members whose parent component is FULL.
-      // Non-FULL cubes are distance-culled by InstancedAtlasText anyway, so
-      // labels for them are wasted atlas rasterization work during import (the
-      // leak that made ~2000 far cubes render full detail before the mass
-      // downgrade).  With LOD off every label shows (levels map is empty).
+      // labels - that includes internal members whose parent component is FULL.
+      // Skipping non-FULL cubes avoids rasterizing labels for objects that are
+      // not drawn at full detail. With LOD off every label shows (levels map
+      // is empty).
       if (lodOn && !isFullDetailVisible(obj.id, lodLevels, childParentMap, parentIds)) continue;
       if (!unmodifiedCubeIds.has(obj.id)) continue;
       if (selectedId === obj.id) continue;
@@ -1205,7 +1205,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
       });
     }
     return out;
-  }, [mountedVersion, lodVersion, unmodifiedCubeIds, selectedId]);
+  }, [mountedVersion, lodVersion, unmodifiedVersion, unmodifiedCubeIds, selectedId]);
 
   // Click handler for the instanced full-LOD renderer — selects the cube,
   // which promotes it to a full <Cube> component on next render.
@@ -1407,6 +1407,7 @@ const [mountedVersion, setMountedVersion] = useState(0);
         labels={namedCubeLabels}
         renderOrder={25}
         scale={1}
+        maxDistance={Infinity}
       />
       
       {/* Render all individual objects */}
