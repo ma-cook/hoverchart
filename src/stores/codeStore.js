@@ -464,6 +464,25 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
     pendingChanges: [...state.pendingChanges, { ...change, status: change.status || 'pending' }],
   })),
 
+  upsertPendingChange: (change) => set((state) => {
+    const index = state.pendingChanges.findIndex((c) => c.filePath === change.filePath);
+    if (index === -1) {
+      return {
+        pendingChanges: [...state.pendingChanges, { ...change, status: change.status || 'pending' }],
+      };
+    }
+
+    const existing = state.pendingChanges[index];
+    const next = [...state.pendingChanges];
+    next[index] = {
+      ...existing,
+      ...change,
+      original: existing.original ?? change.original,
+      status: change.status || 'pending',
+    };
+    return { pendingChanges: next };
+  }),
+
   addPendingChanges: (changes) => set((state) => ({
     pendingChanges: [...state.pendingChanges, ...changes.map(c => ({ ...c, status: c.status || 'pending' }))],
   })),

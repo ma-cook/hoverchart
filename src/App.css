@@ -2513,6 +2513,94 @@ body {
   border-radius: 4px;
 }
 
+.code-window-body .code-workspace-editor {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  box-sizing: border-box;
+  tab-size: 2;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.25) transparent;
+}
+
+.code-window-body .code-workspace-editor[readonly] {
+  color: #b8c0cc;
+  cursor: default;
+}
+
+.code-window-body .code-workspace-editor::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.code-window-body .code-workspace-editor::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.25);
+  border-radius: 4px;
+}
+
+.code-window-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: #252526;
+}
+
+.code-window-save-error,
+.code-window-readonly-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.code-window-save-error {
+  color: #ff6b6b;
+}
+
+.code-window-readonly-hint {
+  color: #888;
+}
+
+.code-window-save {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: 1px solid rgba(204, 133, 0, 0.5);
+  border-radius: 4px;
+  background: rgba(204, 133, 0, 0.18);
+  color: #ffb733;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.code-window-save:hover:not(:disabled) {
+  background: rgba(204, 133, 0, 0.3);
+  border-color: rgba(255, 183, 51, 0.7);
+}
+
+.code-window-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .code-workspace-file-info {
   display: flex;
   align-items: center;

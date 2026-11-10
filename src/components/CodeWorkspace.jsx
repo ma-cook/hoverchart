@@ -1,8 +1,14 @@
-import { useEffect, useCallback, useRef, useState, useMemo } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import useCodeStore from '../stores/codeStore';
-import useConnectionStore from '../stores/connectionStore';
 import { useObjectsStore } from '../stores';
-import { getCodeForObject, resolveCodeInfo, ensureObjectCodeAvailable } from '../services/objectCodeService';
+import {
+  getCodeForObject,
+  resolveCodeInfo,
+  ensureObjectCodeAvailable,
+  ensureFullFileContent,
+  buildEditedFullFile,
+  sliceCodeRange,
+} from '../services/objectCodeService';
 import {
   SPACE_CHAT_DEFAULT_WIDTH,
   SPACE_CHAT_DEFAULT_HEIGHT,
@@ -33,140 +39,10 @@ const DEFAULT_WINDOW_LAYOUT = {
   height: SPACE_CHAT_DEFAULT_HEIGHT,
 };
 
-const SOURCE_LINE_STYLE = {
-  background: 'rgba(34, 197, 94, 0.24)',
-  boxShadow: 'inset 3px 0 0 #22c55e',
-  display: 'block',
-};
-const DESTINATION_LINE_STYLE = {
-  background: 'rgba(59, 130, 246, 0.28)',
-  boxShadow: 'inset 3px 0 0 #3b82f6',
-  display: 'block',
-};
-const PLAIN_LINE_STYLE = { display: 'block' };
-
-const HIGHLIGHT_STOP_WORDS = new Set([
-  'calls', 'call', 'uses', 'use', 'imports', 'import', 'renders', 'render',
-  'receives', 'connect', 'connects', 'from', 'with', 'and', 'the', 'out',
-  'data', 'flow', 'component', 'function', 'hook', 'store', 'service',
-  'utility', 'ui', 'camera', 'connections', 'displays', 'contains',
-]);
-
-const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-function getEndpointIds(connection) {
-  return {
-    source: String(
-      connection?.start?.objectId ?? connection?.start?.cube?.id ?? connection?.start?.id ?? ''
-    ),
-    target: String(
-      connection?.end?.objectId ?? connection?.end?.cube?.id ?? connection?.end?.id ?? ''
-    ),
-  };
-}
-
-function collectRelationshipTokens(connection, objectData, isSource, objects) {
-  const md = connection?.merfolkData || {};
-  const otherNode = isSource ? md.targetNode : md.sourceNode;
-  const ownNode = isSource ? md.sourceNode : md.targetNode;
-  const endpointIds = getEndpointIds(connection);
-  const otherObjectId = isSource ? endpointIds.target : endpointIds.source;
-  const otherObject = objects.find((obj) => String(obj.id) === otherObjectId);
-
-  const candidates = [
-    otherNode,
-    otherObject?.merfolkData?.nodeId,
-    otherObject?.headerText,
-    otherObject?.merfolkData?.name,
-  ];
-
-  const label = connection?.text || connection?.label || md.label || '';
-  label
-    .split(/[^A-Za-z0-9_$]+/)
-    .filter((token) => token.length >= 3 && !HIGHLIGHT_STOP_WORDS.has(token.toLowerCase()))
-    .forEach((token) => candidates.push(token));
-
-  const seen = new Set();
-  const tokens = [];
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string') continue;
-    const trimmed = candidate.trim();
-    if (trimmed.length < 2 || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    tokens.push(trimmed);
-  }
-
-  const ownNames = [
-    ownNode,
-    objectData?.merfolkData?.nodeId,
-    objectData?.headerText,
-    objectData?.merfolkData?.name,
-  ].filter((token) => typeof token === 'string' && token.trim().length >= 2);
-
-  return { tokens, ownNames };
-}
-
-function findRelationshipLines(code, tokens, ownNames, exactRange) {
-  const lines = code.split('\n');
-  if (exactRange) {
-    const selected = [];
-    for (let i = exactRange.start; i <= exactRange.end; i += 1) {
-      if (i >= 1 && i <= lines.length) selected.push(i - 1);
-    }
-    if (selected.length > 0) return { lines: selected, mode: 'exact' };
-  }
-
-  const scoreWithTokens = (candidateTokens, isFallback) => {
-    const scores = new Map();
-    for (const token of candidateTokens) {
-      if (!token) continue;
-      const word = new RegExp(`\\b${escapeRegExp(token)}\\b`);
-      const importUse = new RegExp(
-        `(?:import|require|from)\\b[^\\n]*\\b${escapeRegExp(token)}\\b|\\b${escapeRegExp(token)}\\b[^\\n]*(?:from|require)`
-      );
-      const callUse = new RegExp(`\\b${escapeRegExp(token)}\\s*\\(`);
-      const jsxUse = new RegExp(`<\\s*${escapeRegExp(token)}\\b`);
-      const memberUse = new RegExp(`\\.\\s*${escapeRegExp(token)}\\b`);
-
-      lines.forEach((line, index) => {
-        let score = 0;
-        if (importUse.test(line)) score = 4;
-        else if (callUse.test(line) || jsxUse.test(line)) score = 4;
-        else if (memberUse.test(line)) score = 3;
-        else if (word.test(line)) score = isFallback ? 1 : 2;
-        if (score > 0) scores.set(index, Math.max(scores.get(index) || 0, score));
-      });
-    }
-    return scores;
-  };
-
-  const primaryScores = scoreWithTokens(tokens, false);
-  if (primaryScores.size > 0) {
-    const maxScore = Math.max(...primaryScores.values());
-    const threshold = maxScore >= 3 ? 3 : 2;
-    const selected = [...primaryScores.entries()]
-      .filter(([, score]) => score >= threshold)
-      .map(([index]) => index)
-      .sort((a, b) => a - b)
-      .slice(0, 12);
-    if (selected.length > 0) return { lines: selected, mode: 'relationship' };
-  }
-
-  const ownScores = scoreWithTokens(ownNames, true);
-  if (ownScores.size > 0) {
-    const selected = [...ownScores.keys()].sort((a, b) => a - b).slice(0, 8);
-    return { lines: selected, mode: 'endpoint' };
-  }
-
-  const firstNonEmpty = lines.findIndex((line) => line.trim().length > 0);
-  return { lines: firstNonEmpty >= 0 ? [firstNonEmpty] : [], mode: 'fallback' };
-}
-
 const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
   const layout = useCodeStore((s) => s.codeWindowLayouts?.[windowId]);
   const setCodeWindowLayout = useCodeStore((s) => s.setCodeWindowLayout);
   const closeCodeWindow = useCodeStore((s) => s.closeCodeWindow);
-  const followActiveConnectionId = useCodeStore((s) => s.followActiveConnectionId);
 
   const currentLayout = layout && layout.x != null && layout.y != null
     ? layout
@@ -300,90 +176,91 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
     'Code';
   const showLoading = code == null && !!filePath && !loadState.error;
 
-  // Colourize the source side green and the destination side blue while the
-  // camera is following this exact connection.
-  const highlight = useMemo(() => {
-    if (!followActiveConnectionId || !objectData || typeof code !== 'string' || code.length === 0) {
-      return null;
-    }
-    const connection = useConnectionStore
-      .getState()
-      .connections?.find((candidate) => String(candidate.id) === String(followActiveConnectionId));
-    if (!connection) return null;
+  const pendingChanges = useCodeStore((s) => s.pendingChanges);
+  const pendingChange = filePath
+    ? pendingChanges.find((change) => change.filePath === filePath)
+    : null;
+  const pendingDisplay = pendingChange?.codeObjectId != null
+    && String(pendingChange.codeObjectId) === String(objectId)
+    && typeof pendingChange.proposed === 'string'
+    ? sliceCodeRange(
+        pendingChange.proposed,
+        pendingChange.displayStartLine,
+        pendingChange.displayEndLine
+      )
+    : null;
+  const displayedCode = pendingDisplay ?? (typeof code === 'string' ? code : null);
 
-    const endpointIds = getEndpointIds(connection);
-    const isSource = endpointIds.source === String(objectId);
-    const isDestination = endpointIds.target === String(objectId);
-    if (!isSource && !isDestination) return null;
-
-    const md = connection.merfolkData || {};
-    const direction = isSource ? 'source' : 'destination';
-    const objects = useObjectsStore.getState().objects || [];
-    const { tokens, ownNames } = collectRelationshipTokens(connection, objectData, isSource, objects);
-
-    // Support exact per-endpoint scan metadata when present. Values are
-    // absolute file line numbers, so convert them to displayed-code indices.
-    const relStart =
-      md[`${direction}RelStartLine`] ??
-      md[`${direction}RelationshipStartLine`] ??
-      md[`${direction}StartLine`];
-    const relEnd =
-      md[`${direction}RelEndLine`] ??
-      md[`${direction}RelationshipEndLine`] ??
-      md[`${direction}EndLine`];
-    const relFile = md[`${direction}RelFilePath`] ?? md.relFilePath ?? md.relationshipFilePath;
-
-    let exactRange = null;
-    if (
-      relStart != null &&
-      relEnd != null &&
-      (!relFile || !filePath || relFile === filePath)
-    ) {
-      const displayStart = Number(codeInfo.startLine) || 1;
-      exactRange = {
-        start: Number(relStart) - displayStart + 1,
-        end: Number(relEnd) - displayStart + 1,
-      };
-    }
-
-    const result = findRelationshipLines(code, tokens, ownNames, exactRange);
-    if (!result.lines.length) return null;
-    return {
-      direction,
-      lines: new Set(result.lines),
-      mode: result.mode,
-    };
-  }, [followActiveConnectionId, objectId, objectData, code, filePath, codeInfo.startLine]);
-
-  const highlightStyle = highlight?.direction === 'source'
-    ? SOURCE_LINE_STYLE
-    : DESTINATION_LINE_STYLE;
-
-  const preRef = useRef(null);
-  const lastScrolledKey = useRef('');
+  const [draft, setDraft] = useState('');
+  const [savedDraft, setSavedDraft] = useState('');
+  const [saveError, setSaveError] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!highlight || !preRef.current) return;
-    const lineIndices = [...highlight.lines];
-    if (lineIndices.length === 0) return;
-    const key = `${followActiveConnectionId}:${objectId}:${lineIndices.join(',')}`;
-    if (lastScrolledKey.current === key) return;
-    lastScrolledKey.current = key;
+    if (typeof displayedCode !== 'string') return;
+    if (draft !== savedDraft) {
+      setSavedDraft(displayedCode);
+      return;
+    }
+    setDraft(displayedCode);
+    setSavedDraft(displayedCode);
+    setSaveError(null);
+  }, [displayedCode, draft, savedDraft]);
 
-    const container = preRef.current;
-    const firstIdx = lineIndices[0];
-    const codeEl = container.querySelector('.code-workspace-code');
-    const target = codeEl?.children?.[firstIdx] || container.querySelector(`[data-code-highlight="${highlight.direction}"]`);
-    if (!target) return;
+  const canEdit = !!filePath && typeof displayedCode === 'string';
+  const isDirty = canEdit && draft !== savedDraft;
 
-    requestAnimationFrame(() => {
-      try {
-        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      } catch {
-        // Fallback for environments without smooth scroll
+  const handleSave = useCallback(async () => {
+    if (!canEdit || !isDirty) return;
+
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const state = useCodeStore.getState();
+      const existing = state.pendingChanges.find((change) => change.filePath === filePath);
+      const original = existing ? existing.original : await ensureFullFileContent(filePath, { repo, commitSha });
+      const base = existing?.proposed ?? original;
+
+      if (typeof base !== 'string') {
+        throw new Error('Unable to load the full file for review.');
       }
-    });
-  }, [highlight, followActiveConnectionId, objectId]);
+
+      const proposed = buildEditedFullFile({
+        fullContent: base,
+        displayedContent: savedDraft,
+        editedContent: draft,
+        startLine: codeInfo.startLine,
+        endLine: codeInfo.endLine,
+      });
+
+      if (proposed == null) {
+        throw new Error('Could not map this edit back to the source file.');
+      }
+
+      const displayStartLine = codeInfo.startLine != null ? Number(codeInfo.startLine) : undefined;
+      const displayEndLine = displayStartLine != null
+        ? displayStartLine + draft.split('\n').length - 1
+        : undefined;
+      const fileExists = typeof original === 'string';
+      state.upsertPendingChange({
+        filePath,
+        original: fileExists ? original : null,
+        proposed,
+        fullContent: fileExists,
+        isWholeFileProposal: false,
+        action: fileExists ? 'modify' : 'create',
+        request: `Manual code edit: ${filePath}`,
+        codeObjectId: objectId,
+        displayStartLine,
+        displayEndLine,
+      });
+      setSavedDraft(draft);
+    } catch (err) {
+      setSaveError(err?.message || 'Failed to save edit.');
+    } finally {
+      setSaving(false);
+    }
+  }, [canEdit, isDirty, filePath, repo, commitSha, savedDraft, draft, codeInfo.startLine, codeInfo.endLine, objectId]);
 
   return (
     <div
@@ -421,24 +298,19 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
       <div className="space-chat-resize-handle space-chat-resize-corner" onMouseDown={(e) => handleResizeStart('corner', e)} />
 
       <div className="code-workspace-body code-window-body">
-        {code != null ? (
-          <pre ref={preRef} className="code-workspace-pre">
-            <code className={`code-workspace-code language-${language}`}>
-              {highlight && typeof code === 'string' ? (
-                code.split('\n').map((line, idx) => (
-                  <div
-                    key={idx}
-                    data-code-highlight={highlight.lines.has(idx) ? highlight.direction : undefined}
-                    style={highlight.lines.has(idx) ? highlightStyle : PLAIN_LINE_STYLE}
-                  >
-                    {line}
-                  </div>
-                ))
-              ) : (
-                code
-              )}
-            </code>
-          </pre>
+        {displayedCode != null ? (
+          <textarea
+            className={`code-workspace-editor code-window-editor language-${language}`}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              if (saveError) setSaveError(null);
+            }}
+            readOnly={!filePath}
+            spellCheck={false}
+            wrap="off"
+            aria-label={`Code for ${filePath || title}`}
+          />
         ) : showLoading ? (
           <div style={{ padding: '18px', color: '#b8c0cc', fontFamily: 'monospace', fontSize: '13px' }}>
             Loading code...
@@ -461,6 +333,27 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
           </div>
         )}
       </div>
+      {(isDirty || saveError || (typeof displayedCode === 'string' && !filePath)) && (
+        <div className="code-window-footer">
+          {saveError ? (
+            <span className="code-window-save-error" title={saveError}>{saveError}</span>
+          ) : typeof displayedCode === 'string' && !filePath ? (
+            <span className="code-window-readonly-hint">
+              Read-only: no repository file is associated with this object.
+            </span>
+          ) : null}
+          {isDirty && (
+            <button
+              className="code-window-save"
+              onClick={handleSave}
+              disabled={saving}
+              title="Save edit for review"
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };

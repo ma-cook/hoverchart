@@ -34,6 +34,99 @@ const sliceRange = (text, startLine, endLine) => {
   return lines.slice(start - 1, end).join('\n');
 };
 
+export const sliceCodeRange = sliceRange;
+
+export function getCachedFullFileContent(filePath) {
+  if (!filePath) return null;
+  const raw = useCodeStore.getState().repoFileContents?.[filePath];
+  if (typeof raw === 'string') return raw;
+
+  const contentStore = getContentStore();
+  const entry = contentStore.getEntry(`${CONTENT_ID_PREFIX}${filePath}`);
+  if (entry?.chunks?.length > 0) {
+    return joinChunks(entry.chunks);
+  }
+  return null;
+}
+
+export async function ensureFullFileContent(filePath, repoContext) {
+  if (!filePath) return null;
+
+  const cached = getCachedFullFileContent(filePath);
+  if (cached != null) return cached;
+
+  const { owner, repoName, branch } = resolveRepoCoordinates(repoContext);
+  if (!owner || !repoName) return null;
+
+  const ref = repoContext?.commitSha || branch || undefined;
+  const text = await fetchFileContent(owner, repoName, filePath, undefined, ref);
+  if (typeof text === 'string') {
+    useCodeStore.getState().cacheRepoFileContent(filePath, text);
+    return text;
+  }
+  return null;
+}
+
+export function buildEditedFullFile({
+  fullContent,
+  displayedContent,
+  editedContent,
+  startLine,
+  endLine,
+}) {
+  if (typeof fullContent !== 'string') return null;
+
+  const eol = fullContent.includes('\r\n') ? '\r\n' : '\n';
+  const full = fullContent.replace(/\r\n/g, '\n');
+  const displayed = (displayedContent ?? '').replace(/\r\n/g, '\n');
+  const edited = (editedContent ?? '').replace(/\r\n/g, '\n');
+  const restoreEol = (value) => (eol === '\r\n' ? value.replace(/\n/g, '\r\n') : value);
+
+  if (displayed === full) {
+    return restoreEol(edited);
+  }
+
+  if (displayed.length > 0) {
+    const occurrences = [];
+    let index = full.indexOf(displayed);
+    while (index !== -1) {
+      occurrences.push(index);
+      index = full.indexOf(displayed, index + 1);
+    }
+
+    if (occurrences.length > 0) {
+      const start = Number(startLine);
+      const targetLine = Number.isFinite(start) && start > 0 ? start - 1 : 0;
+      const bestIndex = occurrences.reduce((best, candidate) => {
+        const bestLine = full.slice(0, best).split('\n').length - 1;
+        const candidateLine = full.slice(0, candidate).split('\n').length - 1;
+        return Math.abs(candidateLine - targetLine) < Math.abs(bestLine - targetLine)
+          ? candidate
+          : best;
+      }, occurrences[0]);
+      return restoreEol(
+        full.slice(0, bestIndex) + edited + full.slice(bestIndex + displayed.length)
+      );
+    }
+
+    return null;
+  }
+
+  const start = Number(startLine);
+  const end = Number(endLine);
+  if (Number.isFinite(start) && Number.isFinite(end) && start >= 1 && end >= start) {
+    const lines = full.split('\n');
+    const next = [
+      ...lines.slice(0, start - 1),
+      ...edited.split('\n'),
+      ...lines.slice(end),
+    ].join('\n');
+    return restoreEol(next);
+  }
+
+  return null;
+}
+
 /**
  * Resolve the code location for an object with the full precedence chain:
  *   1. The object's own merfolkData/metadata (parsed/inline association).

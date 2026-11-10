@@ -107,6 +107,13 @@ export const positionMethods = {
           }
         }
         rowCellsX.push(cellsX);
+        // A grid whose size leaves a trailing empty row (e.g. 2 or 5 root
+        // objects) has nothing to centre — guard before dereferencing the
+        // first/last entries of that empty row.
+        if (cellsX.length === 0) {
+          rowCenterOffset.push(0);
+          continue;
+        }
         const first = entries[r * gridSize];
         const last = entries[r * gridSize + cellsX.length - 1];
         rowCenterOffset.push(
@@ -694,6 +701,10 @@ export const positionMethods = {
     const moveComponentTree = (nodeId, offsetX, offsetZ, visited = new Set()) => {
       if (visited.has(nodeId)) return;
       visited.add(nodeId);
+
+      // Never displace an anchored (pinned) object or its subtree: collision
+      // resolution must push the new/unpinned cluster instead.
+      if (context.pinnedSet && context.pinnedSet.has(nodeId)) return;
 
       const position = nodePositions.get(nodeId);
       if (!position) return;
@@ -1331,6 +1342,11 @@ export const positionMethods = {
       .filter(([, nodes]) => nodes.length > 0)
       .sort(([a], [b]) => a.localeCompare(b)); // deterministic ordering
 
+    // Groups that were re-laid-out this pass (because they gained a member).
+    // Their children are repositioned in step 8; unchanged groups are left
+    // exactly where they were pinned.
+    const repositionedGroups = new Set();
+
     if (groupEntries.length > 0) {
       const rootWidth = rootHierarchyBounds.maxX - rootHierarchyBounds.minX;
       const rootDepth = rootHierarchyBounds.maxZ - rootHierarchyBounds.minZ;
@@ -1377,7 +1393,7 @@ export const positionMethods = {
         }
       }
 
-      groupEntries.forEach(([, nodes], index) => {
+      groupEntries.forEach(([groupKey, nodes], index) => {
         // Start from left side (-π) and distribute evenly
         const angle = -Math.PI + index * angleStep;
         const xOffset =
@@ -1385,9 +1401,19 @@ export const positionMethods = {
         const zOffset =
           Math.sin(angle) * minPlacementRadius + rootCenterZOffset;
 
-        // Filter out pinned nodes from group positioning
-        const nodesToPosition = nodes.filter(n => !(context.pinnedSet && context.pinnedSet.has(n)));
-        positionGroup(nodesToPosition, xOffset, groupContainerYOffset, zOffset);
+        // An unchanged group keeps every member pinned where it already is.
+        // As soon as ONE new member joins the group the WHOLE group is
+        // re-laid-out as a unit: the new member packs in with its existing
+        // siblings instead of being centred on the group origin on its own,
+        // and the group's members are released from the pin so collision
+        // resolution can still nudge the re-packed cluster.
+        const hasNewMember = nodes.some(
+          (n) => !(context.pinnedSet && context.pinnedSet.has(n))
+        );
+        if (!hasNewMember) return;
+        for (const n of nodes) context.pinnedSet?.delete(n);
+        repositionedGroups.add(groupKey);
+        positionGroup(nodes, xOffset, groupContainerYOffset, zOffset);
       });
     }
 
@@ -1438,14 +1464,18 @@ export const positionMethods = {
       nodeScales.set(componentId, scaleResult.nodeScale);
     });
 
-    if (ungroupedComponents.length > 0) {
+    // Same rule as discovered groups: an unchanged ungrouped set keeps its
+    // pinned positions; once it gains a member the whole grid is re-laid-out.
+    const ungroupedHasNewMember = ungroupedComponents.some(
+      (n) => !(context.pinnedSet && context.pinnedSet.has(n))
+    );
+
+    if (ungroupedComponents.length > 0 && ungroupedHasNewMember) {
       const gridSize = Math.ceil(Math.sqrt(ungroupedComponents.length));
       const baseSpacing = 40;
 
       ungroupedComponents.forEach((nodeId, index) => {
-        if (context.pinnedSet && context.pinnedSet.has(nodeId)) {
-          return; // keep pinned position
-        }
+        context.pinnedSet?.delete(nodeId);
         const row = Math.floor(index / gridSize);
         const col = index % gridSize;
         const scale = nodeScales.get(nodeId) || [1, 1, 1];
@@ -1462,7 +1492,8 @@ export const positionMethods = {
     }
 
     // ── 7. Position children of ungrouped components ──────────────────────
-    ungroupedComponents.forEach((componentId) => {
+    // Only needed when the ungrouped grid was re-laid-out this pass.
+    if (ungroupedHasNewMember) ungroupedComponents.forEach((componentId) => {
       const children = context.parentChildMap.get(componentId) || new Set();
       if (children.size > 0) {
         const componentPosition = nodePositions.get(componentId);
@@ -1506,13 +1537,16 @@ export const positionMethods = {
             nodePositions.set(childId, childPosition);
             nodeScales.set(childId, [1, 1, 1]);
             context.processedNodes.add(childId);
+            context.pinnedSet?.delete(childId);
           }
         });
       }
     });
 
-    // ── 8. Position children of ALL grouped nodes (unified) ───────────────
-    for (const [, nodes] of groupedByType) {
+    // ── 8. Position children of grouped nodes that were re-laid-out ───────
+    // Unchanged groups keep their pinned positions (and their children too).
+    for (const [groupKey, nodes] of groupedByType) {
+      if (!repositionedGroups.has(groupKey)) continue;
       nodes.forEach((groupNodeId) => {
         const children = context.parentChildMap.get(groupNodeId) || new Set();
         if (children.size === 0) return;
@@ -1549,6 +1583,7 @@ export const positionMethods = {
             nodePositions.set(childId, childPosition);
             nodeScales.set(childId, [1, 1, 1]);
             context.processedNodes.add(childId);
+            context.pinnedSet?.delete(childId);
           }
         });
       });
