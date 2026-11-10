@@ -22,7 +22,6 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
   const userId = user?.sub || user?.uid;
   const [orgs, setOrgs] = useState([]);
   const [pendingInvites, setPendingInvites] = useState([]);
-  const [expandedOrg, setExpandedOrg] = useState(null);
   const [orgDetails, setOrgDetails] = useState({});
   const [detailsLoading, setDetailsLoading] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -74,8 +73,7 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
 
   const refreshAll = useCallback(async () => {
     await refresh();
-    if (expandedOrg) await loadDetails(expandedOrg);
-  }, [refresh, expandedOrg, loadDetails]);
+  }, [refresh]);
 
   useEffect(() => {
     if (show && user) {
@@ -86,10 +84,9 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
   }, [show, user, refresh]);
 
   useEffect(() => {
-    if (show && expandedOrg) {
-      loadDetails(expandedOrg);
-    }
-  }, [show, expandedOrg, loadDetails]);
+    if (!show) return;
+    orgs.forEach((org) => loadDetails(org.id));
+  }, [show, orgs, loadDetails]);
 
   if (!show) return null;
 
@@ -105,7 +102,6 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
       setCreateMode(false);
       setSuccess('Organization created!');
       setOrgs((prev) => [...prev, newOrg]);
-      setExpandedOrg(newOrg.id);
       onChanged?.();
       await refresh();
     } catch (e) {
@@ -176,7 +172,6 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
     setSuccess('');
     try {
       await leaveOrganization(orgId, userId);
-      setExpandedOrg(null);
       await refresh();
       onChanged?.();
       notify('You have left the organization.', {
@@ -221,7 +216,6 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
     setSuccess('');
     try {
       await deleteOrganization(orgId);
-      setExpandedOrg(null);
       await refresh();
       onChanged?.();
       notify('Organization deleted.', { type: 'success', title: 'Deleted' });
@@ -275,34 +269,30 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
         {pendingInvites.length > 0 && (
           <div className="org-section">
             <h4 className="org-section-title">Pending Invites</h4>
-            {pendingInvites.map(({ org }) => {
-              const memberLimit = org.memberLimit ?? org.member_limit;
-              const memberCount = org.memberCount ?? org.member_count ?? 0;
-              return (
-                <div key={org.id} className="org-invite-card">
-                  <div>
-                    <div className="org-invite-name">{org.name}</div>
-                    <div className="org-invite-meta">
-                      {PLAN_LABELS[org.plan] || org.plan} plan · {memberCount}/{memberLimit} members
-                    </div>
-                  </div>
-                  <div className="org-invite-actions">
-                    <button
-                      className="org-btn org-btn--primary"
-                      onClick={() => handleAcceptInvite(org.id)}
-                    >
-                      Accept
-                    </button>
-                    <button
-                      className="org-btn org-btn--secondary"
-                      onClick={() => handleDeclineInvite(org.id)}
-                    >
-                      Decline
-                    </button>
+            {pendingInvites.map(({ org }) => (
+              <div key={org.id} className="org-invite-card">
+                <div>
+                  <div className="org-invite-name">{org.name}</div>
+                  <div className="org-invite-meta">
+                    {PLAN_LABELS[org.plan] || org.plan} plan
                   </div>
                 </div>
-              );
-            })}
+                <div className="org-invite-actions">
+                  <button
+                    className="org-btn org-btn--primary"
+                    onClick={() => handleAcceptInvite(org.id)}
+                  >
+                    Accept
+                  </button>
+                  <button
+                    className="org-btn org-btn--secondary"
+                    onClick={() => handleDeclineInvite(org.id)}
+                  >
+                    Decline
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -398,15 +388,11 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
                 members.some((m) => m.userId === userId && m.role === 'admin')
             );
             const isAtCapacity = memberCount >= memberLimit;
-            const isExpanded = expandedOrg === org.id;
             const isLoadingDetails = detailsLoading === org.id;
 
             return (
               <div key={org.id} className="org-org-card">
-                <div
-                  className={`org-org-header ${isExpanded ? 'org-org-header--expanded' : ''}`}
-                  onClick={() => setExpandedOrg(isExpanded ? null : org.id)}
-                >
+                <div className="org-org-header">
                   <div className="org-org-heading">
                     <span className="org-org-name">{org.name}</span>
                     <span className="org-badge org-badge--plan">
@@ -414,38 +400,27 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
                     </span>
                     {isAdmin && <span className="org-badge org-badge--admin">Admin</span>}
                   </div>
-                  <div className="org-org-meta">
-                    <span className={`org-count ${isAtCapacity ? 'org-count--full' : ''}`}>
-                      {memberCount}/{memberLimit}
-                    </span>
-                    <span className="org-chevron">{isExpanded ? '▲' : '▼'}</span>
-                  </div>
                 </div>
 
-                {isExpanded && (
-                  <div className="org-expanded">
-                    {isAtCapacity && (
-                      <div className="org-warning">
-                        Organization limit reached ({memberCount}/{memberLimit}). Upgrade
-                        your plan to add more members.
-                      </div>
-                    )}
+                <div className="org-expanded">
+                  {isAtCapacity && (
+                    <div className="org-warning">
+                      Organization limit reached. Upgrade your plan to add more members.
+                    </div>
+                  )}
 
                     <div className="org-control-block">
                       <div className="org-members-header">
-                        <span>
-                          Members ({memberCount}/{memberLimit})
-                        </span>
+                        <span>Members</span>
                         {isAdmin && (
                           <button
                             className="org-btn org-btn--primary org-btn--small"
-                            onClick={(e) => {
-                              e.stopPropagation();
+                            onClick={() =>
                               setInviteOpen((prev) => ({
                                 ...prev,
                                 [org.id]: !prev[org.id],
-                              }));
-                            }}
+                              }))
+                            }
                             disabled={isAtCapacity}
                             title={isAtCapacity ? 'Organization at capacity' : 'Invite users'}
                           >
@@ -588,7 +563,6 @@ export const OrganizationManager = React.memo(({ user, show, onClose, onChanged 
                       </button>
                     )}
                   </div>
-                )}
               </div>
             );
           })}

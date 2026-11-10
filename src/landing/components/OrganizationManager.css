@@ -254,12 +254,6 @@
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  cursor: pointer;
-  transition: background-color 120ms ease;
-}
-
-.org-org-header:hover,
-.org-org-header--expanded {
   background: #202025;
 }
 
@@ -296,28 +290,6 @@
   background: rgba(204, 133, 0, 0.16);
   color: #ffb733;
   border-color: rgba(204, 133, 0, 0.45);
-}
-
-.org-org-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.org-count {
-  font-size: 13px;
-  color: #999999;
-}
-
-.org-count--full {
-  color: #ffb733;
-  font-weight: 600;
-}
-
-.org-chevron {
-  color: #777777;
-  font-size: 12px;
 }
 
 .org-expanded {
