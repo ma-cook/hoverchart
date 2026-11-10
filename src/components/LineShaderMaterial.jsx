@@ -1,4 +1,4 @@
-import { ShaderMaterial } from 'three';
+import { ShaderMaterial, Vector2 } from 'three';
 import vertexShader from '../shaders/line.vert.glsl';
 import fragmentShader from '../shaders/line.frag.glsl';
 
@@ -7,7 +7,7 @@ const LineShaderMaterial = new ShaderMaterial({
   fragmentShader,
   uniforms: {
     linewidth: { value: 1 },
-    resolution: { value: { x: window.innerWidth, y: window.innerHeight } },
+    resolution: { value: new Vector2(window.innerWidth, window.innerHeight) },
     opacity: { value: 1.0 },
     glowWidth: { value: 5.0 },      // Quad expansion factor (1 = no glow, higher = wider halo)
     glowIntensity: { value: 0.85 }, // Peak glow alpha where the halo meets the core

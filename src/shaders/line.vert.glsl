@@ -3,6 +3,9 @@ precision highp float;
 attribute vec3 instanceStart;
 attribute vec3 instanceEnd;
 attribute vec3 instanceColor;
+// Per-instance width multiplier (1 = default).  Geometries that do not
+// provide this attribute bind the default value 0, which maps to 1 below.
+attribute float instanceWidth;
 
 uniform float linewidth;
 uniform vec2 resolution;
@@ -23,12 +26,13 @@ void main() {
     float len = length(ndcDir);
     vec2 dir = len > 0.0 ? ndcDir / len : vec2(1.0, 0.0);
 
-    vec2 offset = vec2(-dir.y, dir.x) * linewidth * glowWidth / resolution.y;
+    float widthScale = instanceWidth > 0.0 ? instanceWidth : 1.0;
+    vec2 offset = vec2(-dir.y, dir.x) * linewidth * widthScale * glowWidth / resolution.y;
 
     vec4 clipPosition = mix(clipStart, clipEnd, position.x);
     clipPosition.xy += offset * position.y * clipPosition.w;
 
-    float extend = linewidth * glowWidth / resolution.y * 0.5;
+    float extend = linewidth * widthScale * glowWidth / resolution.y * 0.5;
     float extendSign = position.x * 2.0 - 1.0;
     clipPosition.xy += dir * extend * extendSign * clipPosition.w;
 

@@ -2,6 +2,7 @@ import { useRef, useMemo, forwardRef, useImperativeHandle, useEffect, useCallbac
 import * as THREE from 'three';
 import { extend, useThree } from '@react-three/fiber';
 import LineShaderMaterial from './LineShaderMaterial';
+import { createLineMaterial } from '../utils/lineMaterialFactory';
 
 extend({ LineShaderMaterial });
 
@@ -233,11 +234,15 @@ const InstancedLine = forwardRef(
       }
     }, [geometry, count, lineWidth, camera]);
 
-    // GPU RESOURCE FIX: Create material ONCE and dispose on unmount
+    // GPU RESOURCE FIX: Create material ONCE and dispose on unmount.
+    // Glow overrides are applied at creation so the first rendered frame
+    // already matches the requested appearance (no halo flash on mount).
     const material = useMemo(() => {
-      const mat = LineShaderMaterial.clone();
+      const mat = createLineMaterial({ lineWidth, glowWidth, glowIntensity });
       materialRef.current = mat;
       return mat;
+      // Prop updates are applied by the uniforms effects below.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // GPU RESOURCE FIX: Dispose material on unmount

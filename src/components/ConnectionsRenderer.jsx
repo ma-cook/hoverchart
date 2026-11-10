@@ -3,8 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { acquireBudget, isCameraMoving, isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
 
 import InstancedLine from './InstancedLine';
-import BatchedConnectionLines from './BatchedConnectionLines';
-import BatchedCurvedLines from './BatchedCurvedLines';
+import ConnectionLinesRenderer from './ConnectionLinesRenderer';
 import ConnectionArrowheads from './ConnectionArrowheads';
 import AtlasTextSprite from './AtlasTextSprite';
 import DistanceFilteredTextLabels from './DistanceFilteredTextLabels';
@@ -257,6 +256,9 @@ const Connection = React.memo(
     onLineTextSubmit,
     onLineTextStyleChange,
     isFollowHighlighted,
+    // Solid connection lines are drawn by ConnectionLinesRenderer; individual
+    // Connection components only render text/UI for those.
+    renderLine = true,
     // PERFORMANCE: Pass store state as props to avoid individual subscriptions
     _selectedConnection,
     // PERFORMANCE: Single hash computed once in the parent for ALL objects,
@@ -739,7 +741,7 @@ const Connection = React.memo(
       >
         {/* Conditional line rendering based on line style */}
         {/* Extract base style (without direction suffix like '-right', '-left') */}
-        {(() => {
+        {renderLine && (() => {
           const baseStyle = effectiveLineStyle.split('-')[0]; // 'dashed-right' -> 'dashed'
 
           // Render solid lines (straight path or curved path) using InstancedLine
@@ -868,6 +870,7 @@ const Connection = React.memo(
     if (prevProps.objectsPositionHash !== nextProps.objectsPositionHash) return false;
 
     if (prevProps.isFollowHighlighted !== nextProps.isFollowHighlighted) return false;
+    if (prevProps.renderLine !== nextProps.renderLine) return false;
 
     // Only re-render if the connection data actually changed
     const connectionChanged =
@@ -1092,7 +1095,7 @@ const ConnectionsRenderer = ({
   // (which overwhelms the GPU with pathfinding, buffer builds, text atlas
   // entries, and component mounting), we spread work across frames.
   //
-  // Batched renderers (BatchedConnectionLines, BatchedCurvedLines) receive
+  // The unified connection renderer receives
   // only the progressively-mounted subset. Because they use instanced
   // single-draw-call rendering, incremental buffer growth is cheap.
   // ──────────────────────────────────────────────────────────────────
@@ -1266,7 +1269,7 @@ const ConnectionsRenderer = ({
 
   // PERFORMANCE: Build object positions map for batched rendering
   // NOTE: This uses object CENTER positions - connections store their face positions
-  // BatchedConnectionLines uses connection.start/end.position for accurate face positions
+  // ConnectionLinesRenderer uses connection.start/end.position for accurate face positions
   const objectPositions = useMemo(() => {
     const map = new Map();
     if (!objects?.length) return map;
@@ -1284,7 +1287,7 @@ const ConnectionsRenderer = ({
   // pathfindingObjects only gets a new reference when real positions change (the objectsStore
   // setObjects function guards against spurious updates via its own position hash check).
   const prevPathfindingObjectsRef = useRef(null);
-  const lastCategorizationRef = useRef({ batchedConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
+  const lastCategorizationRef = useRef({ solidConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
   const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null, highlightedFlowPathIds: null, followActiveConnectionId: null });
 
   // NOTE: pathfindingHash was removed - it had 0.5-unit resolution which meant object moves
@@ -1292,11 +1295,11 @@ const ConnectionsRenderer = ({
   // already only changes when actual positions change (store hash guard), use it directly.
 
   // PERFORMANCE: Separate connections into categories for optimal rendering
-  // - batchedConnections: straight lines without text/selection that don't intersect objects (single draw call)
-  // - textConnections: straight lines with text only (batch lines + individual text sprites)
-  // - curvedConnections: straight-style connections that need curved paths due to intersections (batched curved rendering)
-  // - individualConnections: selected, non-straight styles (dashed/dotted), or those needing full UI
-  const { batchedConnections, textConnections, curvedConnections, individualConnections } = useMemo(() => {
+  // - solidConnections: every straight/curved solid line (single shader draw call)
+  // - textConnections: straight lines with text only (unified line + individual text sprites)
+  // - curvedConnections: subset of solidConnections that needs pathfinding (curved segments)
+  // - individualConnections: dashed/dotted lines and UI-only entries (text, LineUI)
+  const { solidConnections, textConnections, curvedConnections, individualConnections } = useMemo(() => {
     const inputsRef = lastCategorizationInputsRef.current;
     const cacheRef = lastCategorizationRef.current;
     // Invalidation only: worker rounds bump this so a cold-set-guarded pass
@@ -1305,16 +1308,16 @@ const ConnectionsRenderer = ({
 
     // During bulk operations (repo scan), suppress expensive pathfinding.
     // Connections already have correct positions from createConnectionsFromDiagram.
-    // Return cached results (or treat all as batched) to avoid O(C*N) blocking.
+    // Treat all straight styles as solid to avoid O(C*N) blocking.
     // Also skip while the worker is computing — cache will be populated soon.
     // During bulk operations (repo scan / progressive import), suppress
     // expensive pathfinding.  bulkImportState covers the progressive-mount
     // pump without needing manual flag management at every entry point.
     //
-    // HOWEVER: the selected connection and its flow-path siblings must ALWAYS
-    // route to individualConnections so the yellow (selected) / orange
-    // (flow-path highlighted) interactive lines render even while the mount
-    // pump or pathfinding worker keeps this gate active.  Otherwise clicking a
+    // HOWEVER: the selected connection and its flow-path/follow siblings must
+    // ALWAYS reach the unified solid renderer with their per-instance colour and
+    // width so the yellow/orange highlight appears even while the mount pump or
+    // pathfinding worker keeps this gate active.  Otherwise clicking a
     // connection in a large (e.g. 97k-object) scene never shows a highlight.
     //
     // COLD-SET GUARD: also stay on the fast path while the progressive set is
@@ -1332,43 +1335,48 @@ const ConnectionsRenderer = ({
       (progressiveConnections.length > CONNECTION_SYNC_FALLBACK_LIMIT &&
         !hasPrecomputedPathCache())
     ) {
-      // Always surface the user-requested highlights regardless of bulk state.
-      const highlightedSet = highlightedFlowPathIds;
-      const highlighted = [];
-      const deferred = [];
+      // Cheap pass: no intersection checks.  All straight-style connections go
+      // to the single solid renderer; highlighted connections render through
+      // the same renderer with per-instance width/colour and get a UI-only
+      // Connection for text/LineUI.  Buckets stay mutually exclusive, so a
+      // highlighted line is never drawn twice.
+      const solid = [];
+      const withText = [];
+      const ui = [];
+
       for (const conn of (progressiveConnections || [])) {
-        if (
-          conn.id === selectedConnection ||
-          (followActiveConnectionId && String(conn.id) === followActiveConnectionId) ||
-          (highlightedSet && highlightedSet.has(conn.id))
-        ) {
-          highlighted.push(conn);
-        } else {
-          deferred.push(conn);
+        const baseStyle = (conn.styleType || conn.lineStyle || 'straight').split('-')[0];
+
+        if (baseStyle !== 'straight') {
+          ui.push(conn);
+          continue;
+        }
+
+        const isSelected = conn.id === selectedConnection;
+        const isFollowHighlighted =
+          followActiveConnectionId != null &&
+          String(conn.id) === followActiveConnectionId;
+        const isFlowPathHighlighted =
+          !isSelected &&
+          highlightedFlowPathIds?.size > 0 &&
+          highlightedFlowPathIds.has(conn.id);
+        const isInteractive = isSelected || isFollowHighlighted || isFlowPathHighlighted;
+        const hasText = conn.text && conn.text.trim() !== '';
+
+        solid.push(conn);
+        if (isInteractive || hasText) {
+          ui.push(conn);
+        }
+        if (hasText && !isInteractive) {
+          withText.push(conn);
         }
       }
 
-      if (cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0) {
-        if (highlighted.length === 0) {
-          return cacheRef;
-        }
-        const baseIds = new Set(cacheRef.individualConnections.map(c => c.id));
-        const extras = highlighted.filter(c => !baseIds.has(c.id));
-        if (extras.length > 0) {
-          return {
-            ...cacheRef,
-            individualConnections: [...cacheRef.individualConnections, ...extras],
-          };
-        }
-        return cacheRef;
-      }
-      // No cache yet — treat non-highlighted as batched (straight lines,
-      // no intersection checks), but always render highlighted individually.
       return {
-        batchedConnections: deferred,
-        textConnections: [],
+        solidConnections: solid,
+        textConnections: withText,
         curvedConnections: [],
-        individualConnections: highlighted,
+        individualConnections: ui,
       };
     }
 
@@ -1381,7 +1389,7 @@ const ConnectionsRenderer = ({
       selectedConnection === inputsRef.selectedConnection &&
       highlightedFlowPathIds === inputsRef.highlightedFlowPathIds &&
       followActiveConnectionId === inputsRef.followActiveConnectionId &&
-      cacheRef.batchedConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0
+      cacheRef.solidConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0
     ) {
       return cacheRef;
     }
@@ -1398,10 +1406,10 @@ const ConnectionsRenderer = ({
       }
     }
 
-    const batched = [];
+    const solid = [];
     const withText = [];
     const curved = [];
-    const individual = [];
+    const ui = [];
 
 
     // Build objectsById for face position resolution in categorization
@@ -1422,29 +1430,12 @@ const ConnectionsRenderer = ({
       const isFlowPathHighlighted = !isSelected &&
         highlightedFlowPathIds?.size > 0 &&
         highlightedFlowPathIds.has(conn.id);
+      const isInteractive = isSelected || isFollowHighlighted || isFlowPathHighlighted;
       const hasText = conn.text && conn.text.trim() !== '';
-      
-      // Selected connections need full UI (LineUI, etc)
-      if (isSelected) {
-        individual.push(conn);
-        return;
-      }
-
-      // Camera-followed connection needs individual rendering for the orange override
-      if (isFollowHighlighted) {
-        individual.push(conn);
-        return;
-      }
-
-      // Flow-path-highlighted connections need individual rendering for colour override
-      if (isFlowPathHighlighted) {
-        individual.push(conn);
-        return;
-      }
       
       // Non-straight styles (dashed, dotted) need AnimatedConnectionLine
       if (baseStyle !== 'straight') {
-        individual.push(conn);
+        ui.push(conn);
         return;
       }
       
@@ -1474,34 +1465,34 @@ const ConnectionsRenderer = ({
             endPos: endPos?.map(v => v.toFixed(2)),
             startPosSource: conn.start?.position ? 'position' : conn.start?.facePosition ? 'facePosition' : conn.start?.worldPosition ? 'worldPosition' : 'objectCenter',
             hasIntersection,
-            bucket: hasIntersection ? (hasText ? 'individual' : 'curved') : (hasText ? 'withText' : 'batched'),
+            bucket: hasIntersection ? (hasText || isInteractive ? 'ui-solid' : 'curved') : (hasText && !isInteractive ? 'withText' : 'solid'),
           });
         }
       } else if (objectsChanged && window._debugPathfinding) {
         console.log(`[PathDebug] conn ${conn.id} SKIPPED: startPos=${JSON.stringify(startPos)}, endPos=${JSON.stringify(endPos)}, pathfindingObjects.length=${pathfindingObjects?.length}`);
       }
       
-      if (hasIntersection) {
-        if (hasText) {
-          individual.push(conn);
-        } else {
-          curved.push(conn);
-        }
+      // Every solid line goes through the single shader renderer.
+      solid.push(conn);
+      if (hasIntersection) curved.push(conn);
+
+      if (isInteractive || (hasIntersection && hasText)) {
+        // UI-only entry: text/LineUI render here, the line is drawn by the
+        // unified renderer.
+        ui.push(conn);
       } else if (hasText) {
         withText.push(conn);
-      } else {
-        batched.push(conn);
       }
     });
     
     const result = { 
-      batchedConnections: batched, 
+      solidConnections: solid, 
       textConnections: withText,
       curvedConnections: curved,
-      individualConnections: individual 
+      individualConnections: ui 
     };
     if (objectsChanged && window._debugPathfinding) {
-      console.log(`[PathDebug] Categorization result: batched=${batched.length}, curved=${curved.length}, withText=${withText.length}, individual=${individual.length}`);
+      console.log(`[PathDebug] Categorization result: solid=${solid.length}, curved=${curved.length}, withText=${withText.length}, ui=${ui.length}`);
     }
     lastCategorizationRef.current = result;
     lastCategorizationInputsRef.current = {
@@ -1593,10 +1584,13 @@ const ConnectionsRenderer = ({
     };
   }, [progressiveConnections, pathfindingObjects]);
 
-  // Combine all straight connections for batched line rendering
-  const allStraightConnections = useMemo(() => {
-    return [...batchedConnections, ...textConnections];
-  }, [batchedConnections, textConnections]);
+  // Connection ids that need curved path segments in the unified renderer.
+  const curvedConnectionIds = useMemo(() => {
+    if (!curvedConnections.length) return null;
+    const ids = new Set();
+    for (const conn of curvedConnections) ids.add(conn.id);
+    return ids;
+  }, [curvedConnections]);
 
   // SOURCE-LEVEL FIX: Render-time face redistribution for ALL connections.
   // Connections sharing the same object+face (e.g. all using face='front' from
@@ -1692,24 +1686,18 @@ const ConnectionsRenderer = ({
   // Render connections with batched optimization
   return (
     <group>
-      {/* PERFORMANCE: Render ALL straight connections (with or without text) in ONE draw call */}
-      {allStraightConnections.length > 0 && (
-        <BatchedConnectionLines
-          connections={allStraightConnections}
-          objectPositions={objectPositions}
-          selectedConnectionId={selectedConnection}
-          onConnectionClick={handleBatchedConnectionClick}
-          lineWidth={1}
-        />
-      )}
-      
-      {/* PERFORMANCE: Render curved connections (intersecting objects) in ONE draw call */}
-      {curvedConnections.length > 0 && (
-        <BatchedCurvedLines
-          connections={curvedConnections}
+      {/* PERFORMANCE: Render ALL solid connections (straight and curved) in ONE
+          shader draw call. Highlights use per-instance width/colour so they no
+          longer remount through separate components. */}
+      {solidConnections.length > 0 && (
+        <ConnectionLinesRenderer
+          connections={solidConnections}
+          curvedConnectionIds={curvedConnectionIds}
           objectPositions={objectPositions}
           pathfindingObjects={pathfindingObjects}
           selectedConnectionId={selectedConnection}
+          followActiveConnectionId={followActiveConnectionId}
+          highlightedFlowPathIds={highlightedFlowPathIds}
           onConnectionClick={handleBatchedConnectionClick}
           lineWidth={1}
         />
@@ -1745,10 +1733,17 @@ const ConnectionsRenderer = ({
               }),
             }
           : connection;
+        // Solid lines are drawn by ConnectionLinesRenderer; this component
+        // only contributes text/LineUI for them. Dashed/dotted styles still
+        // render their animated line here.
+        const individualBaseStyle = (
+          connection.styleType || connection.lineStyle || 'straight'
+        ).split('-')[0];
         return (
           <Connection
             key={connection.id}
             connection={effectiveConnection}
+            renderLine={individualBaseStyle !== 'straight'}
             allObjectsForPathfinding={pathfindingObjects}
             onLineStyleChange={onLineStyleChange}
             onLineColorChange={onLineColorChange}
