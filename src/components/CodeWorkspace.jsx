@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useCallback, useMemo, useRef, useState } from 'react';
 import useCodeStore from '../stores/codeStore';
 import { useObjectsStore } from '../stores';
 import {
@@ -461,6 +461,7 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
 const CodeWorkspace = ({ repo, commitSha }) => {
   const codeWindows = useCodeStore((s) => s.codeWindows);
   const closeCodeWindow = useCodeStore((s) => s.closeCodeWindow);
+  const layerRef = useRef(null);
 
   // A window must resolve to a real object and be unique. An entry with no
   // objectId (or a duplicate of an already-open object) would paint an empty,
@@ -478,6 +479,26 @@ const CodeWorkspace = ({ repo, commitSha }) => {
     return out;
   }, [codeWindows]);
 
+  useLayoutEffect(() => {
+    const el = layerRef.current;
+    if (!el || typeof el.showPopover !== 'function') return;
+    if (visibleWindows.length > 0) {
+      if (!el.matches(':popover-open')) {
+        try {
+          el.showPopover();
+        } catch (error) {
+          void error;
+        }
+      }
+    } else if (el.matches(':popover-open')) {
+      try {
+        el.hidePopover();
+      } catch (error) {
+        void error;
+      }
+    }
+  }, [visibleWindows]);
+
   useEffect(() => {
     if (visibleWindows.length === 0) return;
     const handleKeyDown = (e) => {
@@ -493,7 +514,7 @@ const CodeWorkspace = ({ repo, commitSha }) => {
   if (visibleWindows.length === 0) return null;
 
   return (
-    <div className="code-workspace-layer">
+    <div ref={layerRef} popover="manual" className="code-workspace-layer">
       {visibleWindows.map((w, i) => (
         <CodeWindow
           key={w.id}

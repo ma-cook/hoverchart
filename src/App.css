@@ -2467,27 +2467,31 @@ body {
    The centered full-screen overlay was replaced by multiple cascading popups
    (see CodeWorkspace.jsx). Header/pre/code styles are reused as-is below. */
 .code-workspace-layer {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 1100;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  overflow: visible;
   pointer-events: none;
-  isolation: isolate;
+  z-index: 1100;
+}
+
+.code-workspace-layer:popover-open {
+  display: block;
 }
 
 .code-window {
-  /* Chromium paints a Y-inverted clip hole in a WebGL canvas for
-     position: fixed elements over the canvas when GPU compositing is disabled
-     (crbug.com/489798733). Code windows must therefore be absolutely
-     positioned inside the full-screen .code-workspace-layer instead. */
   position: absolute;
   min-width: 240px;
   min-height: 200px;
   pointer-events: auto;
-  /* Keep the rounded, overflow-hidden panel on its own isolated paint layer as
-     extra protection against other compositing artifacts. */
-  isolation: isolate;
-  transform: translateZ(0);
-  contain: paint;
 }
 
 .code-window .code-workspace-file-info {

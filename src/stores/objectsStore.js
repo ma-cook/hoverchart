@@ -1074,6 +1074,4 @@ const useObjectsStore = createWithEqualityFn(
   shallow
 );
 
-if (typeof window !== 'undefined') window.__objectsStore = useObjectsStore;
-
 export default useObjectsStore;
