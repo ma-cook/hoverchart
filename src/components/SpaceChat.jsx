@@ -696,16 +696,22 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
 
       const blocks = extractMerfolkBlocks(finalText);
 
+      // Keep whatever the user actually saw: prefer the canonical final text,
+      // but never end up with an empty bubble (and lost output) when the run
+      // finished without returning text — fall back to the streamed content.
+      const preservedPlanText = (finalText && finalText.trim())
+        ? finalText
+        : (streamingRef.current || '');
       setPlanMessages((prev) => {
-        const finalMsg = {
+        const withoutStream = prev.filter(m => m.key !== currentStreamKey);
+        if (!preservedPlanText.trim()) return withoutStream;
+        return [...withoutStream, {
           key: currentStreamKey,
           role: 'assistant',
-          content: finalText,
+          content: preservedPlanText,
           streaming: false,
           diagramCreated: false,
-        };
-        const withoutStream = prev.filter(m => m.key !== currentStreamKey);
-        return [...withoutStream, finalMsg];
+        }];
       });
 
       if (blocks.length > 0) {
@@ -1084,23 +1090,45 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         const createdCount = newChanges.filter(c => c.action === 'create').length;
         const summary = `Generated ${mergedBlocks.length} file(s). ${modifiedCount} modified, ${createdCount} created. Review in the sidebar panel.`;
 
+        // PRESERVE the model's output. The streamed assistant message used to be
+        // dropped here and replaced by only the one-line summary, so the user's
+        // full response vanished the moment the run finished. Finalise it in
+        // place and append the summary as a separate message instead.
+        const preservedContent = (codeResponse && codeResponse.trim())
+          ? codeResponse
+          : (streamingRef.current || '');
         const commitKey = `pending-${Date.now()}`;
         setCodeMessages((prev) => {
           const withoutStream = prev.filter(m => m.key !== currentStreamKey);
-          return [...withoutStream, {
+          const next = [...withoutStream];
+          if (preservedContent.trim()) {
+            next.push({
+              key: currentStreamKey,
+              role: 'assistant',
+              content: preservedContent,
+              streaming: false,
+            });
+          }
+          next.push({
             key: commitKey,
             role: 'assistant',
             content: summary,
             streaming: false,
-          }];
+          });
+          return next;
         });
       } else {
         const hasCode = /```[\s\S]+?```/.test(codeResponse);
+        const streamedFallback = streamingRef.current || '';
         let displayContent;
         if (hasCode) {
           displayContent = codeResponse;
         } else if (codeResponse && codeResponse.trim().length > 20) {
           displayContent = codeResponse.trim() + '\n\n_No code blocks were generated. The LLM may need more specific instructions or different files._';
+        } else if (streamedFallback.trim()) {
+          // Keep what the user already saw rather than replacing it with the
+          // generic "no code blocks" notice.
+          displayContent = streamedFallback;
         } else {
           displayContent = 'No code blocks were generated. The tools could not locate the needed files, or the LLM did not produce code after reading them. Try:\n- Providing the exact file paths to modify\n- Reducing the scope of the change\n- Checking that the repository is connected and the files exist';
         }

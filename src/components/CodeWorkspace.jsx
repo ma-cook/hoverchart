@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import useCodeStore from '../stores/codeStore';
 import { useObjectsStore } from '../stores';
 import {
@@ -190,6 +190,10 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
       )
     : null;
   const displayedCode = pendingDisplay ?? (typeof code === 'string' ? code : null);
+  // An empty/whitespace string is "no code" here. Rendering the editor for it
+  // produces a headerless, all-black textarea that reads as a stray black box;
+  // fall through to the informative empty state instead.
+  const hasDisplayedCode = typeof displayedCode === 'string' && displayedCode.trim().length > 0;
 
   const [draft, setDraft] = useState('');
   const [savedDraft, setSavedDraft] = useState('');
@@ -219,29 +223,40 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
       const state = useCodeStore.getState();
       const existing = state.pendingChanges.find((change) => change.filePath === filePath);
       const original = existing ? existing.original : await ensureFullFileContent(filePath, { repo, commitSha });
+      const treeKnown = Array.isArray(state.repoFileTree) && state.repoFileTree.length > 0;
+      const fileExists = typeof original === 'string'
+        || (treeKnown && state.repoFileTree.includes(filePath));
       const base = existing?.proposed ?? original;
 
-      if (typeof base !== 'string') {
-        throw new Error('Unable to load the full file for review.');
+      let proposed;
+      if (!fileExists && !existing) {
+        if (!treeKnown) {
+          throw new Error('Unable to load the full file for review.');
+        }
+        proposed = draft;
+      } else {
+        if (typeof base !== 'string') {
+          throw new Error('Unable to load the full file for review.');
+        }
+        proposed = buildEditedFullFile({
+          fullContent: base,
+          displayedContent: savedDraft,
+          editedContent: draft,
+          startLine: codeInfo.startLine,
+          endLine: codeInfo.endLine,
+        });
       }
-
-      const proposed = buildEditedFullFile({
-        fullContent: base,
-        displayedContent: savedDraft,
-        editedContent: draft,
-        startLine: codeInfo.startLine,
-        endLine: codeInfo.endLine,
-      });
 
       if (proposed == null) {
         throw new Error('Could not map this edit back to the source file.');
       }
 
-      const displayStartLine = codeInfo.startLine != null ? Number(codeInfo.startLine) : undefined;
+      const displayStartLine = fileExists && codeInfo.startLine != null
+        ? Number(codeInfo.startLine)
+        : undefined;
       const displayEndLine = displayStartLine != null
         ? displayStartLine + draft.split('\n').length - 1
         : undefined;
-      const fileExists = typeof original === 'string';
       state.upsertPendingChange({
         filePath,
         original: fileExists ? original : null,
@@ -261,6 +276,11 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
       setSaving(false);
     }
   }, [canEdit, isDirty, filePath, repo, commitSha, savedDraft, draft, codeInfo.startLine, codeInfo.endLine, objectId]);
+
+  // A window whose object is not in the store is a phantom (deleted / never
+  // loaded). Painting it produces a headerless-looking black panel stacked
+  // under the real code viewer, so skip it until the object exists again.
+  if (!objectData) return null;
 
   return (
     <div
@@ -287,7 +307,7 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
             onClick={() => closeCodeWindow(windowId)}
             title="Close code window"
           >
-            ?
+            {'\u2715'}
           </button>
         </div>
       </div>
@@ -298,7 +318,7 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
       <div className="space-chat-resize-handle space-chat-resize-corner" onMouseDown={(e) => handleResizeStart('corner', e)} />
 
       <div className="code-workspace-body code-window-body">
-        {displayedCode != null ? (
+        {hasDisplayedCode ? (
           <textarea
             className={`code-workspace-editor code-window-editor language-${language}`}
             value={draft}
@@ -333,11 +353,11 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
           </div>
         )}
       </div>
-      {(isDirty || saveError || (typeof displayedCode === 'string' && !filePath)) && (
+      {(isDirty || saveError || (hasDisplayedCode && !filePath)) && (
         <div className="code-window-footer">
           {saveError ? (
             <span className="code-window-save-error" title={saveError}>{saveError}</span>
-          ) : typeof displayedCode === 'string' && !filePath ? (
+          ) : hasDisplayedCode && !filePath ? (
             <span className="code-window-readonly-hint">
               Read-only: no repository file is associated with this object.
             </span>
@@ -367,23 +387,39 @@ const CodeWorkspace = ({ repo, commitSha }) => {
   const codeWindows = useCodeStore((s) => s.codeWindows);
   const closeCodeWindow = useCodeStore((s) => s.closeCodeWindow);
 
+  // A window must resolve to a real object and be unique. An entry with no
+  // objectId (or a duplicate of an already-open object) would paint an empty,
+  // all-black panel stacked under the real code viewer.
+  const visibleWindows = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    for (const w of codeWindows || []) {
+      if (!w || w.objectId == null || w.objectId === '') continue;
+      const key = String(w.objectId);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(w);
+    }
+    return out;
+  }, [codeWindows]);
+
   useEffect(() => {
-    if (codeWindows.length === 0) return;
+    if (visibleWindows.length === 0) return;
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        const last = codeWindows[codeWindows.length - 1];
+        const last = visibleWindows[visibleWindows.length - 1];
         if (last) closeCodeWindow(last.id);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [codeWindows, closeCodeWindow]);
+  }, [visibleWindows, closeCodeWindow]);
 
-  if (!codeWindows || codeWindows.length === 0) return null;
+  if (visibleWindows.length === 0) return null;
 
   return (
     <>
-      {codeWindows.map((w, i) => (
+      {visibleWindows.map((w, i) => (
         <CodeWindow
           key={w.id}
           windowId={w.id}
