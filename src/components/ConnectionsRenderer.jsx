@@ -931,6 +931,8 @@ const ConnectionsRenderer = ({
     focusedObjectId,
     selectedConnection,
     highlightedFlowPathIds,
+    showLineTextInput,
+    showLineTextStyleUI,
   } = useConnectionsRendererStore();
 
   const visibleObjectIds = useSpatialManagerStore((s) => s.visibleObjectIds);
@@ -1129,6 +1131,14 @@ const ConnectionsRenderer = ({
   // One-shot timer that fires the settling worker dispatch after the bulk-import
   // gate clears (streaming mounts make the object layout too volatile to bother).
   const dispatchSettleTimerRef = useRef(null);
+  // Last { objects, ids } the pathfinding worker was actually dispatched for.
+  // Highlight-only remount churn recreates progressiveConnections without
+  // adding new ids; without this guard every such churn would start another
+  // worker round (and briefly flip categorization onto the fast path).
+  const lastDispatchedRef = useRef({ objects: null, ids: new Set() });
+  // Latest dispatch closure, so the bulk-import settle timer never fires a
+  // stale batch captured before the layout finished streaming in.
+  const dispatchPrecomputeRef = useRef(null);
   const pendingConnsRef = useRef([]);
   const connRafIdRef = useRef(null);
   // BUGFIX: Keep a ref to the latest frustum-culled set so the rAF callback
@@ -1288,7 +1298,12 @@ const ConnectionsRenderer = ({
   // setObjects function guards against spurious updates via its own position hash check).
   const prevPathfindingObjectsRef = useRef(null);
   const lastCategorizationRef = useRef({ solidConnections: [], textConnections: [], curvedConnections: [], individualConnections: [] });
-  const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null, highlightedFlowPathIds: null, followActiveConnectionId: null });
+  const lastCategorizationInputsRef = useRef({ progressiveConnectionsRef: null, selectedConnection: null, pathfindingObjectsRef: null, showLineTextInput: null, showLineTextStyleUI: null });
+  // Curvature classified by the last full categorization pass. The fast path
+  // reuses it so a worker round never makes already-rendered curved lines snap
+  // straight. Guarded by the pathfindingObjects reference: after a real layout
+  // change the cache is stale and the fast path falls back to straight lines.
+  const lastCurvedIdsRef = useRef({ pathfindingObjects: null, ids: new Set() });
 
   // NOTE: pathfindingHash was removed - it had 0.5-unit resolution which meant object moves
   // smaller than 0.5 units would never trigger cache invalidation. Since pathfindingObjects
@@ -1306,19 +1321,13 @@ const ConnectionsRenderer = ({
     // re-runs (and correctly categorizes) once the precomputed cache is warm.
     void workerWarmVersion;
 
-    // During bulk operations (repo scan), suppress expensive pathfinding.
-    // Connections already have correct positions from createConnectionsFromDiagram.
-    // Treat all straight styles as solid to avoid O(C*N) blocking.
-    // Also skip while the worker is computing — cache will be populated soon.
     // During bulk operations (repo scan / progressive import), suppress
     // expensive pathfinding.  bulkImportState covers the progressive-mount
     // pump without needing manual flag management at every entry point.
-    //
-    // HOWEVER: the selected connection and its flow-path/follow siblings must
-    // ALWAYS reach the unified solid renderer with their per-instance colour and
-    // width so the yellow/orange highlight appears even while the mount pump or
-    // pathfinding worker keeps this gate active.  Otherwise clicking a
-    // connection in a large (e.g. 97k-object) scene never shows a highlight.
+    // Also skip while the worker is computing — cache will be populated soon.
+    // Highlight colours/widths are applied by the unified renderer, so the fast
+    // path still draws selected/flow-path/follow lines correctly; only the
+    // selection and open line-text UIs need a UI-only Connection component.
     //
     // COLD-SET GUARD: also stay on the fast path while the progressive set is
     // large AND the worker-precomputed cache is cold.  Falling through in that
@@ -1336,10 +1345,17 @@ const ConnectionsRenderer = ({
         !hasPrecomputedPathCache())
     ) {
       // Cheap pass: no intersection checks.  All straight-style connections go
-      // to the single solid renderer; highlighted connections render through
-      // the same renderer with per-instance width/colour and get a UI-only
-      // Connection for text/LineUI.  Buckets stay mutually exclusive, so a
-      // highlighted line is never drawn twice.
+      // to the single solid renderer.  Curvature classified by the last full
+      // pass is reused, so worker rounds and mount-pump churn never make
+      // existing curved lines snap straight.  Buckets stay mutually exclusive:
+      // a line is either drawn by the renderer plus a UI-only Connection, or
+      // by the renderer plus a batched text label.
+      const curvedCache = lastCurvedIdsRef.current;
+      const cachedCurvedIds =
+        curvedCache.pathfindingObjects === pathfindingObjects
+          ? curvedCache.ids
+          : null;
+
       const solid = [];
       const withText = [];
       const ui = [];
@@ -1353,21 +1369,14 @@ const ConnectionsRenderer = ({
         }
 
         const isSelected = conn.id === selectedConnection;
-        const isFollowHighlighted =
-          followActiveConnectionId != null &&
-          String(conn.id) === followActiveConnectionId;
-        const isFlowPathHighlighted =
-          !isSelected &&
-          highlightedFlowPathIds?.size > 0 &&
-          highlightedFlowPathIds.has(conn.id);
-        const isInteractive = isSelected || isFollowHighlighted || isFlowPathHighlighted;
+        const isUiOpen =
+          showLineTextInput === conn.id || showLineTextStyleUI === conn.id;
         const hasText = conn.text && conn.text.trim() !== '';
 
         solid.push(conn);
-        if (isInteractive || hasText) {
+        if (isSelected || isUiOpen || (hasText && cachedCurvedIds?.has(conn.id))) {
           ui.push(conn);
-        }
-        if (hasText && !isInteractive) {
+        } else if (hasText) {
           withText.push(conn);
         }
       }
@@ -1375,7 +1384,9 @@ const ConnectionsRenderer = ({
       return {
         solidConnections: solid,
         textConnections: withText,
-        curvedConnections: [],
+        curvedConnections: cachedCurvedIds
+          ? progressiveConnections.filter((conn) => cachedCurvedIds.has(conn.id))
+          : [],
         individualConnections: ui,
       };
     }
@@ -1387,8 +1398,8 @@ const ConnectionsRenderer = ({
       !objectsChanged &&
       progressiveConnections === inputsRef.progressiveConnectionsRef &&
       selectedConnection === inputsRef.selectedConnection &&
-      highlightedFlowPathIds === inputsRef.highlightedFlowPathIds &&
-      followActiveConnectionId === inputsRef.followActiveConnectionId &&
+      showLineTextInput === inputsRef.showLineTextInput &&
+      showLineTextStyleUI === inputsRef.showLineTextStyleUI &&
       cacheRef.solidConnections.length + cacheRef.textConnections.length + cacheRef.curvedConnections.length + cacheRef.individualConnections.length > 0
     ) {
       return cacheRef;
@@ -1424,13 +1435,8 @@ const ConnectionsRenderer = ({
       const style = conn.styleType || conn.lineStyle || 'straight';
       const baseStyle = style.split('-')[0];
       const isSelected = conn.id === selectedConnection;
-      const isFollowHighlighted =
-        followActiveConnectionId != null &&
-        String(conn.id) === followActiveConnectionId;
-      const isFlowPathHighlighted = !isSelected &&
-        highlightedFlowPathIds?.size > 0 &&
-        highlightedFlowPathIds.has(conn.id);
-      const isInteractive = isSelected || isFollowHighlighted || isFlowPathHighlighted;
+      const isUiOpen =
+        showLineTextInput === conn.id || showLineTextStyleUI === conn.id;
       const hasText = conn.text && conn.text.trim() !== '';
       
       // Non-straight styles (dashed, dotted) need AnimatedConnectionLine
@@ -1465,7 +1471,9 @@ const ConnectionsRenderer = ({
             endPos: endPos?.map(v => v.toFixed(2)),
             startPosSource: conn.start?.position ? 'position' : conn.start?.facePosition ? 'facePosition' : conn.start?.worldPosition ? 'worldPosition' : 'objectCenter',
             hasIntersection,
-            bucket: hasIntersection ? (hasText || isInteractive ? 'ui-solid' : 'curved') : (hasText && !isInteractive ? 'withText' : 'solid'),
+            bucket: hasIntersection
+              ? (hasText || isSelected || isUiOpen ? 'ui-solid' : 'curved')
+              : (hasText && !isSelected && !isUiOpen ? 'withText' : 'solid'),
           });
         }
       } else if (objectsChanged && window._debugPathfinding) {
@@ -1476,9 +1484,10 @@ const ConnectionsRenderer = ({
       solid.push(conn);
       if (hasIntersection) curved.push(conn);
 
-      if (isInteractive || (hasIntersection && hasText)) {
+      if (isSelected || isUiOpen || (hasIntersection && hasText)) {
         // UI-only entry: text/LineUI render here, the line is drawn by the
-        // unified renderer.
+        // unified renderer.  Flow/follow highlights don't need an entry; the
+        // renderer applies their colour/width per instance.
         ui.push(conn);
       } else if (hasText) {
         withText.push(conn);
@@ -1499,13 +1508,17 @@ const ConnectionsRenderer = ({
       progressiveConnectionsRef: progressiveConnections,
       selectedConnection,
       pathfindingObjectsRef: pathfindingObjects,
-      highlightedFlowPathIds,
-      followActiveConnectionId,
+      showLineTextInput,
+      showLineTextStyleUI,
+    };
+    lastCurvedIdsRef.current = {
+      pathfindingObjects,
+      ids: new Set(curved.map((conn) => conn.id)),
     };
     
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
-  }, [progressiveConnections, selectedConnection, highlightedFlowPathIds, followActiveConnectionId, objectPositions, pathfindingObjects, workerWarmVersion]);
+  }, [progressiveConnections, selectedConnection, showLineTextInput, showLineTextStyleUI, objectPositions, pathfindingObjects, workerWarmVersion]);
 
   // WORKER: Fire-and-forget batch dispatch to the pathfinding Web Worker.
   // Populates a module-level precomputed cache that `computeConnectionPath`
@@ -1515,7 +1528,23 @@ const ConnectionsRenderer = ({
   useEffect(() => {
     if (!progressiveConnections?.length || !pathfindingObjects?.length) return;
 
+    // Retry key: a completed worker round bumps this so ids that were skipped
+    // while the worker was busy get dispatched once it is free again.
+    void workerWarmVersion;
+
     const dispatchPrecompute = () => {
+      // Skip when the current set is already covered by the last successful
+      // batch.  Highlight/mount churn recreates progressiveConnections with
+      // the same ids; starting another worker round there only flips
+      // categorization onto the fast path for no benefit.
+      const lastDispatched = lastDispatchedRef.current;
+      if (
+        lastDispatched.objects === pathfindingObjects &&
+        !progressiveConnections.some((conn) => !lastDispatched.ids.has(conn.id))
+      ) {
+        return;
+      }
+
       // Build an objectId → obj map for resolving face positions.
       const pfObjectsById = new Map();
       for (const obj of pathfindingObjects) {
@@ -1548,10 +1577,18 @@ const ConnectionsRenderer = ({
       // Serializing the whole object layout (above) is O(N) on the main thread
       // and results would be stale against a still-growing layout, so this path
       // mainly runs once mounting has settled (see the gate below).
-      precomputePathsBatch(requests, serializedObjects).then(() => {
+      precomputePathsBatch(requests, serializedObjects).then((ran) => {
+        // Busy/failed: do not record and do not bump.  The in-flight round (or
+        // the next layout/selection change) retries the missing ids.
+        if (!ran) return;
+        lastDispatchedRef.current = {
+          objects: pathfindingObjects,
+          ids: new Set(progressiveConnections.map((conn) => conn.id)),
+        };
         setWorkerWarmVersion((v) => v + 1);
       });
     };
+    dispatchPrecomputeRef.current = dispatchPrecompute;
 
     // While the progressive-mount pump is streaming objects in, the layout is
     // too volatile to precompute against, and serializing all N objects per
@@ -1565,7 +1602,7 @@ const ConnectionsRenderer = ({
           if (bulkImportState.active) {
             dispatchSettleTimerRef.current = setTimeout(checkSettle, DISPATCH_SETTLE_CHECK_MS);
           } else {
-            dispatchPrecompute();
+            dispatchPrecomputeRef.current?.();
           }
         };
         dispatchSettleTimerRef.current = setTimeout(checkSettle, DISPATCH_SETTLE_CHECK_MS);
@@ -1582,7 +1619,7 @@ const ConnectionsRenderer = ({
         dispatchSettleTimerRef.current = null;
       }
     };
-  }, [progressiveConnections, pathfindingObjects]);
+  }, [progressiveConnections, pathfindingObjects, workerWarmVersion]);
 
   // Connection ids that need curved path segments in the unified renderer.
   const curvedConnectionIds = useMemo(() => {

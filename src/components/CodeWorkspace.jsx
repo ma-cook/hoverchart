@@ -200,6 +200,23 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
   const [saveError, setSaveError] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  // The code editor is an UNCONTROLLED contenteditable div. React never owns its
+  // text nodes (that fights the caret), so we mirror `draft` into the DOM here
+  // only when the element is not focused. A contenteditable div is used instead
+  // of a <textarea> because a scrollable textarea inside this fixed, rounded,
+  // overflow-hidden window is painted as a mirrored "ghost" clone by the
+  // browser's compositor.
+  const editorRef = useRef(null);
+
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    if (document.activeElement === el) return; // never clobber the caret mid-edit
+    if (el.innerText !== draft) {
+      el.textContent = draft;
+    }
+  }, [draft, hasDisplayedCode]);
+
   useEffect(() => {
     if (typeof displayedCode !== 'string') return;
     if (draft !== savedDraft) {
@@ -210,6 +227,62 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
     setSavedDraft(displayedCode);
     setSaveError(null);
   }, [displayedCode, draft, savedDraft]);
+
+  const handleEditorInput = useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    setDraft(el.innerText);
+    setSaveError((prev) => (prev ? null : prev));
+  }, []);
+
+  const handleEditorKeyDown = useCallback((e) => {
+    // Tab indents (two spaces) instead of moving focus out of the editor.
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      // execCommand keeps undo history + caret correct; fall back to a manual
+      // range insert if the browser rejects it.
+      const ok = typeof document.execCommand === 'function'
+        && document.execCommand('insertText', false, '  ');
+      if (!ok) {
+        const el = editorRef.current;
+        if (!el) return;
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+        const node = document.createTextNode('  ');
+        range.insertNode(node);
+        range.setStartAfter(node);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        handleEditorInput();
+      }
+    }
+  }, [handleEditorInput]);
+
+  const handleEditorPaste = useCallback((e) => {
+    // Paste as plain text — never let HTML/spans enter the code.
+    const text = e.clipboardData?.getData('text/plain');
+    if (text == null) return;
+    e.preventDefault();
+    const ok = typeof document.execCommand === 'function'
+      && document.execCommand('insertText', false, text);
+    if (!ok) {
+      const el = editorRef.current;
+      if (!el) return;
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      sel.deleteFromDocument();
+      const range = sel.getRangeAt(0);
+      const node = document.createTextNode(text);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      handleEditorInput();
+    }
+  }, [handleEditorInput]);
 
   const canEdit = !!filePath && typeof displayedCode === 'string';
   const isDirty = canEdit && draft !== savedDraft;
@@ -319,17 +392,19 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
 
       <div className="code-workspace-body code-window-body">
         {hasDisplayedCode ? (
-          <textarea
+          <div
+            ref={editorRef}
             className={`code-workspace-editor code-window-editor language-${language}`}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              if (saveError) setSaveError(null);
-            }}
-            readOnly={!filePath}
+            contentEditable={!!filePath}
+            suppressContentEditableWarning
             spellCheck={false}
-            wrap="off"
+            role="textbox"
+            aria-multiline="true"
             aria-label={`Code for ${filePath || title}`}
+            onInput={handleEditorInput}
+            onKeyDown={handleEditorKeyDown}
+            onPaste={handleEditorPaste}
+            style={filePath ? undefined : { cursor: 'default' }}
           />
         ) : showLoading ? (
           <div style={{ padding: '18px', color: '#b8c0cc', fontFamily: 'monospace', fontSize: '13px' }}>

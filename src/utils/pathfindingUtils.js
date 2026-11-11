@@ -1052,11 +1052,13 @@ export function computeConnectionPath(
  *                 startConnId: string, endConnId: string}>} requests
  * @param {Array<{id: string, type: string, position: number[],
  *                 scale: number[]}>} objects — plain serialisable object data
- * @returns {Promise<void>}
+ * @returns {Promise<boolean>} true when a batch actually ran and populated
+ *          results; false when skipped (busy/empty) or failed. Callers use
+ *          this to know whether these ids need another dispatch attempt.
  */
 export async function precomputePathsBatch(requests, objects) {
   if (_workerBusy || !requests || requests.length === 0) {
-    return;
+    return false;
   }
 
   let workerProxy;
@@ -1069,7 +1071,7 @@ export async function precomputePathsBatch(requests, objects) {
     workerProxy = getPathfindingWorker();
   } catch {
     // Worker unavailable (e.g. SharedArrayBuffer restrictions, test env).
-    return;
+    return false;
   }
 
   _workerBusy = true;
@@ -1100,8 +1102,10 @@ export async function precomputePathsBatch(requests, objects) {
         pathPoints: res.pathPoints,
       });
     }
+    return true;
   } catch (err) {
     console.warn('[pathfinding] Worker batch failed:', err);
+    return false;
   } finally {
     _workerBusy = false;
   }
