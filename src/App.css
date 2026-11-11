@@ -2469,6 +2469,14 @@ body {
 .code-window {
   min-width: 240px;
   min-height: 200px;
+  /* Force this fixed, rounded, overflow-hidden panel onto its own isolated
+     compositing layer and clip its paint to the element box. Without this the
+     browser's compositor paints a mirrored "ghost" clone of the window (a black
+     panel of the same shape/size below it) when the window contains a
+     scrollable editable child over the WebGL canvas. */
+  isolation: isolate;
+  transform: translateZ(0);
+  contain: paint;
 }
 
 .code-window .code-workspace-file-info {
