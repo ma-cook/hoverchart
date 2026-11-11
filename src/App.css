@@ -2466,14 +2466,25 @@ body {
 /* Code viewer popup windows — SpaceChat-style draggable/resizable panels.
    The centered full-screen overlay was replaced by multiple cascading popups
    (see CodeWorkspace.jsx). Header/pre/code styles are reused as-is below. */
+.code-workspace-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1100;
+  pointer-events: none;
+  isolation: isolate;
+}
+
 .code-window {
+  /* Chromium paints a Y-inverted clip hole in a WebGL canvas for
+     position: fixed elements over the canvas when GPU compositing is disabled
+     (crbug.com/489798733). Code windows must therefore be absolutely
+     positioned inside the full-screen .code-workspace-layer instead. */
+  position: absolute;
   min-width: 240px;
   min-height: 200px;
-  /* Force this fixed, rounded, overflow-hidden panel onto its own isolated
-     compositing layer and clip its paint to the element box. Without this the
-     browser's compositor paints a mirrored "ghost" clone of the window (a black
-     panel of the same shape/size below it) when the window contains a
-     scrollable editable child over the WebGL canvas. */
+  pointer-events: auto;
+  /* Keep the rounded, overflow-hidden panel on its own isolated paint layer as
+     extra protection against other compositing artifacts. */
   isolation: isolate;
   transform: translateZ(0);
   contain: paint;

@@ -584,4 +584,6 @@ export function getFileImports(filePath) {
   return map?.get(filePath) || null;
 }
 
+if (typeof window !== 'undefined') window.__codeStore = useCodeStore;
+
 export default useCodeStore;

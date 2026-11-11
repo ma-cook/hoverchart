@@ -202,10 +202,10 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
 
   // The code editor is an UNCONTROLLED contenteditable div. React never owns its
   // text nodes (that fights the caret), so we mirror `draft` into the DOM here
-  // only when the element is not focused. A contenteditable div is used instead
-  // of a <textarea> because a scrollable textarea inside this fixed, rounded,
-  // overflow-hidden window is painted as a mirrored "ghost" clone by the
-  // browser's compositor.
+  // only when the element is not focused. Contenteditable also avoids the
+  // browser's special editable-scroll compositing path used by <textarea>.
+  // The phantom panel itself was a fixed-over-canvas compositor bug; see the
+  // .code-window rule in App.css.
   const editorRef = useRef(null);
 
   useEffect(() => {
@@ -493,7 +493,7 @@ const CodeWorkspace = ({ repo, commitSha }) => {
   if (visibleWindows.length === 0) return null;
 
   return (
-    <>
+    <div className="code-workspace-layer">
       {visibleWindows.map((w, i) => (
         <CodeWindow
           key={w.id}
@@ -504,7 +504,7 @@ const CodeWorkspace = ({ repo, commitSha }) => {
           commitSha={commitSha}
         />
       ))}
-    </>
+    </div>
   );
 };
 
