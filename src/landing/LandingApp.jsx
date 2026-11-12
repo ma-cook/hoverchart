@@ -77,6 +77,8 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Pre-login landing inner view: 'home' (hero) or 'features'.
+  const [landingView, setLandingView] = useState('home');
   const [pendingInvites, setPendingInvites] = useState([]);
 
   const isOrgAdmin =
@@ -86,6 +88,12 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   useEffect(() => {
     initializeAuth();
   }, [initializeAuth]);
+
+  // The Features page only exists pre-login; drop back to the hero once a user
+  // is present so a later sign-out doesn't restore the features view.
+  useEffect(() => {
+    if (user) setLandingView('home');
+  }, [user]);
 
   // NOTE: must stay declared ABOVE the effect that lists it as a dependency.
   // Dependency arrays are evaluated inline during render, so a `const` declared
@@ -494,6 +502,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         onLogout={handleLogout}
         onOpenOrgManager={() => setShowOrgManager(true)}
         onOpenAdmin={() => setShowAdminDashboard(true)}
+        onOpenFeatures={!user ? () => setLandingView('features') : undefined}
         isAdmin={isAppAdmin || isOrgAdmin}
         organizationName={userOrganizations[0]?.name || null}
         pendingInviteCount={pendingInvites.length}
@@ -585,6 +594,8 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
 
       {!user && (
         <LandingPage
+          view={landingView}
+          onBack={() => setLandingView('home')}
           onRegister={handleLogin}
           onTryWithoutAccount={onTryWithoutAccount}
         />

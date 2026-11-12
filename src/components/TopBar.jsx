@@ -78,6 +78,7 @@ const TopBar = ({
   onLogout,
   onOpenOrgManager,
   onOpenAdmin,
+  onOpenFeatures,
   isAdmin,
   organizationName: organizationNameProp,
   pendingInviteCount,
@@ -158,6 +159,10 @@ const TopBar = ({
   // decision — the server is the actual authority.
   const showAdminEntry = Boolean(isAdmin) && !user?.isGuest && typeof onOpenAdmin === 'function';
 
+  // "Features" entry point sits next to the brand, logged-out landing only.
+  const showFeaturesEntry =
+    view === 'landing' && !user && typeof onOpenFeatures === 'function';
+
   return (
     <div className="top-bar" onClick={(e) => e.stopPropagation()}>
       <div className="top-bar-section">
@@ -172,6 +177,15 @@ const TopBar = ({
         <div className="top-bar-brand" aria-label="Volscape">
           VOL<span className="brand-accent">SCAPE</span>
         </div>
+        {showFeaturesEntry && (
+          <button
+            type="button"
+            className="top-bar-features"
+            onClick={onOpenFeatures}
+          >
+            Features
+          </button>
+        )}
       </div>
 
       {isSpace && actions && (

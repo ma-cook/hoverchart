@@ -106,6 +106,34 @@
   color: #cc8500;
 }
 
+/* "Features" entry point next to the wordmark (logged-out landing only) */
+.top-bar-features {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #e6e6e6;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.top-bar-features:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.top-bar-features:focus-visible {
+  outline: 2px solid #ffb733;
+  outline-offset: 2px;
+}
+
 /* Generic top-bar button — reused for all action icons */
 .top-bar-btn {
   width: 32px;
