@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useCallback, useMemo, useRef, useState } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import useCodeStore from '../stores/codeStore';
 import { useObjectsStore } from '../stores';
 import {
@@ -202,9 +202,9 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
 
   // The code editor is an UNCONTROLLED contenteditable div. React never owns its
   // text nodes (that fights the caret), so we mirror `draft` into the DOM here
-  // only when the element is not focused. The panel clips an inner frame instead
-  // of the positioned window so Chromium does not punch a clip hole through the
-  // WebGL canvas behind it; see .code-window-frame in App.css.
+  // only when the element is not focused. The window itself is composited into
+  // its own layer in App.css; without that Chromium paints a ghost copy of the
+  // scrollable editor around the panel over the WebGL canvas.
   const editorRef = useRef(null);
 
   useEffect(() => {
@@ -366,90 +366,88 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
         zIndex,
       }}
     >
-      <div className="code-window-frame">
-        <div className="space-chat-header" onMouseDown={handleDragStart}>
-          <div className="code-workspace-file-info">
-            <span className="code-workspace-language-tag">{language}</span>
-            <span className="code-workspace-file-path" title={filePath || title}>
-              {filePath || title}
-            </span>
-          </div>
-          <div className="space-chat-header-actions">
-            <button
-              className="space-chat-close"
-              onClick={() => closeCodeWindow(windowId)}
-              title="Close code window"
-            >
-              {'\u2715'}
-            </button>
-          </div>
+      <div className="space-chat-header" onMouseDown={handleDragStart}>
+        <div className="code-workspace-file-info">
+          <span className="code-workspace-language-tag">{language}</span>
+          <span className="code-workspace-file-path" title={filePath || title}>
+            {filePath || title}
+          </span>
         </div>
-
-        <div className="code-workspace-body code-window-body">
-          {hasDisplayedCode ? (
-            <div
-              ref={editorRef}
-              className={`code-workspace-editor code-window-editor language-${language}`}
-              contentEditable={!!filePath}
-              suppressContentEditableWarning
-              spellCheck={false}
-              role="textbox"
-              aria-multiline="true"
-              aria-label={`Code for ${filePath || title}`}
-              onInput={handleEditorInput}
-              onKeyDown={handleEditorKeyDown}
-              onPaste={handleEditorPaste}
-              style={filePath ? undefined : { cursor: 'default' }}
-            />
-          ) : showLoading ? (
-            <div style={{ padding: '18px', color: '#b8c0cc', fontFamily: 'monospace', fontSize: '13px' }}>
-              Loading code...
-            </div>
-          ) : (
-            <div style={{ padding: '18px', color: '#b8c0cc', fontFamily: 'monospace', fontSize: '13px' }}>
-              <p style={{ margin: '0 0 12px' }}>
-                {loadState.error || (filePath
-                  ? 'Code unavailable'
-                  : 'No source file is associated with this object')}
-              </p>
-              {filePath && loadState.error && (
-                <button
-                  onClick={() => setLoadAttempt((value) => value + 1)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  Retry
-                </button>
-              )}
-            </div>
-          )}
+        <div className="space-chat-header-actions">
+          <button
+            className="space-chat-close"
+            onClick={() => closeCodeWindow(windowId)}
+            title="Close code window"
+          >
+            {'\u2715'}
+          </button>
         </div>
-        {(isDirty || saveError || (hasDisplayedCode && !filePath)) && (
-          <div className="code-window-footer">
-            {saveError ? (
-              <span className="code-window-save-error" title={saveError}>{saveError}</span>
-            ) : hasDisplayedCode && !filePath ? (
-              <span className="code-window-readonly-hint">
-                Read-only: no repository file is associated with this object.
-              </span>
-            ) : null}
-            {isDirty && (
-              <button
-                className="code-window-save"
-                onClick={handleSave}
-                disabled={saving}
-                title="Save edit for review"
-              >
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
       <div className="space-chat-resize-handle space-chat-resize-left" onMouseDown={(e) => handleResizeStart('left', e)} />
       <div className="space-chat-resize-handle space-chat-resize-right" onMouseDown={(e) => handleResizeStart('right', e)} />
       <div className="space-chat-resize-handle space-chat-resize-bottom" onMouseDown={(e) => handleResizeStart('bottom', e)} />
       <div className="space-chat-resize-handle space-chat-resize-corner" onMouseDown={(e) => handleResizeStart('corner', e)} />
+
+      <div className="code-workspace-body code-window-body">
+        {hasDisplayedCode ? (
+          <div
+            ref={editorRef}
+            className={`code-workspace-editor code-window-editor language-${language}`}
+            contentEditable={!!filePath}
+            suppressContentEditableWarning
+            spellCheck={false}
+            role="textbox"
+            aria-multiline="true"
+            aria-label={`Code for ${filePath || title}`}
+            onInput={handleEditorInput}
+            onKeyDown={handleEditorKeyDown}
+            onPaste={handleEditorPaste}
+            style={filePath ? undefined : { cursor: 'default' }}
+          />
+        ) : showLoading ? (
+          <div style={{ padding: '18px', color: '#b8c0cc', fontFamily: 'monospace', fontSize: '13px' }}>
+            Loading code...
+          </div>
+        ) : (
+          <div style={{ padding: '18px', color: '#b8c0cc', fontFamily: 'monospace', fontSize: '13px' }}>
+            <p style={{ margin: '0 0 12px' }}>
+              {loadState.error || (filePath
+                ? 'Code unavailable'
+                : 'No source file is associated with this object')}
+            </p>
+            {filePath && loadState.error && (
+              <button
+                onClick={() => setLoadAttempt((value) => value + 1)}
+                style={{ cursor: 'pointer' }}
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {(isDirty || saveError || (hasDisplayedCode && !filePath)) && (
+        <div className="code-window-footer">
+          {saveError ? (
+            <span className="code-window-save-error" title={saveError}>{saveError}</span>
+          ) : hasDisplayedCode && !filePath ? (
+            <span className="code-window-readonly-hint">
+              Read-only: no repository file is associated with this object.
+            </span>
+          ) : null}
+          {isDirty && (
+            <button
+              className="code-window-save"
+              onClick={handleSave}
+              disabled={saving}
+              title="Save edit for review"
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -462,7 +460,6 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
 const CodeWorkspace = ({ repo, commitSha }) => {
   const codeWindows = useCodeStore((s) => s.codeWindows);
   const closeCodeWindow = useCodeStore((s) => s.closeCodeWindow);
-  const layerRef = useRef(null);
 
   // A window must resolve to a real object and be unique. An entry with no
   // objectId (or a duplicate of an already-open object) would paint an empty,
@@ -480,26 +477,6 @@ const CodeWorkspace = ({ repo, commitSha }) => {
     return out;
   }, [codeWindows]);
 
-  useLayoutEffect(() => {
-    const el = layerRef.current;
-    if (!el || typeof el.showPopover !== 'function') return;
-    if (visibleWindows.length > 0) {
-      if (!el.matches(':popover-open')) {
-        try {
-          el.showPopover();
-        } catch (error) {
-          void error;
-        }
-      }
-    } else if (el.matches(':popover-open')) {
-      try {
-        el.hidePopover();
-      } catch (error) {
-        void error;
-      }
-    }
-  }, [visibleWindows]);
-
   useEffect(() => {
     if (visibleWindows.length === 0) return;
     const handleKeyDown = (e) => {
@@ -515,7 +492,7 @@ const CodeWorkspace = ({ repo, commitSha }) => {
   if (visibleWindows.length === 0) return null;
 
   return (
-    <div ref={layerRef} popover="manual" className="code-workspace-layer">
+    <>
       {visibleWindows.map((w, i) => (
         <CodeWindow
           key={w.id}
@@ -526,7 +503,7 @@ const CodeWorkspace = ({ repo, commitSha }) => {
           commitSha={commitSha}
         />
       ))}
-    </div>
+    </>
   );
 };
 

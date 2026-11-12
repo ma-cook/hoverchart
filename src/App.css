@@ -2466,49 +2466,13 @@ body {
 /* Code viewer popup windows — SpaceChat-style draggable/resizable panels.
    The centered full-screen overlay was replaced by multiple cascading popups
    (see CodeWorkspace.jsx). Header/pre/code styles are reused as-is below. */
-.code-workspace-layer {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  max-width: none;
-  max-height: none;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  overflow: visible;
-  pointer-events: none;
-  z-index: 1100;
-}
-
-.code-workspace-layer:popover-open {
-  display: block;
-}
-
 .code-window {
-  position: absolute;
   min-width: 240px;
   min-height: 200px;
-  pointer-events: auto;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  overflow: visible;
-}
-
-.code-window-frame {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: rgba(20, 20, 20, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  /* Force the fixed, rounded, overflow-hidden panel onto its own composited
+     layer. Without this Chromium sometimes paints a ghost copy of the
+     scrollable editor around the panel over the WebGL canvas. */
+  filter: opacity(1);
 }
 
 .code-window .code-workspace-file-info {
