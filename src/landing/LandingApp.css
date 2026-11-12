@@ -119,6 +119,13 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+/* Blocky controls on the landing view */
+.landing-view .top-bar-signin,
+.landing-view .top-bar-features,
+.landing-view .top-bar-menu-button {
+  border-radius: 2px;
+}
+
 /* Responsive adjustments for the landing topbar */
 @media (max-width: 720px) {
   .landing-view .top-bar {
@@ -215,20 +222,6 @@
   gap: clamp(24px, 4vw, 56px);
 }
 
-.landing-eyebrow {
-  display: inline-block;
-  margin-bottom: 14px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(204, 133, 0, 0.22);
-  background: rgba(204, 133, 0, 0.1);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 1.8px;
-  text-transform: uppercase;
-  color: var(--lp-eyebrow-text);
-}
-
 .hero-title {
   margin: 0 0 14px;
   font-size: clamp(34px, 4.2vw, 54px);
@@ -304,7 +297,7 @@
 .hero-cta-primary {
   padding: 14px 28px;
   border: none;
-  border-radius: 8px;
+  border-radius: 2px;
   background: linear-gradient(180deg, var(--lp-brand) 0%, #b87600 100%);
   color: #000;
   font-family: inherit;
@@ -318,7 +311,7 @@
 .hero-cta-secondary {
   padding: 12px 26px;
   border: 2px solid var(--lp-ink);
-  border-radius: 8px;
+  border-radius: 2px;
   background: transparent;
   color: var(--lp-ink);
   font-family: inherit;
@@ -345,19 +338,94 @@
   min-width: 0;
 }
 
-.hero-visual-frame {
+.hero-collage {
+  position: relative;
+  isolation: isolate;
   width: 100%;
-  max-width: 520px;
-  overflow: hidden;
-  border: 1px solid var(--lp-border);
-  border-radius: 16px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.16);
+  max-width: 560px;
+  aspect-ratio: 1.4 / 1;
 }
 
-.hero-visual-frame img {
+.hero-collage::before,
+.hero-collage::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero-collage::before {
+  inset: 6% 4%;
+  background-image:
+    linear-gradient(rgba(204, 133, 0, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(204, 133, 0, 0.12) 1px, transparent 1px);
+  background-size: 26px 26px;
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 72%);
+}
+
+.hero-collage::after {
+  inset: 14% 10%;
+  background: radial-gradient(circle at 50% 55%, rgba(204, 133, 0, 0.2), transparent 68%);
+  filter: blur(24px);
+}
+
+.hero-collage-card {
+  --collage-rotate: 0deg;
+  position: absolute;
+  width: 58%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--lp-border);
+  border-radius: 3px;
+  background: #0b0b0d;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.22);
+  transform: translateY(0) rotate(var(--collage-rotate));
+  transition: transform 220ms ease, box-shadow 220ms ease;
+}
+
+.hero-collage-card img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-collage-card:nth-child(1) {
+  top: 0;
+  left: 21%;
+  --collage-rotate: -3deg;
+  z-index: 1;
+}
+
+.hero-collage-card:nth-child(2) {
+  top: 16%;
+  left: 0;
+  --collage-rotate: -8deg;
+  z-index: 2;
+}
+
+.hero-collage-card:nth-child(3) {
+  top: 12%;
+  right: 0;
+  --collage-rotate: 7deg;
+  z-index: 3;
+}
+
+.hero-collage-card:nth-child(4) {
+  top: 28%;
+  left: 17%;
+  width: 66%;
+  --collage-rotate: 1.5deg;
+  z-index: 4;
+}
+
+@media (hover: hover) {
+  .hero-collage-card:hover {
+    transform: translateY(-8px) rotate(var(--collage-rotate)) scale(1.02);
+    box-shadow: 0 28px 64px rgba(0, 0, 0, 0.32);
+    z-index: 10;
+  }
 }
 
 /* ---- Feature strip ---- */
@@ -469,7 +537,7 @@
   align-self: flex-start;
   margin-bottom: 16px;
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: 2px;
   border: 1px solid var(--lp-border);
   background: transparent;
   color: var(--lp-ink);
@@ -609,7 +677,7 @@
   .hero-visual {
     justify-content: flex-start;
   }
-  .hero-visual-frame {
+  .hero-collage {
     max-width: 100%;
   }
   .audience-row {
@@ -683,7 +751,7 @@
   .hero-trust-note {
     margin-bottom: 12px;
   }
-  .hero-visual-frame {
+  .hero-collage {
     max-width: 400px;
   }
   .feature-strip {

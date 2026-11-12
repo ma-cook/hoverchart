@@ -11,6 +11,25 @@ const HERO_BULLETS = [
   'Real-time collaborative spaces for your whole team',
 ];
 
+const HERO_COLLAGE = [
+  {
+    src: '/assets/3dmerfolk.PNG',
+    alt: 'Volscape 3D architecture map',
+  },
+  {
+    src: '/assets/3dmerfolk2.PNG',
+    alt: '3D codebase map with connected components',
+  },
+  {
+    src: '/assets/3dmerfolk3.PNG',
+    alt: 'Interactive 3D diagram of a software system',
+  },
+  {
+    src: '/assets/3dmerfolk4.PNG',
+    alt: 'Volscape 3D scene showing code architecture',
+  },
+];
+
 const FEATURE_GROUPS = [
   {
     title: 'Visualise',
@@ -170,10 +189,6 @@ const FEATURES = [
   },
 ];
 
-function SectionEyebrow({ children }) {
-  return <div className="landing-eyebrow">{children}</div>;
-}
-
 function Bullet({ children }) {
   return (
     <li className="landing-bullet">
@@ -204,7 +219,6 @@ function LandingFeatures({ onBack, onRegister, onTryWithoutAccount }) {
         <button type="button" className="features-back" onClick={onBack}>
           ← Back
         </button>
-        <SectionEyebrow>Everything in Volscape</SectionEyebrow>
         <h1 className="features-title">
           Features that turn code into{' '}
           <span className="landing-gradient-text">a map you can walk through</span>
@@ -311,7 +325,6 @@ export const LandingPage = React.memo(({ view = 'home', onBack, onRegister, onTr
           <>
         <section className="hero" aria-labelledby="landing-hero-title">
           <div className="hero-copy">
-            <SectionEyebrow>3D Architecture, Reimagined</SectionEyebrow>
             <h1 id="landing-hero-title" className="hero-title">
               See your software{' '}
               <span className="landing-gradient-text">in 3D</span>
@@ -345,11 +358,12 @@ export const LandingPage = React.memo(({ view = 'home', onBack, onRegister, onTr
           </div>
 
           <div className="hero-visual">
-            <div className="hero-visual-frame">
-              <img
-                src="/assets/3dmerfolk.PNG"
-                alt="Interactive 3D architecture diagram"
-              />
+            <div className="hero-collage">
+              {HERO_COLLAGE.map((image) => (
+                <div key={image.src} className="hero-collage-card">
+                  <img src={image.src} alt={image.alt} />
+                </div>
+              ))}
             </div>
           </div>
         </section>
