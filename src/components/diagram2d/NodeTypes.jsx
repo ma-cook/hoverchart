@@ -6,6 +6,30 @@ import { Handle, Position } from '@xyflow/react';
 // ---------------------------------------------------------------------------
 
 const TYPE_STYLES = {
+  person: {
+    background: '#ede7f6',
+    border: '2px solid #5e35b1',
+    color: '#311b92',
+    badgeColor: '#5e35b1',
+    borderRadius: '20px',
+    label: 'Person',
+  },
+  system: {
+    background: '#e3f2fd',
+    border: '3px solid #1e88e5',
+    color: '#0d47a1',
+    badgeColor: '#1e88e5',
+    borderRadius: '10px',
+    label: 'System',
+  },
+  container: {
+    background: '#e0f7fa',
+    border: '2px solid #00838f',
+    color: '#004d40',
+    badgeColor: '#00838f',
+    borderRadius: '10px',
+    label: 'Container',
+  },
   component: {
     background: '#e3f2fd',
     border: '2px solid #1976d2',
@@ -13,6 +37,46 @@ const TYPE_STYLES = {
     badgeColor: '#1976d2',
     borderRadius: '8px',
     label: 'Component',
+  },
+  module: {
+    background: '#efebe9',
+    border: '2px solid #6d4c41',
+    color: '#3e2723',
+    badgeColor: '#6d4c41',
+    borderRadius: '6px',
+    label: 'Module',
+  },
+  external: {
+    background: '#eceff1',
+    border: '2px dashed #546e7a',
+    color: '#37474f',
+    badgeColor: '#546e7a',
+    borderRadius: '6px',
+    label: 'External',
+  },
+  interface: {
+    background: '#e1f5fe',
+    border: '2px dashed #0277bd',
+    color: '#01579b',
+    badgeColor: '#0277bd',
+    borderRadius: '6px',
+    label: 'Interface',
+  },
+  class: {
+    background: '#fce4ec',
+    border: '2px solid #ad1457',
+    color: '#880e4f',
+    badgeColor: '#ad1457',
+    borderRadius: '6px',
+    label: 'Class',
+  },
+  endpoint: {
+    background: '#fff3e0',
+    border: '2px solid #ef6c00',
+    color: '#bf360c',
+    badgeColor: '#ef6c00',
+    borderRadius: '6px',
+    label: 'Endpoint',
   },
   function: {
     background: '#e8f5e9',
@@ -61,6 +125,22 @@ const TYPE_STYLES = {
     badgeColor: '#ff8f00',
     borderRadius: '20px',
     label: 'Datapath',
+  },
+  variable: {
+    background: '#f1f8e9',
+    border: '2px solid #689f38',
+    color: '#33691e',
+    badgeColor: '#689f38',
+    borderRadius: '3px',
+    label: 'Variable',
+  },
+  constant: {
+    background: '#fffde7',
+    border: '2px solid #f9a825',
+    color: '#f57f17',
+    badgeColor: '#f9a825',
+    borderRadius: '3px',
+    label: 'Constant',
   },
 };
 

@@ -1397,6 +1397,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             } catch (sceneErr) {
               console.warn('[scan] 3D scene build from server markdown failed:', sceneErr.message);
             }
+            // Scan regenerated the diagram: stored line ranges match again.
+            useCodeStore.getState().clearEditedCodeFiles();
             setTimeout(() => saveDiagramDigest(spaceId), 0);
             onDiagramGenerated?.({
               markdown,
@@ -1476,6 +1478,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         // fetchRepoContext) so ContentStore `repo:` entries land for the code
         // button fallback. populateContentStoreWorker self-catches errors.
         populateContentStoreWorker(result.repoFileContents, result.markdown);
+        // Scan regenerated the diagram: stored line ranges match again.
+        useCodeStore.getState().clearEditedCodeFiles();
         // Deferred so the scan-complete state can paint before the digest
         // snapshot (graphs + hierarchy + communities) is serialized.
         setTimeout(() => saveDiagramDigest(spaceId), 0);

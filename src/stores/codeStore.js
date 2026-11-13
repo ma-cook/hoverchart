@@ -69,6 +69,18 @@ function restoreImportIndexByFile(value) {
   return new Map(value.map(([file, arr]) => [file, Array.isArray(arr) ? new Set(arr) : arr]));
 }
 
+const normalizeCodePath = (p) => String(p || '').replace(/^\.\//, '').replace(/\\/g, '/');
+
+// Return `editedFiles` with `filePath` added. Returns the SAME set reference when
+// there is nothing to add so callers can skip a state update.
+function addEditedFile(editedFiles, filePath) {
+  const key = normalizeCodePath(filePath);
+  if (!key || !editedFiles || editedFiles.has(key)) return editedFiles;
+  const next = new Set(editedFiles);
+  next.add(key);
+  return next;
+}
+
 const useCodeStore = createWithEqualityFn((set, get) => ({
   _spaceId: null,
   githubConnected: false,
@@ -97,6 +109,20 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
   fileIndexByPath: null,
   importIndexByFile: null,
   pendingChanges: [],
+  // Normalized file paths whose local code has changed since the last scan
+  // (manual code-window saves + AI edits). Follow-mode code highlighting is
+  // suppressed for these objects until a scan/rescan regenerates the diagram.
+  editedCodeFiles: new Set(),
+
+  markCodeFileEdited: (filePath) => {
+    const next = addEditedFile(get().editedCodeFiles, filePath);
+    if (next !== get().editedCodeFiles) set({ editedCodeFiles: next });
+  },
+
+  clearEditedCodeFiles: () => {
+    if (get().editedCodeFiles.size === 0) return;
+    set({ editedCodeFiles: new Set() });
+  },
 
   setSpaceId: (spaceId) => {
     const prev = get()._spaceId;
@@ -462,13 +488,16 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
 
   addPendingChange: (change) => set((state) => ({
     pendingChanges: [...state.pendingChanges, { ...change, status: change.status || 'pending' }],
+    editedCodeFiles: addEditedFile(state.editedCodeFiles, change?.filePath),
   })),
 
   upsertPendingChange: (change) => set((state) => {
+    const editedCodeFiles = addEditedFile(state.editedCodeFiles, change?.filePath);
     const index = state.pendingChanges.findIndex((c) => c.filePath === change.filePath);
     if (index === -1) {
       return {
         pendingChanges: [...state.pendingChanges, { ...change, status: change.status || 'pending' }],
+        editedCodeFiles,
       };
     }
 
@@ -480,12 +509,19 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       original: existing.original ?? change.original,
       status: change.status || 'pending',
     };
-    return { pendingChanges: next };
+    return { pendingChanges: next, editedCodeFiles };
   }),
 
-  addPendingChanges: (changes) => set((state) => ({
-    pendingChanges: [...state.pendingChanges, ...changes.map(c => ({ ...c, status: c.status || 'pending' }))],
-  })),
+  addPendingChanges: (changes) => set((state) => {
+    let editedCodeFiles = state.editedCodeFiles;
+    for (const change of changes) {
+      editedCodeFiles = addEditedFile(editedCodeFiles, change?.filePath);
+    }
+    return {
+      pendingChanges: [...state.pendingChanges, ...changes.map(c => ({ ...c, status: c.status || 'pending' }))],
+      editedCodeFiles,
+    };
+  }),
 
   acceptPendingChange: (filePath) => set((state) => ({
     pendingChanges: state.pendingChanges.map(c =>
@@ -536,6 +572,7 @@ const useCodeStore = createWithEqualityFn((set, get) => ({
       fileIndexByPath: null,
       importIndexByFile: null,
       pendingChanges: [],
+      editedCodeFiles: new Set(),
     });
   },
 }), shallow);

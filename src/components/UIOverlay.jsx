@@ -1,4 +1,4 @@
-import { useUIOverlayStore, useDiagramStore, useSpatialManagerStore, useThemeStore } from '../stores';
+import { useUIOverlayStore, useDiagramStore, useSpatialManagerStore, useThemeStore, useSpaceManagerStore } from '../stores';
 import useConnectionStore from '../stores/connectionStore';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
@@ -286,23 +286,26 @@ const EarthSidebarSections = () => {
  */
 const ProgressToast = memo(() => {
   const scanProgress = useDiagramStore((state) => state.scanProgress);
-  const isScanning = scanProgress.isScanning;
   const renderProgress = useDiagramStore((state) => state.renderProgress);
   const isInitialLoading = useObjectsStore((state) => state.isInitialLoading);
   const objectCount = useObjectsStore((state) => state.objects?.length ?? 0);
   const isCellsLoading = useSpatialManagerStore((state) => state.loadingCells.size > 0);
+  const currentSpaceId = useSpaceManagerStore((state) => state.currentSpaceId);
 
-  if (
-    !isScanning &&
-    !renderProgress &&
-    !((isInitialLoading || isCellsLoading) && objectCount > 0)
-  ) {
+  // Silent backend rescans tag their progress with the space that owns them so
+  // the toast never lingers after the user switches to another space.
+  const showScan =
+    scanProgress.isScanning &&
+    (!scanProgress.spaceId || scanProgress.spaceId === (currentSpaceId || window.currentSpaceId));
+  const showData = (isInitialLoading || isCellsLoading) && objectCount > 0;
+
+  if (!showScan && !renderProgress && !showData) {
     return null;
   }
 
   return (
     <div className="progress-toast">
-      {((isInitialLoading || isCellsLoading) && objectCount > 0) && (
+      {showData && (
         <div className="progress-toast-row">
           <div className="progress-toast-label">
             {isInitialLoading
@@ -316,8 +319,8 @@ const ProgressToast = memo(() => {
           </div>
         </div>
       )}
-      {isScanning && (
-        <div className={`progress-toast-row${isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
+      {showScan && (
+        <div className={`progress-toast-row${showData ? ' progress-toast-row--divider' : ''}`}>
           <div className="progress-toast-label">{scanProgress.stage || 'Scanning…'}</div>
           <div className="progress-toast-track">
             <div className="progress-toast-fill progress-toast-fill--scan" style={{ width: `${scanProgress.progress}%` }} />
@@ -326,7 +329,7 @@ const ProgressToast = memo(() => {
         </div>
       )}
       {renderProgress && (
-        <div className={`progress-toast-row${isScanning || isInitialLoading || isCellsLoading ? ' progress-toast-row--divider' : ''}`}>
+        <div className={`progress-toast-row${showData || showScan ? ' progress-toast-row--divider' : ''}`}>
           <div className="progress-toast-label">
             Rendering {renderProgress.total.toLocaleString()} objects
             <span className="progress-toast-count"> ({renderProgress.mounted.toLocaleString()} / {renderProgress.total.toLocaleString()})</span>
@@ -609,6 +612,9 @@ const UIOverlay = ({
         } catch (sceneErr) {
           console.warn('[durableScan] 3D scene build from server markdown failed:', sceneErr.message);
         }
+        // The scan regenerated the diagram, so stored line ranges match the code
+        // again — re-enable follow-mode highlighting for edited files.
+        useCodeStore.getState().clearEditedCodeFiles();
         setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
         // Prefer the counts from the scene that was actually materialized —
         // the server-side estimate is only a fallback.
@@ -1276,6 +1282,7 @@ const UIOverlay = ({
 
       setLastCommitSha(rescanResult.commitSha);
       storeGeneratedMarkdown(rescanResult.mergedMarkdown, currentSpaceId);
+      useCodeStore.getState().clearEditedCodeFiles();
       setTimeout(() => saveDiagramDigest(currentSpaceId), 0);
       const codeStoreState = useCodeStore.getState();
       const baseContents = codeStoreState.repoFileContents;
@@ -1410,6 +1417,7 @@ const UIOverlay = ({
       setScanProgress({ isScanning: false, progress: 100, stage: 'Complete' });
       if (result.commitSha) setLastCommitSha(result.commitSha);
       if (result.markdown) storeGeneratedMarkdown(result.markdown, currentSpaceId);
+      useCodeStore.getState().clearEditedCodeFiles();
       if (result.storageUrl) setLatestMarkdownUrl(result.storageUrl);
       if (currentSpaceId) {
         const payload = { diagramRepo: repo };
@@ -1552,6 +1560,7 @@ const UIOverlay = ({
       if (result.success) {
         setLastScannedUrl(url);
         if (result.markdown) storeGeneratedMarkdown(result.markdown, currentSpaceId);
+        useCodeStore.getState().clearEditedCodeFiles();
         // Deferred so the scan-complete state can paint before the digest
         // snapshot is serialized.
         setTimeout(() => saveDiagramDigest(currentSpaceId), 0);

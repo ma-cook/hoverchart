@@ -66,6 +66,10 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   // Currently selected node in the 2D view (maps to a 3D objectId via nodeToObjectIdMap)
   selectedNodeId: null,
 
+  // C4 drill-down path. Each entry is a focused node pushed while descending
+  // a level; the visible level is c4Stack.length + 1 (C1 when empty).
+  c4Stack: [],
+
   // Progress of progressive 3D object mounting — null when idle
   // { total: number, mounted: number }
   renderProgress: null,
@@ -74,6 +78,8 @@ const useDiagramStore = createWithEqualityFn((set) => ({
   // { total: number, mounted: number }
   connectionsProgress: null,
 
+  // { isScanning, progress, stage, spaceId?, runId? } — spaceId/runId are set
+  // by silent backend rescans so their toast is scoped to the owning space.
   scanProgress: { isScanning: false, progress: 0, stage: '' },
 
   // LSP enrichment data: { definitions, references, hover, callGraph, moduleExports, errors }
@@ -113,6 +119,24 @@ const useDiagramStore = createWithEqualityFn((set) => ({
 
   setSelectedNodeId(selectedNodeId) {
     set({ selectedNodeId });
+  },
+
+  pushC4Focus(entry) {
+    if (!entry?.id) return;
+    set((state) => ({
+      c4Stack: [...state.c4Stack, entry].slice(0, 3),
+    }));
+  },
+
+  truncateC4Focus(length) {
+    const nextLength = Math.max(0, Math.min(3, Number(length) || 0));
+    set((state) => ({
+      c4Stack: state.c4Stack.slice(0, nextLength),
+    }));
+  },
+
+  resetC4Focus() {
+    set({ c4Stack: [] });
   },
 
   setRenderProgress(total, mounted) {
@@ -177,6 +201,7 @@ const useDiagramStore = createWithEqualityFn((set) => ({
       layout2D: null,
       is2DReady: false,
       selectedNodeId: null,
+      c4Stack: [],
       renderProgress: null,
       connectionsProgress: null,
       scanProgress: { isScanning: false, progress: 0, stage: '' },

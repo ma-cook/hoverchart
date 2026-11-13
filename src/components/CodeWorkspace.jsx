@@ -1,5 +1,7 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import useCodeStore from '../stores/codeStore';
+import useConnectionStore from '../stores/connectionStore';
+import useLlmEditActivityStore from '../stores/llmEditActivityStore';
 import { useObjectsStore } from '../stores';
 import {
   getCodeForObject,
@@ -38,6 +40,141 @@ const DEFAULT_WINDOW_LAYOUT = {
   width: SPACE_CHAT_DEFAULT_WIDTH,
   height: SPACE_CHAT_DEFAULT_HEIGHT,
 };
+
+// ── Follow-mode code highlighting ─────────────────────────────────────────────
+// While the camera follows a connection, the code windows for that connection's
+// two endpoint objects highlight the source lines that relate them: green for
+// the source side, blue for the destination side. Restored from the pre-editor
+// read-only viewer (removed when the panel became editable).
+
+const SOURCE_LINE_STYLE = {
+  background: 'rgba(34, 197, 94, 0.24)',
+  boxShadow: 'inset 3px 0 0 #22c55e',
+  display: 'block',
+};
+const DESTINATION_LINE_STYLE = {
+  background: 'rgba(59, 130, 246, 0.28)',
+  boxShadow: 'inset 3px 0 0 #3b82f6',
+  display: 'block',
+};
+const PLAIN_LINE_STYLE = { display: 'block' };
+
+const HIGHLIGHT_STOP_WORDS = new Set([
+  'calls', 'call', 'uses', 'use', 'imports', 'import', 'renders', 'render',
+  'receives', 'connect', 'connects', 'from', 'with', 'and', 'the', 'out',
+  'data', 'flow', 'component', 'function', 'hook', 'store', 'service',
+  'utility', 'ui', 'camera', 'connections', 'displays', 'contains',
+]);
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function getEndpointIds(connection) {
+  return {
+    source: String(
+      connection?.start?.objectId ?? connection?.start?.cube?.id ?? connection?.start?.id ?? ''
+    ),
+    target: String(
+      connection?.end?.objectId ?? connection?.end?.cube?.id ?? connection?.end?.id ?? ''
+    ),
+  };
+}
+
+function collectRelationshipTokens(connection, objectData, isSource, objects) {
+  const md = connection?.merfolkData || {};
+  const otherNode = isSource ? md.targetNode : md.sourceNode;
+  const ownNode = isSource ? md.sourceNode : md.targetNode;
+  const endpointIds = getEndpointIds(connection);
+  const otherObjectId = isSource ? endpointIds.target : endpointIds.source;
+  const otherObject = objects.find((obj) => String(obj.id) === otherObjectId);
+
+  const candidates = [
+    otherNode,
+    otherObject?.merfolkData?.nodeId,
+    otherObject?.headerText,
+    otherObject?.merfolkData?.name,
+  ];
+
+  const label = connection?.text || connection?.label || md.label || '';
+  label
+    .split(/[^A-Za-z0-9_$]+/)
+    .filter((token) => token.length >= 3 && !HIGHLIGHT_STOP_WORDS.has(token.toLowerCase()))
+    .forEach((token) => candidates.push(token));
+
+  const seen = new Set();
+  const tokens = [];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const trimmed = candidate.trim();
+    if (trimmed.length < 2 || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    tokens.push(trimmed);
+  }
+
+  const ownNames = [
+    ownNode,
+    objectData?.merfolkData?.nodeId,
+    objectData?.headerText,
+    objectData?.merfolkData?.name,
+  ].filter((token) => typeof token === 'string' && token.trim().length >= 2);
+
+  return { tokens, ownNames };
+}
+
+function findRelationshipLines(code, tokens, ownNames, exactRange) {
+  const lines = code.split('\n');
+  if (exactRange) {
+    const selected = [];
+    for (let i = exactRange.start; i <= exactRange.end; i += 1) {
+      if (i >= 1 && i <= lines.length) selected.push(i - 1);
+    }
+    if (selected.length > 0) return { lines: selected, mode: 'exact' };
+  }
+
+  const scoreWithTokens = (candidateTokens, isFallback) => {
+    const scores = new Map();
+    for (const token of candidateTokens) {
+      if (!token) continue;
+      const word = new RegExp(`\\b${escapeRegExp(token)}\\b`);
+      const importUse = new RegExp(
+        `(?:import|require|from)\\b[^\\n]*\\b${escapeRegExp(token)}\\b|\\b${escapeRegExp(token)}\\b[^\\n]*(?:from|require)`
+      );
+      const callUse = new RegExp(`\\b${escapeRegExp(token)}\\s*\\(`);
+      const jsxUse = new RegExp(`<\\s*${escapeRegExp(token)}\\b`);
+      const memberUse = new RegExp(`\\.\\s*${escapeRegExp(token)}\\b`);
+
+      lines.forEach((line, index) => {
+        let score = 0;
+        if (importUse.test(line)) score = 4;
+        else if (callUse.test(line) || jsxUse.test(line)) score = 4;
+        else if (memberUse.test(line)) score = 3;
+        else if (word.test(line)) score = isFallback ? 1 : 2;
+        if (score > 0) scores.set(index, Math.max(scores.get(index) || 0, score));
+      });
+    }
+    return scores;
+  };
+
+  const primaryScores = scoreWithTokens(tokens, false);
+  if (primaryScores.size > 0) {
+    const maxScore = Math.max(...primaryScores.values());
+    const threshold = maxScore >= 3 ? 3 : 2;
+    const selected = [...primaryScores.entries()]
+      .filter(([, score]) => score >= threshold)
+      .map(([index]) => index)
+      .sort((a, b) => a - b)
+      .slice(0, 12);
+    if (selected.length > 0) return { lines: selected, mode: 'relationship' };
+  }
+
+  const ownScores = scoreWithTokens(ownNames, true);
+  if (ownScores.size > 0) {
+    const selected = [...ownScores.keys()].sort((a, b) => a - b).slice(0, 8);
+    return { lines: selected, mode: 'endpoint' };
+  }
+
+  const firstNonEmpty = lines.findIndex((line) => line.trim().length > 0);
+  return { lines: firstNonEmpty >= 0 ? [firstNonEmpty] : [], mode: 'fallback' };
+}
 
 const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
   const layout = useCodeStore((s) => s.codeWindowLayouts?.[windowId]);
@@ -195,26 +332,90 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
   // fall through to the informative empty state instead.
   const hasDisplayedCode = typeof displayedCode === 'string' && displayedCode.trim().length > 0;
 
+  // ── Follow-mode highlighting ────────────────────────────────────────────
+  const followActiveConnectionId = useCodeStore((s) => s.followActiveConnectionId);
+  const editedCodeFiles = useCodeStore((s) => s.editedCodeFiles);
+  const llmActiveFiles = useLlmEditActivityStore((s) => s.activeFiles);
+  const connections = useConnectionStore((s) => s.connections);
+
+  const normalizedFilePath = (filePath || '').replace(/^\.\//, '').replace(/\\/g, '/');
+  // Highlight line numbers come from the last scan, so any object whose source
+  // changed (manual save or AI edit) is excluded until a rescan regenerates the
+  // diagram.
+  const codeChanged =
+    Boolean(pendingChange) ||
+    (!!normalizedFilePath && (
+      (editedCodeFiles && editedCodeFiles.has(normalizedFilePath)) ||
+      (llmActiveFiles && (llmActiveFiles.has(filePath) || llmActiveFiles.has(normalizedFilePath)))
+    ));
+
+  const highlight = useMemo(() => {
+    if (codeChanged) return null;
+    if (!followActiveConnectionId || !objectData) return null;
+    if (typeof displayedCode !== 'string' || displayedCode.length === 0) return null;
+
+    const connection = (connections || []).find(
+      (candidate) => String(candidate.id) === String(followActiveConnectionId)
+    );
+    if (!connection) return null;
+
+    const endpointIds = getEndpointIds(connection);
+    const isSource = endpointIds.source === String(objectId);
+    const isDestination = endpointIds.target === String(objectId);
+    if (!isSource && !isDestination) return null;
+
+    const md = connection.merfolkData || {};
+    const direction = isSource ? 'source' : 'destination';
+    const objects = useObjectsStore.getState().objects || [];
+    const { tokens, ownNames } = collectRelationshipTokens(connection, objectData, isSource, objects);
+
+    // Exact per-endpoint ranges when a scan provides them (no current scan does;
+    // kept so richer scan metadata activates without further changes).
+    const relStart = md[`${direction}RelStartLine`] ?? md[`${direction}RelationshipStartLine`] ?? md[`${direction}StartLine`];
+    const relEnd = md[`${direction}RelEndLine`] ?? md[`${direction}RelationshipEndLine`] ?? md[`${direction}EndLine`];
+    const relFile = md[`${direction}RelFilePath`] ?? md.relFilePath ?? md.relationshipFilePath;
+
+    let exactRange = null;
+    if (relStart != null && relEnd != null && (!relFile || !filePath || relFile === filePath)) {
+      const displayStart = Number(codeInfo.startLine) || 1;
+      exactRange = {
+        start: Number(relStart) - displayStart + 1,
+        end: Number(relEnd) - displayStart + 1,
+      };
+    }
+
+    const result = findRelationshipLines(displayedCode, tokens, ownNames, exactRange);
+    if (!result.lines.length) return null;
+    return { direction, lines: new Set(result.lines), mode: result.mode };
+  }, [codeChanged, followActiveConnectionId, objectData, displayedCode, connections, objectId, filePath, codeInfo.startLine]);
+
+  const highlightStyle = highlight?.direction === 'source' ? SOURCE_LINE_STYLE : DESTINATION_LINE_STYLE;
+
+  const preRef = useRef(null);
+  const lastScrolledKey = useRef('');
+  useEffect(() => {
+    if (!highlight || !preRef.current) return;
+    const lineIndices = [...highlight.lines];
+    if (lineIndices.length === 0) return;
+    const key = `${followActiveConnectionId}:${objectId}:${lineIndices.join(',')}`;
+    if (lastScrolledKey.current === key) return;
+    lastScrolledKey.current = key;
+    const codeEl = preRef.current.querySelector('.code-workspace-code');
+    const target = codeEl?.children?.[lineIndices[0]];
+    if (!target) return;
+    requestAnimationFrame(() => {
+      try {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      } catch {
+        // environment without smooth scroll
+      }
+    });
+  }, [highlight, followActiveConnectionId, objectId]);
+
   const [draft, setDraft] = useState('');
   const [savedDraft, setSavedDraft] = useState('');
   const [saveError, setSaveError] = useState(null);
   const [saving, setSaving] = useState(false);
-
-  // The code editor is an UNCONTROLLED contenteditable div. React never owns its
-  // text nodes (that fights the caret), so we mirror `draft` into the DOM here
-  // only when the element is not focused. The window itself is composited into
-  // its own layer in App.css; without that Chromium paints a ghost copy of the
-  // scrollable editor around the panel over the WebGL canvas.
-  const editorRef = useRef(null);
-
-  useEffect(() => {
-    const el = editorRef.current;
-    if (!el) return;
-    if (document.activeElement === el) return; // never clobber the caret mid-edit
-    if (el.innerText !== draft) {
-      el.textContent = draft;
-    }
-  }, [draft, hasDisplayedCode]);
 
   useEffect(() => {
     if (typeof displayedCode !== 'string') return;
@@ -285,6 +486,26 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
 
   const canEdit = !!filePath && typeof displayedCode === 'string';
   const isDirty = canEdit && draft !== savedDraft;
+
+  // While following a connection, swap the editable editor for a read-only
+  // highlighted view. Unsaved edits keep the editor so nothing is hidden.
+  const showHighlight = !!highlight && !isDirty;
+
+  // The code editor is an UNCONTROLLED contenteditable div. React never owns its
+  // text nodes (that fights the caret), so we mirror `draft` into the DOM here
+  // only when the element is not focused. Declared after `showHighlight` and
+  // depending on it so the content is re-applied when the editor remounts after
+  // a follow (highlight) session swaps it out and back in.
+  const editorRef = useRef(null);
+
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    if (document.activeElement === el) return; // never clobber the caret mid-edit
+    if (el.innerText !== draft) {
+      el.textContent = draft;
+    }
+  }, [draft, hasDisplayedCode, showHighlight]);
 
   const handleSave = useCallback(async () => {
     if (!canEdit || !isDirty) return;
@@ -390,7 +611,24 @@ const CodeWindow = ({ windowId, objectId, zIndex, repo, commitSha }) => {
       <div className="space-chat-resize-handle space-chat-resize-corner" onMouseDown={(e) => handleResizeStart('corner', e)} />
 
       <div className="code-workspace-body code-window-body">
-        {hasDisplayedCode ? (
+        {showHighlight ? (
+          <pre ref={preRef} className="code-workspace-pre">
+            <code className={`code-workspace-code language-${language}`}>
+              {displayedCode.split('\n').map((line, idx) => {
+                const isHighlighted = highlight.lines.has(idx);
+                return (
+                  <div
+                    key={idx}
+                    data-code-highlight={isHighlighted ? highlight.direction : undefined}
+                    style={isHighlighted ? highlightStyle : PLAIN_LINE_STYLE}
+                  >
+                    {line}
+                  </div>
+                );
+              })}
+            </code>
+          </pre>
+        ) : hasDisplayedCode ? (
           <div
             ref={editorRef}
             className={`code-workspace-editor code-window-editor language-${language}`}

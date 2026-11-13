@@ -121,7 +121,31 @@ function layoutNodes(nodesEntries, connections, hierarchy, _filter) {
   // 2. Identify tree roots vs standalone groups
   // ------------------------------------------------------------------
   const treeRoots = [];
-  const TYPE_ORDER = ['hook', 'store', 'service', 'library', 'datapath', 'function'];
+  const TREE_ROOT_TYPES = new Set([
+    'person',
+    'system',
+    'container',
+    'component',
+    'module',
+  ]);
+  const TYPE_ORDER = [
+    'external',
+    'endpoint',
+    'interface',
+    'class',
+    'hook',
+    'store',
+    'service',
+    'library',
+    'datapath',
+    'function',
+    'variable',
+    'constant',
+    'handler',
+    'control',
+    'state',
+    'data',
+  ];
   const standaloneByType = new Map();
   for (const t of TYPE_ORDER) standaloneByType.set(t, []);
 
@@ -132,7 +156,7 @@ function layoutNodes(nodesEntries, connections, hierarchy, _filter) {
     if (internalCompChildren.has(id)) continue;
     // This is a root-level node
     const type = nodesMap.get(id)?.type || 'function';
-    if (type === 'component') {
+    if (TREE_ROOT_TYPES.has(type)) {
       treeRoots.push(id);
     } else {
       const bucket = standaloneByType.get(type);

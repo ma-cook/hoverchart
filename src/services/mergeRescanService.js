@@ -9,6 +9,8 @@ import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
 import useAuthStore from '../stores/authStore';
 import useWorkflowStore from '../stores/workflowStore';
+import useDiagramStore from '../stores/diagramStore';
+import useSpaceManagerStore from '../stores/spaceManagerStore';
 
 /**
  * Create an onCreateObject callback compatible with processMarkdownFile.
@@ -20,6 +22,34 @@ function makeCreateObject(spaceId) {
   return (type, position = null, extraData = {}) => {
     return storeCreate(type, position, user, spaceId, null, extraData);
   };
+}
+
+// Silent rescans report to the same bottom-right progress toast as manual
+// scans. Each run carries a spaceId (so the toast hides when the user leaves
+// that space) and a runId (so one rescan can never clear another's progress).
+let rescanRunSeq = 0;
+const makeRescanRun = (spaceId) => `${spaceId}:${++rescanRunSeq}`;
+
+function isActiveSpace(spaceId) {
+  const { currentSpaceId } = useSpaceManagerStore.getState();
+  return (currentSpaceId || window.currentSpaceId) === spaceId;
+}
+
+function publishRescanProgress(spaceId, runId, progress, stage) {
+  if (!spaceId || !isActiveSpace(spaceId)) return;
+  useDiagramStore.getState().setScanProgress({
+    isScanning: true,
+    progress,
+    stage,
+    spaceId,
+    runId,
+  });
+}
+
+function clearRescanProgress(runId) {
+  const { scanProgress } = useDiagramStore.getState();
+  if (!scanProgress?.runId || scanProgress.runId !== runId) return;
+  useDiagramStore.getState().clearScanProgress();
 }
 
 /**
@@ -36,48 +66,64 @@ async function tryServerRescan(repoSlug, spaceId) {
   if (!user?.uid || user.isGuest) return false;
 
   const [owner, name] = repoSlug.split('/');
-  const job = await api.post('/api/scan-jobs', {
-    spaceId,
-    repoOwner: owner,
-    repoName: name,
-    rescan: true,
-  });
+  const runId = makeRescanRun(spaceId);
+  try {
+    publishRescanProgress(spaceId, runId, 1, 'Queuing server rescan...');
+    const job = await api.post('/api/scan-jobs', {
+      spaceId,
+      repoOwner: owner,
+      repoName: name,
+      rescan: true,
+    });
+    publishRescanProgress(spaceId, runId, job?.progress || 2, job?.stage || 'Rescan queued...');
 
-  for (let i = 0; i < 200; i++) {
-    const j = await api.get(`/api/scan-jobs/${job.id}`);
-    if (!j) continue;
-    if (j.status === 'done') {
-      const markdown = await fetchStoredMarkdown(j.markdown_storage_url);
-      if (!markdown) throw new Error('Server rescan produced no markdown');
-      await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
-      // Materialize the new/changed nodes as 3D objects too — the server only
-      // produces markdown, so without this step a merged PR's objects never
-      // appear in the scene. Existing objects are pinned to their current
-      // positions, so the diagram stays where it was first created.
-      try {
-        const sceneResult = await renderMerfolkMarkdownToScene(markdown, spaceId, user);
+    for (let i = 0; i < 200; i++) {
+      const j = await api.get(`/api/scan-jobs/${job.id}`);
+      if (!j) continue;
+      if (j.status === 'done') {
+        publishRescanProgress(spaceId, runId, 95, 'Applying diagram updates...');
+        const markdown = await fetchStoredMarkdown(j.markdown_storage_url);
+        if (!markdown) throw new Error('Server rescan produced no markdown');
+        await markdownDiagramService.hydrateStoreFromMarkdown(markdown);
+        // Materialize the new/changed nodes as 3D objects too — the server only
+        // produces markdown, so without this step a merged PR's objects never
+        // appear in the scene. Existing objects are pinned to their current
+        // positions, so the diagram stays where it was first created.
+        try {
+          const sceneResult = await renderMerfolkMarkdownToScene(markdown, spaceId, user);
+          console.log(
+            `[mergeRescan] Scene updated — ${sceneResult.objectsCreated} object(s),`,
+            `${sceneResult.connectionsCreated} connection(s)`
+          );
+        } catch (sceneErr) {
+          console.warn('[mergeRescan] Scene materialization failed:', sceneErr.message);
+        }
+        // Rescan regenerated the diagram: stored line ranges match the code again.
+        useCodeStore.getState().clearEditedCodeFiles();
+        setTimeout(() => saveDiagramDigest(spaceId), 0);
+        if (j.sha) localStorage.setItem(`diagramCommitSha_${spaceId}`, j.sha);
+        localStorage.setItem(`diagramMarkdownText_${spaceId}`, markdown);
         console.log(
-          `[mergeRescan] Scene updated — ${sceneResult.objectsCreated} object(s),`,
-          `${sceneResult.connectionsCreated} connection(s)`
+          `[mergeRescan] Server diff-rescan complete — ${j.changed_file_count ?? 0} file(s) changed,`,
+          `${j.objects_created ?? 0} nodes, ${j.connections_created ?? 0} edges`
         );
-      } catch (sceneErr) {
-        console.warn('[mergeRescan] Scene materialization failed:', sceneErr.message);
+        return true;
       }
-      setTimeout(() => saveDiagramDigest(spaceId), 0);
-      if (j.sha) localStorage.setItem(`diagramCommitSha_${spaceId}`, j.sha);
-      localStorage.setItem(`diagramMarkdownText_${spaceId}`, markdown);
-      console.log(
-        `[mergeRescan] Server diff-rescan complete — ${j.changed_file_count ?? 0} file(s) changed,`,
-        `${j.objects_created ?? 0} nodes, ${j.connections_created ?? 0} edges`
+      if (j.status === 'failed' || j.status === 'cancelled') {
+        throw new Error(`server rescan ${j.status}: ${j.error || 'unknown'}`);
+      }
+      publishRescanProgress(
+        spaceId,
+        runId,
+        j.progress || 0,
+        j.stage || `Updating diagram (${j.status})...`,
       );
-      return true;
+      await new Promise((r) => setTimeout(r, 2500));
     }
-    if (j.status === 'failed' || j.status === 'cancelled') {
-      throw new Error(`server rescan ${j.status}: ${j.error || 'unknown'}`);
-    }
-    await new Promise((r) => setTimeout(r, 2500));
+    throw new Error('server rescan timed out');
+  } finally {
+    clearRescanProgress(runId);
   }
-  throw new Error('server rescan timed out');
 }
 
 /**
@@ -104,6 +150,7 @@ export async function rescanAfterMerge(repoSlug, spaceId) {
     console.warn('[mergeRescan] Server path failed — falling back to local rescan:', err.message);
   }
 
+  const runId = makeRescanRun(spaceId);
   try {
     if (!isGithubAuthenticated()) {
       console.warn('[mergeRescan] GitHub not connected — skipping background rescan');
@@ -124,11 +171,18 @@ export async function rescanAfterMerge(repoSlug, spaceId) {
 
     const repo = { owner: { login: owner }, name };
 
+    publishRescanProgress(spaceId, runId, 5, 'Checking for changes...');
+    let lastProgressAt = 0;
     const rescanResult = await rescanRepositoryForChanges(
       repo,
       lastCommitSha,
       existingMarkdown,
-      null,
+      (progress, stage) => {
+        const now = Date.now();
+        if (now - lastProgressAt < 250 && progress < 100) return;
+        lastProgressAt = now;
+        publishRescanProgress(spaceId, runId, progress, stage);
+      },
     );
 
     if (rescanResult.noChanges) {
@@ -153,12 +207,16 @@ export async function rescanAfterMerge(repoSlug, spaceId) {
     const mergedBlob = new Blob([rescanResult.mergedMarkdown], { type: 'text/markdown' });
     const mergedFile = new File([mergedBlob], `${name}-merged.md`, { type: 'text/markdown' });
 
+    publishRescanProgress(spaceId, runId, 85, 'Applying diagram updates...');
     await markdownDiagramService.processMarkdownFile(
       mergedFile,
       onCreateObject,
       spaceId,
       user,
     );
+
+    // Rescan regenerated the diagram: stored line ranges match the code again.
+    useCodeStore.getState().clearEditedCodeFiles();
 
     // Update stored state
     localStorage.setItem(`diagramCommitSha_${spaceId}`, rescanResult.commitSha);
@@ -202,6 +260,8 @@ export async function rescanAfterMerge(repoSlug, spaceId) {
     );
   } catch (err) {
     console.warn('[mergeRescan] Background rescan failed:', err.message);
+  } finally {
+    clearRescanProgress(runId);
   }
 }
 

@@ -5,13 +5,16 @@ import {
   MiniMap,
   Panel,
   useNodesState,
+  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import useDiagramStore from '../stores/diagramStore';
 import useUIOverlayStore from '../stores/uiOverlayStore';
 import useObjectsStore from '../stores/objectsStore';
+import useCodeStore from '../stores/codeStore';
 import { getDiagramLayoutWorker } from '../workers/diagramLayoutWorkerClient';
+import { buildC4Model, getC4View, C4_LEVELS } from '../services/c4/c4Model';
 import { customNodeTypes } from './diagram2d/NodeTypes';
 import { customEdgeTypes, EdgeMarkerDefs } from './diagram2d/EdgeTypes';
 
@@ -26,7 +29,9 @@ const LAYER_DEFS = [
   { key: 'inheritance', label: 'Inheritance', types: ['inheritance'] },
 ];
 
-const DEFAULT_LAYERS = { hierarchy: true, dataflow: false, association: false, inheritance: false };
+// The C4 projection replaces hierarchy edges with semantic relationships,
+// so show architecture and code edges by default.
+const DEFAULT_LAYERS = { hierarchy: false, dataflow: true, association: true, inheritance: true };
 
 // ---------------------------------------------------------------------------
 // Helpers: convert layout worker output → React Flow nodes & edges
@@ -113,6 +118,21 @@ function buildReactFlowEdges(edgeRoutes) {
   }));
 }
 
+// Refit the viewport whenever a new C4 level has been laid out. React Flow's
+// `fitView` prop only applies to the initial mount, not subsequent layouts.
+function FitViewOnLayout({ version }) {
+  const { fitView } = useReactFlow();
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      fitView({ padding: 0.2, duration: 200 });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [version, fitView]);
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Client-side edge filtering helpers
 // ---------------------------------------------------------------------------
@@ -150,13 +170,23 @@ function filterEdges(allEdges, layers, activeFlowPath) {
 // ---------------------------------------------------------------------------
 
 const MINIMAP_COLORS = {
+  person: '#5e35b1',
+  system: '#1e88e5',
+  container: '#00838f',
   component: '#1976d2',
+  module: '#6d4c41',
   function: '#388e3c',
   store: '#7b1fa2',
   service: '#e65100',
   hook: '#00796b',
   library: '#757575',
+  external: '#546e7a',
+  interface: '#0277bd',
+  class: '#ad1457',
+  endpoint: '#ef6c00',
   datapath: '#ff8f00',
+  variable: '#689f38',
+  constant: '#f9a825',
 };
 
 // Pre-computed entries array — avoids Object.entries() allocation per render
@@ -212,6 +242,44 @@ const LEGEND_PANEL_STYLE = { display: 'flex', flexWrap: 'wrap', gap: '8px', maxW
 const LEGEND_ITEM_STYLE = { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px' };
 const LEGEND_TEXT_STYLE = { textTransform: 'capitalize', color: '#555' };
 
+const C4_STEPPER_STYLE = { display: 'flex', gap: '4px', marginBottom: '8px' };
+const C4_STEP_STYLE = {
+  flex: 1,
+  padding: '4px 0',
+  borderRadius: '4px',
+  border: '1px solid var(--panel-border)',
+  background: 'var(--panel-bg)',
+  color: 'var(--panel-text)',
+  cursor: 'pointer',
+  fontSize: '12px',
+  fontWeight: 600,
+};
+const C4_STEP_CURRENT_STYLE = {
+  background: '#1976d2',
+  borderColor: '#1976d2',
+  color: '#fff',
+  cursor: 'default',
+};
+const C4_STEP_DISABLED_STYLE = {
+  opacity: 0.4,
+  cursor: 'not-allowed',
+};
+const C4_FOCUS_STYLE = {
+  fontSize: '11px',
+  color: 'var(--panel-text-muted)',
+  marginBottom: '6px',
+  lineHeight: 1.4,
+};
+const C4_EMPTY_STYLE = {
+  fontSize: '11px',
+  color: '#b26a00',
+  background: '#fff8e1',
+  border: '1px solid #ffe0a3',
+  borderRadius: '4px',
+  padding: '6px 8px',
+  marginBottom: '6px',
+};
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -224,10 +292,16 @@ function DiagramOverlay2D() {
   const nodeToObjectIdMap = useDiagramStore((s) => s.nodeToObjectIdMap);
   const selectedNodeId = useDiagramStore((s) => s.selectedNodeId);
   const setSelectedNodeId = useDiagramStore((s) => s.setSelectedNodeId);
+  const c4Stack = useDiagramStore((s) => s.c4Stack);
+  const pushC4Focus = useDiagramStore((s) => s.pushC4Focus);
+  const truncateC4Focus = useDiagramStore((s) => s.truncateC4Focus);
+  const repoName = useCodeStore((s) => s.repoName);
+  const fileIndexByPath = useCodeStore((s) => s.fileIndexByPath);
   const setViewMode = useUIOverlayStore((s) => s.setViewMode);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [allEdges, setAllEdges] = useState([]); // unfiltered edges from worker
+  const [layoutVersion, setLayoutVersion] = useState(0);
   const [isLayouting, setIsLayouting] = useState(false);
   const [layers, setLayers] = useState(DEFAULT_LAYERS);
   const [activeFlowPath, setActiveFlowPath] = useState('');
@@ -243,42 +317,60 @@ function DiagramOverlay2D() {
     return Array.from(names).sort();
   }, [connectionTags]);
 
-  // ---- Serialise graph data for the worker ----
-  const serialisedGraphData = useMemo(() => {
-    if (!graphs || graphs.length === 0) return null;
-    const allNodes = [];
-    const allConnections = [];
-    for (const graph of graphs) {
-      if (graph.nodes) {
-        for (const [id, data] of graph.nodes) allNodes.push([id, data]);
-      }
-      if (graph.connections) {
-        for (const [, conn] of graph.connections) allConnections.push(conn);
-      }
-    }
-    return { allNodes, allConnections };
-  }, [graphs]);
+  // ---- Build the C4 model once, then project the focused view ----
+  const c4Model = useMemo(
+    () => buildC4Model({ graphs, hierarchy, repoName, fileIndexByPath }),
+    [graphs, hierarchy, repoName, fileIndexByPath]
+  );
 
-  // ---- Serialise hierarchy for the worker ----
-  const serialisedHierarchy = useMemo(() => {
-    if (!hierarchy) return { parentChildMap: [], childParentMap: [], rootNodes: [], internalComponentChildren: [] };
-    return {
-      parentChildMap: hierarchy.parentChildMap
-        ? Array.from(hierarchy.parentChildMap.entries()).map(([k, v]) => [k, Array.from(v)])
-        : [],
-      childParentMap: hierarchy.childParentMap
-        ? Array.from(hierarchy.childParentMap.entries())
-        : [],
-      rootNodes: hierarchy.rootNodes ? Array.from(hierarchy.rootNodes) : [],
-      internalComponentChildren: hierarchy.internalComponentChildren
-        ? Array.from(hierarchy.internalComponentChildren)
-        : [],
-    };
-  }, [hierarchy]);
+  const c4View = useMemo(
+    () => getC4View(c4Model, c4Stack),
+    [c4Model, c4Stack]
+  );
 
-  // ---- Run layout once with ALL connections ----
+  const c4ViewInvalid = !!c4View?.invalid;
+
+  // If a rescan removed the focused node, fall back to the nearest valid level.
   useEffect(() => {
-    if (!serialisedGraphData) return;
+    if (!c4ViewInvalid || !c4Model) return;
+    let nextLength = c4Stack.length;
+    while (nextLength > 0) {
+      nextLength -= 1;
+      if (!getC4View(c4Model, c4Stack.slice(0, nextLength)).invalid) break;
+    }
+    truncateC4Focus(nextLength);
+  }, [c4ViewInvalid, c4Model, c4Stack, truncateC4Focus]);
+
+  // ---- Serialise the focused C4 view as a flat layout for the worker ----
+  const serialisedViewData = useMemo(() => {
+    if (!c4View) return null;
+    const allNodes = c4View.nodes.map((node) => [
+      node.id,
+      { id: node.id, name: node.label, type: node.type },
+    ]);
+    const allConnections = c4View.connections.map((connection) => ({
+      id: connection.id,
+      source: { nodeId: connection.sourceId },
+      target: { nodeId: connection.targetId },
+      type: connection.type,
+      label: connection.label || '',
+      flowPaths: connection.flowPaths || [],
+    }));
+    return {
+      allNodes,
+      allConnections,
+      hierarchy: {
+        parentChildMap: [],
+        childParentMap: [],
+        rootNodes: allNodes.map(([id]) => id),
+        internalComponentChildren: [],
+      },
+    };
+  }, [c4View]);
+
+  // ---- Run layout for the active C4 level ----
+  useEffect(() => {
+    if (!serialisedViewData) return;
     let cancelled = false;
     setIsLayouting(true);
     setLayoutError(null);
@@ -287,20 +379,21 @@ function DiagramOverlay2D() {
       try {
         const worker = getDiagramLayoutWorker();
         const result = await worker.computeLayout(
-          serialisedGraphData.allNodes,
-          serialisedGraphData.allConnections,
-          serialisedHierarchy,
+          serialisedViewData.allNodes,
+          serialisedViewData.allConnections,
+          serialisedViewData.hierarchy,
           { filter: 'all' }
         );
         if (cancelled) return;
 
         setLayout2D(result);
 
-        const rfNodes = buildReactFlowNodes(result.nodePositions, serialisedHierarchy);
+        const rfNodes = buildReactFlowNodes(result.nodePositions, serialisedViewData.hierarchy);
         const rfEdges = buildReactFlowEdges(result.edgeRoutes);
 
         setNodes(rfNodes);
         setAllEdges(rfEdges);
+        setLayoutVersion((version) => version + 1);
       } catch (err) {
         if (!cancelled) {
           console.error('[DiagramOverlay2D] Layout failed:', err);
@@ -312,7 +405,7 @@ function DiagramOverlay2D() {
     })();
 
     return () => { cancelled = true; };
-  }, [serialisedGraphData, serialisedHierarchy, setLayout2D, setNodes]);
+  }, [serialisedViewData, setLayout2D, setNodes]);
 
   // ---- Derive filtered edges via useMemo (avoids extra render from useEffect+setState) ----
   const filteredEdges = useMemo(
@@ -332,10 +425,19 @@ function DiagramOverlay2D() {
     return map;
   }, [toggleLayer]);
 
-  // ---- Node click → selection ----
+  // ---- Node click → drill into containers, select leaves ----
   const handleNodeClick = useCallback((_event, node) => {
+    if (c4View?.drillable?.has(node.id)) {
+      const nextFocus = c4View.nextFocusById.get(node.id);
+      if (nextFocus) {
+        pushC4Focus(nextFocus);
+        setSelectedNodeId(null);
+        return;
+      }
+    }
+    if (c4View?.syntheticIds?.has(node.id)) return;
     setSelectedNodeId(node.id);
-  }, [setSelectedNodeId]);
+  }, [c4View, pushC4Focus, setSelectedNodeId]);
 
   // ---- Back to 3D with selection sync ----
   const handleBackTo3D = useCallback(() => {
@@ -421,6 +523,7 @@ function DiagramOverlay2D() {
         selectionKeyCode={null}
         zoomActivationKeyCode={null}
       >
+        <FitViewOnLayout version={layoutVersion} />
         <Controls showInteractive={false} />
         <MiniMap
           nodeColor={minimapNodeColor}
@@ -437,6 +540,47 @@ function DiagramOverlay2D() {
             <button onClick={handleBackTo3D} style={backButtonStyle}>
               ← Back to 3D
             </button>
+
+            <div style={DIVIDER_STYLE} />
+
+            <div style={SECTION_HEADER_STYLE}>
+              {c4View.levelInfo.title}
+            </div>
+
+            <div style={C4_STEPPER_STYLE}>
+              {C4_LEVELS.map((level) => {
+                const isCurrent = level.level === c4View.level;
+                const isVisited = level.level <= c4View.level;
+                return (
+                  <button
+                    key={level.level}
+                    type="button"
+                    disabled={!isVisited || isCurrent}
+                    onClick={() => truncateC4Focus(level.level - 1)}
+                    style={{
+                      ...C4_STEP_STYLE,
+                      ...(isCurrent ? C4_STEP_CURRENT_STYLE : null),
+                      ...(!isVisited ? C4_STEP_DISABLED_STYLE : null),
+                    }}
+                    title={level.description}
+                  >
+                    {level.short}
+                  </button>
+                );
+              })}
+            </div>
+
+            {c4View.focusLabels.length > 0 && (
+              <div style={C4_FOCUS_STYLE}>
+                {c4View.focusLabels.join(' › ')}
+              </div>
+            )}
+
+            {c4View.emptyMessage && (
+              <div style={C4_EMPTY_STYLE}>
+                {c4View.emptyMessage}
+              </div>
+            )}
 
             {selectedNodeId && (
               <div style={SELECTED_NODE_STYLE}>
