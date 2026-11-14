@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { requestRender } from '../utils/renderLoopGovernor';
 
 /**
  * Unified texture update utility using requestAnimationFrame with throttling
@@ -34,6 +35,8 @@ export const useTextureUpdater = ({
           meshRef.current?.material?.map === textureRef.current
         ) {
           textureRef.current.needsUpdate = true;
+          // Demand mode needs an explicit frame for every texture upload.
+          requestRender();
         }
         lastUpdateTime = currentTime;
       }

@@ -170,13 +170,15 @@ export const scanWebsiteAndGenerateDiagram = async (
   if (onProgress) onProgress(15, 'Launching browser...');
 
   let result;
+  let progressInterval = null;
   try {
-    const progressInterval = simulateProgress(onProgress, 15, 75, duration * 1000 + 30000);
+    progressInterval = simulateProgress(onProgress, 15, 75, duration * 1000 + 30000);
     const response = await api.post('/api/zen/scan', { url, duration });
-    clearInterval(progressInterval);
     result = response.data || response;
   } catch (error) {
     throw new Error(`Runtime scan failed: ${error.message}`);
+  } finally {
+    if (progressInterval) clearInterval(progressInterval);
   }
 
   const { markdown, metadata } = result;

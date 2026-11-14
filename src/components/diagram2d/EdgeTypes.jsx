@@ -4,6 +4,7 @@ import {
   EdgeLabelRenderer,
   getBezierPath,
 } from '@xyflow/react';
+import { useDetailLevel } from './DetailContext';
 
 // ---------------------------------------------------------------------------
 // Flow-path colour palette (deterministic per flow-path name)
@@ -106,11 +107,15 @@ function MerfolkEdge({
   targetPosition,
   data,
   selected,
+  interactionWidth,
 }) {
   const connectionType = data?.connectionType || 'dataflow';
   const flowPaths = data?.flowPaths;
   const edgeStyle = getEdgeStyle(connectionType, flowPaths);
   const label = data?.label || '';
+  const detailLevel = useDetailLevel();
+  const showLabel = detailLevel === 'high';
+  const showMarker = detailLevel !== 'low';
 
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -130,9 +135,10 @@ function MerfolkEdge({
         id={id}
         path={edgePath}
         style={mergedStyle}
-        markerEnd={getMarkerEnd(connectionType)}
+        markerEnd={showMarker ? getMarkerEnd(connectionType) : undefined}
+        interactionWidth={interactionWidth}
       />
-      {label && (
+      {label && showLabel && (
         <EdgeLabelRenderer>
           <div
             className={`react-flow__edge-label ${LABEL_CSS_CLASS}`}

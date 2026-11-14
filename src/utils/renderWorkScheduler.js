@@ -48,16 +48,19 @@ let _resetScheduled = false;
 // Tracks how long frames actually take so that useFrame hooks can
 // voluntarily skip non-essential work when the main thread is lagging.
 //
-// CRITICAL: This runs on its OWN persistent rAF loop, independent of
-// acquireBudget(). The old design only measured frame time inside
-// _resetForNextFrame (which was scheduled by acquireBudget). Once
-// progressive mounting finished, acquireBudget stopped being called,
-// _smoothFrameTime froze at a high value, and isFrameBudgetExhausted()
-// permanently returned true — blocking LOD, text billboarding, and
-// connection visibility updates forever.
+// Frame samples are recorded by FrameTicker from R3F's useFrame callback.
+// There is deliberately no persistent rAF loop here: an always-running
+// tracker defeats demand rendering by waking the main thread every frame.
+// When the render loop is idle, the smoothed value simply keeps its last
+// value and is reset by the first frame after a long gap.
 
-/** Timestamp of the previous rAF tick (for computing frame delta). */
+/** Timestamp of the previous rendered frame (for computing frame delta). */
 let _prevFrameTs = 0;
+
+/** Timestamp of the last rendered frame, or 0 if none yet. */
+export function getLastFrameTs() {
+  return _prevFrameTs;
+}
 
 /** Smoothed frame time in ms (EMA with alpha=0.15 — slower reaction avoids
  *  single-spike overreaction, recovers in ~5 frames instead of ~10). */
@@ -82,35 +85,33 @@ let _moveCount = 0;
 let _moveCountResetTime = 0;
 const MOVE_COUNT_WINDOW_MS = 500;
 
-/** Whether the persistent frame-time tracking loop is running. */
-let _frameTrackingRunning = false;
-
 /**
- * Persistent rAF loop that continuously measures frame time.
- * Starts automatically and runs for the lifetime of the app.
+ * Record a rendered frame. Called once per frame by FrameTicker.
+ * Gaps larger than 250ms (tab resume, demand idle heartbeat) reset the
+ * baseline instead of poisoning the moving average with a huge delta.
+ *
+ * @param {number} [ts] - Frame timestamp in ms
  */
-function _frameTimeTracker(ts) {
+export function recordFrameTime(ts = performance.now()) {
   if (_prevFrameTs > 0) {
     const dt = ts - _prevFrameTs;
-    // EMA smoothing (alpha=0.15) — smoother than the old 0.3, recovers faster
-    // from brief spikes while still tracking sustained degradation.
-    _smoothFrameTime = _smoothFrameTime * 0.85 + dt * 0.15;
+    if (dt > 0 && dt <= 250) {
+      // EMA smoothing (alpha=0.15) — smoother than the old 0.3, recovers faster
+      // from brief spikes while still tracking sustained degradation.
+      _smoothFrameTime = _smoothFrameTime * 0.85 + dt * 0.15;
 
-    // Track consecutive bad frames for starvation prevention
-    if (_smoothFrameTime > FRAME_TIME_BUDGET_MS) {
-      _consecutiveBadFrames++;
-    } else {
+      // Track consecutive bad frames for starvation prevention
+      if (_smoothFrameTime > FRAME_TIME_BUDGET_MS) {
+        _consecutiveBadFrames++;
+      } else {
+        _consecutiveBadFrames = 0;
+      }
+    } else if (dt > 250) {
+      _smoothFrameTime = 16;
       _consecutiveBadFrames = 0;
     }
   }
   _prevFrameTs = ts;
-  requestAnimationFrame(_frameTimeTracker);
-}
-
-// Start the persistent frame-time tracking loop immediately
-if (!_frameTrackingRunning) {
-  _frameTrackingRunning = true;
-  requestAnimationFrame(_frameTimeTracker);
 }
 
 /** rAF callback: resets the budget for the next frame. */
@@ -190,6 +191,15 @@ export function notifyCameraMove() {
  */
 export function isCameraMoving() {
   return performance.now() - _lastMoveTs < MOVE_SETTLE_MS;
+}
+
+/**
+ * Returns `true` if the camera was moving within the last `withinMs`.
+ * Used by adaptive quality to react to orbit/drag motion independently of
+ * the short mounting-defer window.
+ */
+export function isCameraMovingWithin(withinMs = 300) {
+  return performance.now() - _lastMoveTs < withinMs;
 }
 
 /**

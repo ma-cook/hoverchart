@@ -1,5 +1,6 @@
 import { useFrame } from '@react-three/fiber';
 import { bulkImportState } from '../utils/bulkImportState';
+import { requestRender } from '../utils/renderLoopGovernor';
 import { cubeTransformMap } from './GlobalCubeEdgesRenderer';
 import { dodecahedronTransformMap } from './GlobalDodecahedronEdgesRenderer';
 import { octahedronTransformMap } from './GlobalOctahedronEdgesRenderer';
@@ -14,9 +15,11 @@ let _dirty = false;
 export function registerHeaderBillboardMesh(meshRef) {
   _meshes.add(meshRef);
   _dirty = true;
+  requestRender();
   return () => {
     _meshes.delete(meshRef);
     _dirty = true;
+    requestRender();
   };
 }
 

@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { create } from 'zustand';
+import { requestRender } from '../utils/renderLoopGovernor';
 
 /**
  * Global Animation Manager Store
@@ -132,9 +133,12 @@ export const useAnimatedLine = (connectionId, materialRef, shouldAnimate, speed 
   useEffect(() => {
     if (shouldAnimate && connectionId && materialRef) {
       useAnimationManagerStore.getState().registerLine(connectionId, materialRef, speed, direction);
-      
+      // Wake the demand loop so the first animation frame is painted.
+      requestRender();
+
       return () => {
         useAnimationManagerStore.getState().unregisterLine(connectionId);
+        requestRender();
       };
     }
   }, [connectionId, shouldAnimate, materialRef, speed, direction]);

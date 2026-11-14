@@ -6,6 +6,7 @@ import useTextAtlasStore from '../stores/textAtlasStore';
 import useThemeStore from '../stores/themeStore';
 import { resolveTextColor } from '../utils/themeColors';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
+import { requestRender } from '../utils/renderLoopGovernor';
 import { registerHeaderBillboardMesh } from './HeaderBillboardManager';
 
 // =============================================================================
@@ -347,6 +348,7 @@ const AtlasTextSprite = ({
     if (geometry) {
       const frameId = requestAnimationFrame(() => {
         atlas.updateTexture();
+        requestRender();
 
         // If the atlas resized after our geometry was created, re-apply corrected UVs
         if (atlasVersionRef.current !== atlas.version && atlasEntryKeyRef.current) {
@@ -366,6 +368,10 @@ const AtlasTextSprite = ({
   // batches of text may trigger atlas resize, invalidating UVs for all
   // previously-mounted sprites. Without this, UVs stay stale until the
   // component remounts (e.g. zoom out/in triggers LOD change).
+  useEffect(() => {
+    if (atlasVersion) requestRender();
+  }, [atlasVersion]);
+
   useFrame(() => {
     if (!geometry || !atlasEntryKeyRef.current) return;
     if (atlasVersionRef.current === atlas.version) return;

@@ -20,6 +20,7 @@ import RepoGrid from './components/RepoGrid';
 import useUIOverlayStore from './stores/uiOverlayStore';
 import FrameTicker from './components/FrameTicker';
 import FrameloopController from './components/FrameloopController';
+import AdaptiveQuality from './components/AdaptiveQuality';
 import PickGate from './components/PickGate';
 import HandsRenderer from './components/HandsRenderer';
 
@@ -58,6 +59,7 @@ import { handleFaceIndicatorClick } from './utils/faceIndicatorUtils';
 import { checkPositionJitter } from './utils/positionUtils';
 import { throttle } from './utils/unifiedPerformanceUtils'; // Unified throttle utility
 import { notifyCameraMove, isCameraMovingRapidly } from './utils/renderWorkScheduler';
+import { noteInteraction } from './utils/renderLoopGovernor';
 import { resetGlobalTextAtlas } from './utils/textAtlas';
 import { clearAtlasMaterialCache } from './components/AtlasTextSprite';
 import { resetPathfindingCaches } from './utils/pathfindingUtils';
@@ -1610,6 +1612,7 @@ const existingIdsRef = useRef(new Set());
       if (controls) {
         const handleCameraUpdate = () => {
           notifyCameraMove(); // Tell progressive mounters to defer work
+          noteInteraction(900); // Keep full-rate frames while orbit damping runs
           throttledUpdateVisibility(camera);
         };
 
@@ -1724,6 +1727,7 @@ const existingIdsRef = useRef(new Set());
     <>
       <FrameTicker />
       <FrameloopController />
+      <AdaptiveQuality />
       <PickGate />
       <LODManager enabled={useLOD} />
       <HeaderBillboardManager />

@@ -24,6 +24,10 @@ const BASE_NODE_HEIGHT = 44;
 const CHAR_WIDTH = 8;
 const MIN_NODE_WIDTH = 120;
 const MAX_NODE_WIDTH = 280;
+const MAX_NODE_LINES = 3;
+const NODE_HORIZONTAL_PADDING = 28;
+const NODE_VERTICAL_PADDING = 14;
+const NODE_LINE_HEIGHT = 15;
 
 const LAYER_SPACING = 50;
 const NODE_SPACING = 24;
@@ -40,7 +44,11 @@ const CONN_DATAFLOW = 'dataflow';
 
 function estimateNodeSize(name) {
   const labelWidth = Math.max(MIN_NODE_WIDTH, Math.min(name.length * CHAR_WIDTH + 40, MAX_NODE_WIDTH));
-  return { width: Math.max(BASE_NODE_WIDTH, labelWidth), height: BASE_NODE_HEIGHT };
+  const width = Math.max(BASE_NODE_WIDTH, labelWidth);
+  const charsPerLine = Math.max(1, Math.floor((width - NODE_HORIZONTAL_PADDING) / CHAR_WIDTH));
+  const lineCount = Math.min(MAX_NODE_LINES, Math.max(1, Math.ceil(name.length / charsPerLine)));
+  const height = Math.max(BASE_NODE_HEIGHT, NODE_VERTICAL_PADDING + lineCount * NODE_LINE_HEIGHT);
+  return { width, height };
 }
 
 function isHierarchyConnection(connection, sourceNode, targetNode) {

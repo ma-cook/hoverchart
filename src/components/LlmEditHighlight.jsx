@@ -1,6 +1,6 @@
 import React, { useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import useObjectsStore from '../stores/objectsStore';
 
 // Red used for "LLM is editing this file" — matches the app's CONTROL_FLOW red.
@@ -48,12 +48,16 @@ function HighlightBox({ obj }) {
 
   const shellRef = useRef();
   const lineRef = useRef();
+  const invalidate = useThree((state) => state.invalidate);
 
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
     const wave = 0.5 + 0.5 * Math.sin(t * 3);
     if (shellRef.current) shellRef.current.opacity = 0.12 + 0.28 * wave;
     if (lineRef.current) lineRef.current.opacity = 0.55 + 0.45 * wave;
+    // The pulse is an active animation: keep rendering while it is visible,
+    // even when the global loop is in demand mode.
+    invalidate();
   });
 
   return (

@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { isFrameBudgetExhausted } from '../utils/renderWorkScheduler';
+import { requestRender } from '../utils/renderLoopGovernor';
 import { getGlobalTextAtlas, TextAtlas } from '../utils/textAtlas';
 import useTextAtlasStore from '../stores/textAtlasStore';
 import useThemeStore from '../stores/themeStore';
@@ -214,6 +215,10 @@ const InstancedAtlasText = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- extra dep is a deliberate cache-invalidation key; not referenced in the body by design
   }, [labelFingerprint, atlas, scale, atlasVersion, themeMode]);
 
+  useEffect(() => {
+    if (atlasVersion) requestRender();
+  }, [atlasVersion]);
+
   // Kick off one batched texture upload after all texts are added.
   // IMPORT FIX: while a bulk import is streaming, do NOT upload at all — the
   // atlas only ever needs to reach the GPU once the label population has
@@ -226,7 +231,10 @@ const InstancedAtlasText = ({
     let cancelled = false;
     let timer = null;
     const flush = () => {
-      if (!cancelled) atlas.updateTexture();
+      if (!cancelled) {
+        atlas.updateTexture();
+        requestRender();
+      }
     };
     if (bulkImportState.active) {
       const poll = () => {

@@ -69,6 +69,7 @@ const EarthGlobe = () => {
 
   const controls = useThree((state) => state.controls);
   const _camera = useThree((state) => state.camera);
+  const invalidate = useThree((state) => state.invalidate);
 
   // --- Click-to-fly handlers ---
 
@@ -188,6 +189,9 @@ const EarthGlobe = () => {
         flyingRef.current = false;
         flyTargetRef.current = null;
       }
+
+      // Fly-to is a continuous animation: keep demand frames coming.
+      invalidate();
     }
 
     // --- Throttled checks (LOD, camera lat/lon, tile prefetch) ---

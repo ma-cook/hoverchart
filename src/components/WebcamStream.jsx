@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { startBroadcasting, joinBroadcast } from '../services/webRservice';
 import { useWebcamStreamStore } from '../stores';
 import { shallow } from 'zustand/shallow';
+import { requestRender } from '../utils/renderLoopGovernor';
 // Import unified resource cleanup
 import { resourceCleanupService } from '../services/resourceCleanupService';
 
@@ -453,6 +454,12 @@ const WebcamStream = ({
 
   // THREE.VideoTexture marks itself needsUpdate automatically every frame via
   // WebGLRenderer — no separate RAF texture-update loop is needed here.
+  // Demand rendering still needs a frame pump while the live feed is visible.
+  useEffect(() => {
+    if (!active) return undefined;
+    const id = setInterval(() => requestRender(), 33);
+    return () => clearInterval(id);
+  }, [active]);
 
   // Cleanup on unmount
   useEffect(() => {

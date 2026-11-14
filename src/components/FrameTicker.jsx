@@ -1,5 +1,6 @@
 import { useFrame } from '@react-three/fiber';
 import { frameCounter } from '../utils/frameCounter';
+import { recordFrameTime } from '../utils/renderWorkScheduler';
 
 /**
  * Global frame ticker that runs once per frame
@@ -9,6 +10,7 @@ import { frameCounter } from '../utils/frameCounter';
 function FrameTicker() {
   useFrame(() => {
     frameCounter.tick();
+    recordFrameTime();
   });
 
   return null; // This component renders nothing

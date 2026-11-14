@@ -6,8 +6,9 @@ import useCameraFollowStore from '../stores/cameraFollowStore';
 import { shallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import { getSpatialIndexWorker } from '../workers/spatialIndexWorkerClient';
-import { getSmoothedFrameTime } from '../utils/renderWorkScheduler';
+import { getSmoothedFrameTime, isCameraMovingWithin } from '../utils/renderWorkScheduler';
 import { enqueueLodTransitions, takeDowngradeBatch } from '../utils/lodTransitionQueue';
+import { requestRender } from '../utils/renderLoopGovernor';
 import { bulkImportState } from '../utils/bulkImportState';
 
 // Reusable vectors to avoid GC pressure
@@ -43,6 +44,12 @@ const LOD_DOWNGRADE_BUDGET_PER_FRAME = 4000;
 // Prevents piling on detail when frames are already slow.
 const FRAME_TIME_THROTTLE_MS = 24; // ~42fps
 
+// While the camera is moving, bias LOD distances so more objects drop to the
+// cheaper medium level. Restored immediately when movement settles (the
+// motion transition forces one LOD pass). Keeps orbit/drag draw calls down.
+const MOTION_LOD_DISTANCE_SCALE = 1.35;
+const MOTION_LOD_SCALE_SQ = MOTION_LOD_DISTANCE_SCALE * MOTION_LOD_DISTANCE_SCALE;
+
 /**
  * LODManager Component
  * 
@@ -70,6 +77,7 @@ const posMapCacheRef = useRef({ objects: null, map: null });
 // object (not a store), so the active→inactive edge is observed by polling it
 // in useFrame instead of subscribing.
 const wasImportActiveRef = useRef(false);
+const motionMovingRef = useRef(false);
 
   // Transition queue: Map<objectId, { level, distanceSq }>.
   // Holds pending LOD upgrades that will be drained at a budgeted rate per frame.
@@ -356,7 +364,7 @@ const wasImportActiveRef = useRef(false);
   // their full-detail visibility) are forced FULL immediately so they are ready
   // before the camera arrives. Every other non-container object is pinned to
   // MEDIUM through the transition queues.
-  const applyFollowLODTargets = () => {
+  const applyFollowLODTargets = (motionMoving = false) => {
     const follow = followModeRef.current;
     if (!follow) return;
 
@@ -396,7 +404,8 @@ const wasImportActiveRef = useRef(false);
           hasPosition = false;
         }
         if (hasPosition) {
-          const showFaceText = _cameraPos.distanceToSquared(_objectPos) < FACE_TEXT_DISTANCE_SQ;
+          const showFaceText =
+            !motionMoving && _cameraPos.distanceToSquared(_objectPos) < FACE_TEXT_DISTANCE_SQ;
           if (faceTextVisible.get(obj.id) !== showFaceText) {
             faceTextUpdates.push([obj.id, showFaceText]);
           }
@@ -455,6 +464,15 @@ const wasImportActiveRef = useRef(false);
     // Get current camera position
     _cameraPos.setFromMatrixPosition(camera.matrixWorld);
 
+    // Motion-aware detail: hide small labels and bias LOD thresholds while
+    // orbiting/dragging, then force one correction pass as soon as the camera
+    // settles so full-quality labels/detail are restored without waiting.
+    const motionMoving = isCameraMovingWithin(250);
+    if (motionMoving !== motionMovingRef.current) {
+      motionMovingRef.current = motionMoving;
+      needsImmediateUpdateRef.current = true;
+    }
+
     // FIX 1b: Freeze LOD assignments while a bulk import / progressive mount
     // is streaming.  ObjectsRenderer seeds the entire population with
     // calculateLODLevel before the first mount (seedLodLevels), and re-running
@@ -501,7 +519,7 @@ const wasImportActiveRef = useRef(false);
     lastUpdateTimeRef.current = now;
 
     if (followMode) {
-      applyFollowLODTargets();
+      applyFollowLODTargets(motionMoving);
       return;
     }
     
@@ -534,7 +552,13 @@ const wasImportActiveRef = useRef(false);
       const lodEntries = [...currentLodLevels.entries()];
 
       const worker = getSpatialIndexWorker();
-      worker.computeLODLevels(cameraPos, parentIdArr, childIdArr, lodEntries)
+      worker.computeLODLevels(
+        cameraPos,
+        parentIdArr,
+        childIdArr,
+        lodEntries,
+        motionMoving ? MOTION_LOD_DISTANCE_SCALE : 1
+      )
         .then((updates) => {
           if (followModeRef.current) return;
           enqueueLODUpdates(updates);
@@ -557,7 +581,7 @@ const wasImportActiveRef = useRef(false);
           continue;
         }
         const distSq = _cameraPos.distanceToSquared(_objectPos);
-        const show = distSq < FACE_TEXT_DISTANCE_SQ;
+        const show = !motionMoving && distSq < FACE_TEXT_DISTANCE_SQ;
         if (currentFaceTextVisible.get(obj.id) !== show) {
           faceTextUpdates.push([obj.id, show]);
         }
@@ -589,7 +613,7 @@ const wasImportActiveRef = useRef(false);
       const distanceSq = _cameraPos.distanceToSquared(_objectPos);
       
       // Face text visibility (applies to all objects including containers)
-      const showFaceText = distanceSq < FACE_TEXT_DISTANCE_SQ;
+      const showFaceText = !motionMoving && distanceSq < FACE_TEXT_DISTANCE_SQ;
       if (currentFaceTextVisible.get(obj.id) !== showFaceText) {
         faceTextUpdates.push([obj.id, showFaceText]);
       }
@@ -600,7 +624,9 @@ const wasImportActiveRef = useRef(false);
 
       // Single unified regime — every non-container object uses the same
       // distance thresholds (the previous parent regime is gone).
-      const newLodLevel = calculateLODLevel(distanceSq);
+      const newLodLevel = calculateLODLevel(
+        motionMoving ? distanceSq * MOTION_LOD_SCALE_SQ : distanceSq
+      );
 
       if (currentLodLevels.get(obj.id) !== newLodLevel) {
         lodUpdates.push([obj.id, newLodLevel]);
@@ -691,6 +717,11 @@ const wasImportActiveRef = useRef(false);
 
     if (updates.length > 0) {
       batchSetLODLevels(updates);
+    }
+
+    // Keep demand frames coming until both transition queues are fully drained.
+    if (downgradeQueue.size > 0 || upgradeQueue.size > 0) {
+      requestRender();
     }
   });
   

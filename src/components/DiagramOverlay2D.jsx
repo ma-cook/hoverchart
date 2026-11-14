@@ -4,8 +4,10 @@ import {
   Controls,
   MiniMap,
   Panel,
+  Position,
   useNodesState,
   useReactFlow,
+  useStore,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -17,6 +19,7 @@ import { getDiagramLayoutWorker } from '../workers/diagramLayoutWorkerClient';
 import { buildC4Model, getC4View, C4_LEVELS } from '../services/c4/c4Model';
 import { customNodeTypes } from './diagram2d/NodeTypes';
 import { customEdgeTypes, EdgeMarkerDefs } from './diagram2d/EdgeTypes';
+import { DetailContext } from './diagram2d/DetailContext';
 
 // ---------------------------------------------------------------------------
 // Connection layer definitions (checkboxes, not radio)
@@ -32,6 +35,19 @@ const LAYER_DEFS = [
 // The C4 projection replaces hierarchy edges with semantic relationships,
 // so show architecture and code edges by default.
 const DEFAULT_LAYERS = { hierarchy: false, dataflow: true, association: true, inheritance: true };
+
+const MIN_ZOOM = 0.1;
+const LARGE_GRAPH_NODE_COUNT = 250;
+const LOW_DETAIL_ZOOM = 0.4;
+const HIGH_DETAIL_ZOOM = 0.65;
+const INITIAL_FIT_MIN_ZOOM_SMALL = 0.1;
+const INITIAL_FIT_MIN_ZOOM_LARGE = 0.2;
+
+function detailLevelForZoom(zoom) {
+  if (zoom < LOW_DETAIL_ZOOM) return 'low';
+  if (zoom < HIGH_DETAIL_ZOOM) return 'medium';
+  return 'high';
+}
 
 // ---------------------------------------------------------------------------
 // Helpers: convert layout worker output → React Flow nodes & edges
@@ -80,6 +96,9 @@ function buildReactFlowNodes(nodePositions, hierarchy) {
       relY -= parentPos.y;
     }
 
+    const width = pos.width || 180;
+    const height = pos.height || 44;
+
     const node = {
       id: nodeId,
       type: isCompound ? 'merfolkContainer' : 'merfolk',
@@ -88,9 +107,13 @@ function buildReactFlowNodes(nodePositions, hierarchy) {
         label: pos.name || nodeId,
         merfolkType: pos.merfolkType || 'function',
       },
-      style: isCompound
-        ? { width: pos.width, height: pos.height }
-        : undefined,
+      initialWidth: width,
+      initialHeight: height,
+      style: { width, height },
+      handles: [
+        { type: 'target', position: Position.Top, x: width / 2, y: 0 },
+        { type: 'source', position: Position.Bottom, x: width / 2, y: height },
+      ],
     };
 
     if (hasParent) {
@@ -110,6 +133,8 @@ function buildReactFlowEdges(edgeRoutes) {
     source: route.sourceId,
     target: route.targetId,
     type: 'merfolk',
+    selectable: false,
+    interactionWidth: 0,
     data: {
       connectionType: route.connectionType,
       flowPaths: route.flowPaths,
@@ -118,17 +143,36 @@ function buildReactFlowEdges(edgeRoutes) {
   }));
 }
 
-// Refit the viewport whenever a new C4 level has been laid out. React Flow's
-// `fitView` prop only applies to the initial mount, not subsequent layouts.
-function FitViewOnLayout({ version }) {
+// Refit the viewport whenever a new C4 level has been laid out.
+function FitViewOnLayout({ version, fitViewOptions, onFit }) {
   const { fitView } = useReactFlow();
 
   useEffect(() => {
+    if (version === 0) return undefined;
+
+    let cancelled = false;
     const frame = requestAnimationFrame(() => {
-      fitView({ padding: 0.2, duration: 200 });
+      const finish = () => {
+        if (!cancelled) onFit?.();
+      };
+
+      Promise.resolve(fitView(fitViewOptions)).then(finish, finish);
     });
-    return () => cancelAnimationFrame(frame);
-  }, [version, fitView]);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [version, fitView, fitViewOptions, onFit]);
+
+  return null;
+}
+
+function ZoomDetailReporter({ onChange }) {
+  const detailLevel = useStore((state) => detailLevelForZoom(state.transform[2]));
+
+  useEffect(() => {
+    onChange(detailLevel);
+  }, [detailLevel, onChange]);
 
   return null;
 }
@@ -288,7 +332,6 @@ function DiagramOverlay2D() {
   const graphs = useDiagramStore((s) => s.graphs);
   const hierarchy = useDiagramStore((s) => s.hierarchy);
   const connectionTags = useDiagramStore((s) => s.connectionTags);
-  const setLayout2D = useDiagramStore((s) => s.setLayout2D);
   const nodeToObjectIdMap = useDiagramStore((s) => s.nodeToObjectIdMap);
   const selectedNodeId = useDiagramStore((s) => s.selectedNodeId);
   const setSelectedNodeId = useDiagramStore((s) => s.setSelectedNodeId);
@@ -306,6 +349,8 @@ function DiagramOverlay2D() {
   const [layers, setLayers] = useState(DEFAULT_LAYERS);
   const [activeFlowPath, setActiveFlowPath] = useState('');
   const [layoutError, setLayoutError] = useState(null);
+  const [detailLevel, setDetailLevel] = useState('high');
+  const [viewportReady, setViewportReady] = useState(false);
 
   // ---- Extract unique flow path names from connectionTags ----
   const flowPathNames = useMemo(() => {
@@ -373,6 +418,8 @@ function DiagramOverlay2D() {
     if (!serialisedViewData) return;
     let cancelled = false;
     setIsLayouting(true);
+    setViewportReady(false);
+    setDetailLevel('low');
     setLayoutError(null);
 
     (async () => {
@@ -385,8 +432,6 @@ function DiagramOverlay2D() {
           { filter: 'all' }
         );
         if (cancelled) return;
-
-        setLayout2D(result);
 
         const rfNodes = buildReactFlowNodes(result.nodePositions, serialisedViewData.hierarchy);
         const rfEdges = buildReactFlowEdges(result.edgeRoutes);
@@ -405,13 +450,32 @@ function DiagramOverlay2D() {
     })();
 
     return () => { cancelled = true; };
-  }, [serialisedViewData, setLayout2D, setNodes]);
+  }, [serialisedViewData, setNodes]);
 
   // ---- Derive filtered edges via useMemo (avoids extra render from useEffect+setState) ----
   const filteredEdges = useMemo(
     () => filterEdges(allEdges, layers, activeFlowPath),
     [allEdges, layers, activeFlowPath]
   );
+
+  const fitViewOptions = useMemo(
+    () => ({
+      padding: 0.2,
+      duration: 0,
+      minZoom: nodes.length > LARGE_GRAPH_NODE_COUNT
+        ? INITIAL_FIT_MIN_ZOOM_LARGE
+        : INITIAL_FIT_MIN_ZOOM_SMALL,
+    }),
+    [nodes.length]
+  );
+
+  const handleViewportReady = useCallback(() => {
+    setViewportReady(true);
+  }, []);
+
+  const showMiniMap = nodes.length > 0
+    && nodes.length <= LARGE_GRAPH_NODE_COUNT
+    && detailLevel !== 'low';
 
   // ---- Toggle a layer checkbox ----
   const toggleLayer = useCallback((key) => {
@@ -496,43 +560,50 @@ function DiagramOverlay2D() {
         </div>
       )}
 
-      <ReactFlow
-        nodes={nodes}
-        edges={filteredEdges}
-        nodeTypes={customNodeTypes}
-        edgeTypes={customEdgeTypes}
-        onNodesChange={onNodesChange}
-        onNodeClick={handleNodeClick}
-        onlyRenderVisibleElements
-        fitView
-        minZoom={0.05}
-        maxZoom={2}
-        proOptions={PRO_OPTIONS}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        edgesFocusable={false}
-        edgesReconnectable={false}
-        nodesFocusable={false}
-        elementsSelectable={true}
-        autoPanOnNodeDrag={false}
-        autoPanOnConnect={false}
-        elevateNodesOnSelect={false}
-        elevateEdgesOnSelect={false}
-        deleteKeyCode={null}
-        multiSelectionKeyCode={null}
-        selectionKeyCode={null}
-        zoomActivationKeyCode={null}
-      >
-        <FitViewOnLayout version={layoutVersion} />
-        <Controls showInteractive={false} />
-        <MiniMap
-          nodeColor={minimapNodeColor}
-          nodeStrokeWidth={1}
-          zoomable
-          pannable
-          style={MINIMAP_STYLE}
-          inversePan
-        />
+      <DetailContext.Provider value={detailLevel}>
+        <ReactFlow
+          nodes={nodes}
+          edges={filteredEdges}
+          nodeTypes={customNodeTypes}
+          edgeTypes={customEdgeTypes}
+          onNodesChange={onNodesChange}
+          onNodeClick={handleNodeClick}
+          onlyRenderVisibleElements
+          minZoom={MIN_ZOOM}
+          maxZoom={2}
+          proOptions={PRO_OPTIONS}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          edgesFocusable={false}
+          edgesReconnectable={false}
+          nodesFocusable={false}
+          elementsSelectable={true}
+          autoPanOnNodeDrag={false}
+          autoPanOnConnect={false}
+          elevateNodesOnSelect={false}
+          elevateEdgesOnSelect={false}
+          deleteKeyCode={null}
+          multiSelectionKeyCode={null}
+          selectionKeyCode={null}
+          zoomActivationKeyCode={null}
+        >
+          {viewportReady && <ZoomDetailReporter onChange={setDetailLevel} />}
+          <FitViewOnLayout
+            version={layoutVersion}
+            fitViewOptions={fitViewOptions}
+            onFit={handleViewportReady}
+          />
+          <Controls showInteractive={false} fitViewOptions={fitViewOptions} />
+          {showMiniMap && (
+            <MiniMap
+              nodeColor={minimapNodeColor}
+              nodeStrokeWidth={1}
+              zoomable
+              pannable
+              style={MINIMAP_STYLE}
+              inversePan
+            />
+          )}
 
         {/* Filter panel + back-to-3D button */}
         <Panel position="top-right">
@@ -639,7 +710,8 @@ function DiagramOverlay2D() {
             ))}
           </div>
         </Panel>
-      </ReactFlow>
+        </ReactFlow>
+      </DetailContext.Provider>
     </div>
   );
 }

@@ -1,5 +1,4 @@
 import { memo } from 'react';
-import { Handle, Position } from '@xyflow/react';
 
 // ---------------------------------------------------------------------------
 // Color / shape config per Merfolk node type
@@ -159,8 +158,6 @@ const DEFAULT_STYLE = {
 // short-lived allocations per frame.
 // ---------------------------------------------------------------------------
 
-const HIDDEN_HANDLE_STYLE = { opacity: 0 };
-
 const BOX_SHADOW_SELECTED = '0 0 0 2px #1976d2, 0 2px 8px rgba(0,0,0,0.15)';
 const BOX_SHADOW_DEFAULT = '0 1px 3px rgba(0,0,0,0.08)';
 
@@ -168,11 +165,18 @@ const BOX_SHADOW_DEFAULT = '0 1px 3px rgba(0,0,0,0.08)';
 function buildNodeStyles(cfg) {
   return {
     wrapper: {
+      width: '100%',
+      height: '100%',
+      boxSizing: 'border-box',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
       background: cfg.background,
       border: cfg.border,
       borderRadius: cfg.borderRadius,
       padding: '6px 14px',
-      minWidth: '100px',
       textAlign: 'center',
       fontFamily: "'Inter', 'Segoe UI', sans-serif",
       fontSize: '11px',
@@ -198,8 +202,13 @@ function buildNodeStyles(cfg) {
       fontWeight: 600,
       fontSize: '12px',
       marginTop: '2px',
+      maxWidth: '100%',
       wordBreak: 'break-word',
       lineHeight: '1.25',
+      display: '-webkit-box',
+      WebkitLineClamp: 3,
+      WebkitBoxOrient: 'vertical',
+      overflow: 'hidden',
     },
   };
 }
@@ -273,14 +282,10 @@ function MerfolkNode({ data, selected }) {
   const styles = PRECOMPUTED_NODE[merfolkType] || DEFAULT_NODE_STYLES;
 
   return (
-    <>
-      <Handle type="target" position={Position.Top} style={HIDDEN_HANDLE_STYLE} />
-      <div style={selected ? styles.wrapperSelected : styles.wrapperDefault}>
-        <div style={styles.badge}>{cfg.label}</div>
-        <div style={styles.name}>{data.label}</div>
-      </div>
-      <Handle type="source" position={Position.Bottom} style={HIDDEN_HANDLE_STYLE} />
-    </>
+    <div style={selected ? styles.wrapperSelected : styles.wrapperDefault}>
+      <div style={styles.badge}>{cfg.label}</div>
+      <div style={styles.name}>{data.label}</div>
+    </div>
   );
 }
 
@@ -295,12 +300,10 @@ function ContainerNode({ data }) {
 
   return (
     <div style={styles.outer}>
-      <Handle type="target" position={Position.Top} style={HIDDEN_HANDLE_STYLE} />
       <div style={styles.header}>
         <span style={styles.badge}>{cfg.label}</span>
         <span style={styles.label}>{data.label}</span>
       </div>
-      <Handle type="source" position={Position.Bottom} style={HIDDEN_HANDLE_STYLE} />
     </div>
   );
 }
