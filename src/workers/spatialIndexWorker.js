@@ -119,9 +119,9 @@ function _rebuildFlatBuffers(objects) {
 const LOD_CHILD_FULL_SQ = 2000 * 2000;
 const LOD_CHILD_MEDIUM_SQ = 20000 * 20000;
 
-function childLOD(distanceSq, fullSq, mediumSq) {
-  if (distanceSq < fullSq) return 0;
-  if (distanceSq < mediumSq) return 1;
+function childLOD(distanceSq) {
+  if (distanceSq < LOD_CHILD_FULL_SQ) return 0;
+  if (distanceSq < LOD_CHILD_MEDIUM_SQ) return 1;
   return 2;
 }
 
@@ -181,14 +181,10 @@ const workerApi = {
    * @param {Array<[string, number]>} currentLodEntries — [[id, level], ...]
    * @returns {Array<[string, number]>} — only the changed entries
    */
-  computeLODLevels(cameraPos, _parentIdList, _childIdList, currentLodEntries, distanceScale = 1) {
+  computeLODLevels(cameraPos, _parentIdList, _childIdList, currentLodEntries) {
     const cx = cameraPos[0];
     const cy = cameraPos[1];
     const cz = cameraPos[2];
-    const scale = Number.isFinite(distanceScale) && distanceScale > 0 ? distanceScale : 1;
-    const scaleSq = scale * scale;
-    const fullSq = LOD_CHILD_FULL_SQ / scaleSq;
-    const mediumSq = LOD_CHILD_MEDIUM_SQ / scaleSq;
 
     // Reset metaFlagsFlat to the clean base (structural flags only).
     metaFlagsFlat.set(metaFlagsBase);
@@ -214,8 +210,8 @@ const workerApi = {
           metaFlagsFlat,
           currentLevelsFlat,
           cx, cy, cz,
-          fullSq, mediumSq,
-          fullSq, mediumSq,
+          LOD_CHILD_FULL_SQ, LOD_CHILD_MEDIUM_SQ,
+          LOD_CHILD_FULL_SQ, LOD_CHILD_MEDIUM_SQ,
         );
 
         // rawUpdates is a Uint32Array of interleaved [index, newLevel, ...]
@@ -246,7 +242,7 @@ const workerApi = {
       const dz = cz - positionsFlat[pi + 2];
       const distanceSq = dx * dx + dy * dy + dz * dz;
 
-      const newLevel = childLOD(distanceSq, fullSq, mediumSq);
+      const newLevel = childLOD(distanceSq);
 
       const currentLevel = currentLevelsFlat[i];
       if (newLevel !== currentLevel) {
