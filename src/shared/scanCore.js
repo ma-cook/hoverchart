@@ -1801,7 +1801,7 @@ const pkgContent = await options.fetchFile('package.json');
                 }
                 if (exportedName) {
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'component', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: fileContext.isHook ? 'hook' : 'component', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   fileFunctions.get(fileName).exports ??= new Set();
                   fileFunctions.get(fileName).exports.add(exportedName);
@@ -2850,7 +2850,7 @@ const pkgContent = await options.fetchFile('package.json');
                 }
                 if (exportedNames.length > 0) {
                   if (!fileFunctions.has(fileName)) {
-                    fileFunctions.set(fileName, { type: 'component', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
+                    fileFunctions.set(fileName, { type: fileContext.isHook ? 'hook' : 'component', functions: new Set(), htmlElements: new Set(), cssClasses: new Set(), jsxRefs: new Set(), exports: new Set(), filePath: file.path });
                   }
                   const fi = fileFunctions.get(fileName);
                   fi.exports ??= new Set();
@@ -4181,9 +4181,9 @@ export const generateMerfolkMarkdown = ({
       }
       if (typeInfo?.typeString) props.push(`typescriptType: "${typeInfo.typeString.replace(/"/g, '\\"').slice(0, 150)}"`);
       if (props.length > 0) {
-        markdown += `${finalId}[Function: ${hook}]{${props.join(', ')}}\n`;
+        markdown += `${finalId}[Hook: ${hook}]{${props.join(', ')}}\n`;
       } else {
-        markdown += `${finalId}[Function: ${hook}]\n`;
+        markdown += `${finalId}[Hook: ${hook}]\n`;
       }
     });
   }

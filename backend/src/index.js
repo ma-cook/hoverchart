@@ -2,7 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { createWSServer } from './ws/index.js';
-import { authenticate } from './auth/middleware.js';
+import { authenticate, optionalAuth } from './auth/middleware.js';
+import { requireSpaceReadAccess } from './auth/spaceAccess.js';
 import { requireAdmin, getAdminEmailDiagnostics } from './auth/admin.js';
 import pool from './db.js';
 import { runMigrations } from './migrate.js';
@@ -58,7 +59,7 @@ import { router as authRouter } from './auth/handlers.js';
 app.use('/api/auth', authRouter);
 
 // Protected API routes
-import { router as spacesRouter } from './api/spaces.js';
+import { router as spacesRouter, getSpaceHandler } from './api/spaces.js';
 import { router as objectsRouter } from './api/objects.js';
 import { router as connectionsRouter } from './api/connections.js';
 import { router as cellsRouter } from './api/cells.js';
@@ -74,10 +75,12 @@ import { router as adminRouter } from './api/admin.js';
 import { router as feedbackRouter } from './api/feedback.js';
 
 app.use('/api/users', authenticate, usersRouter);
+
+app.get('/api/spaces/:id', optionalAuth, getSpaceHandler);
 app.use('/api/spaces', authenticate, spacesRouter);
-app.use('/api/spaces/:spaceId/objects', authenticate, objectsRouter);
-app.use('/api/spaces/:spaceId/connections', authenticate, connectionsRouter);
-app.use('/api/spaces/:spaceId/cells', authenticate, cellsRouter);
+app.use('/api/spaces/:spaceId/objects', optionalAuth, requireSpaceReadAccess, objectsRouter);
+app.use('/api/spaces/:spaceId/connections', optionalAuth, requireSpaceReadAccess, connectionsRouter);
+app.use('/api/spaces/:spaceId/cells', optionalAuth, requireSpaceReadAccess, cellsRouter);
 app.use('/api/organizations', authenticate, organizationsRouter);
 app.use('/api/storage', authenticate, storageRouter);
 app.use('/api/bulk', authenticate, bulkRouter);

@@ -253,7 +253,7 @@ function minimapNodeColor(node) {
 
 const PRO_OPTIONS = { hideAttribution: true };
 
-const OVERLAY_STYLE = { position: 'fixed', inset: 0, zIndex: 100, background: 'var(--canvas-bg)', contain: 'strict' };
+const OVERLAY_STYLE = { position: 'fixed', inset: 0, zIndex: 100, background: 'var(--canvas-bg)', contain: 'strict', pointerEvents: 'auto' };
 
 const LOADING_OVERLAY_STYLE = {
   position: 'absolute', inset: 0, zIndex: 110,
@@ -274,9 +274,12 @@ const NO_DATA_OVERLAY_STYLE = {
   background: '#f8f8f8',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   flexDirection: 'column', gap: '12px',
+  pointerEvents: 'auto',
 };
 
 const MINIMAP_STYLE = { border: '1px solid #ccc' };
+
+const TOP_RIGHT_PANEL_STYLE = { marginTop: 64 };
 
 const SELECTED_NODE_STYLE = { marginTop: '6px', fontSize: '11px', color: '#1976d2', fontStyle: 'italic' };
 const DIVIDER_STYLE = { borderTop: '1px solid #e0e0e0', margin: '8px 0' };
@@ -606,7 +609,7 @@ function DiagramOverlay2D() {
           )}
 
         {/* Filter panel + back-to-3D button */}
-        <Panel position="top-right">
+        <Panel position="top-right" style={TOP_RIGHT_PANEL_STYLE}>
           <div style={panelStyle}>
             <button onClick={handleBackTo3D} style={backButtonStyle}>
               ← Back to 3D

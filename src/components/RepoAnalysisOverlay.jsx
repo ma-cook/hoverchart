@@ -78,6 +78,13 @@ const GROUP_ORDER = [
 
 const ROOT_ENTRY_NAMES = ['main', 'index', 'firebase', 'App'];
 
+const getNodeType = (node, fallbackId = '') => {
+  const type = (node?.type || 'unknown').toLowerCase();
+  const name = node?.name || node?.id || fallbackId;
+  if (type === 'function' && /^use[A-Z0-9]/.test(name)) return 'hook';
+  return type;
+};
+
 /**
  * Recursive tree row.  Renders one node and its children (if expanded).
  */
@@ -87,7 +94,7 @@ const TreeRow = ({ nodeId, nodes, parentChildMap, depth, expanded, toggle }) => 
   const children = parentChildMap.get(nodeId);
   const hasChildren = children && children.size > 0;
   const isOpen = expanded.has(nodeId);
-  const type = (node.type || 'unknown').toLowerCase();
+  const type = getNodeType(node, nodeId);
   const label = node.name || nodeId;
 
   return (
@@ -166,7 +173,7 @@ const GroupedView = ({ allNodes, hierarchy, filter, expanded, toggle }) => {
     const groupMap = new Map();
     for (const [nodeId, node] of allNodes) {
       if (cpm.has(nodeId)) continue;
-      const type = (node.type || '').toLowerCase();
+      const type = getNodeType(node, nodeId);
       let groupKey;
       if (type === 'component') {
         // A component is "in hierarchy" if it's reachable from an entry-point
@@ -295,8 +302,8 @@ const RepoAnalysisOverlay = ({ open, onClose, repoName }) => {
         if (g?.connections) conns += g.connections.size;
       }
     }
-    for (const node of all.values()) {
-      const t = (node.type || 'unknown').toLowerCase();
+    for (const [id, node] of all) {
+      const t = getNodeType(node, id);
       counts[t] = (counts[t] || 0) + 1;
     }
     return { allNodes: all, typeCounts: counts, totalConnections: conns };
@@ -314,8 +321,8 @@ const RepoAnalysisOverlay = ({ open, onClose, repoName }) => {
     roots.sort((a, b) => {
       const na = allNodes.get(a);
       const nb = allNodes.get(b);
-      const ta = (na?.type || '').toLowerCase();
-      const tb = (nb?.type || '').toLowerCase();
+      const ta = getNodeType(na, a);
+      const tb = getNodeType(nb, b);
       const aHasKids = pcm.get(a)?.size > 0 ? 0 : 1;
       const bHasKids = pcm.get(b)?.size > 0 ? 0 : 1;
       if (aHasKids !== bHasKids) return aHasKids - bHasKids;

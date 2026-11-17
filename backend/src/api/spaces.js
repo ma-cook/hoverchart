@@ -123,24 +123,25 @@ router.get('/resolve/:slug', async (req, res) => {
   }
 });
 
-router.get('/:id', async (req, res) => {
-  const userId = req.user.sub;
+export async function getSpaceHandler(req, res) {
+  const userId = req.user?.sub || '';
   try {
     const result = await pool.query(
       `SELECT s.* FROM spaces s
        WHERE s.id = $1
-         AND (
-           s.owner_id = $2
-           OR s.shared_with @> $3::jsonb
-           OR EXISTS (
-             SELECT 1
-             FROM organizations o
-             LEFT JOIN org_members m ON m.org_id = o.id AND m.user_id = $2
-             WHERE (o.owner_id = $2 OR m.user_id = $2)
-               AND s.shared_with_orgs ? o.id::text
-           )
-         )`,
-      [req.params.id, userId, JSON.stringify([userId])]
+          AND (
+            s.is_public
+            OR s.owner_id = $2
+            OR s.shared_with @> $3::jsonb
+            OR EXISTS (
+              SELECT 1
+              FROM organizations o
+              LEFT JOIN org_members m ON m.org_id = o.id AND m.user_id = $2
+              WHERE (o.owner_id = $2 OR m.user_id = $2)
+                AND s.shared_with_orgs ? o.id::text
+            )
+          )`,
+       [req.params.id, userId, JSON.stringify([userId])]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Space not found' });
     res.json(serializeSpace(result.rows[0]));
@@ -148,7 +149,9 @@ router.get('/:id', async (req, res) => {
     console.error('Get space error:', err);
     res.status(500).json({ error: 'Failed to get space' });
   }
-});
+}
+
+router.get('/:id', getSpaceHandler);
 
 router.patch('/:id', async (req, res) => {
   const userId = req.user.sub;
