@@ -2346,7 +2346,10 @@ const UIOverlay = ({
               </button>
 
               {spaceType !== 'earth' && spaceType !== 'github_control_panel' && (
-                <div style={{ position: 'relative', display: 'inline-flex' }}>
+                <div
+                  className="top-bar-template-wrap"
+                  style={{ position: 'relative', display: 'inline-flex' }}
+                >
                   <button
                     className={`top-bar-btn ${templateOpen ? 'active' : ''}`}
                     onClick={() => toggleTemplate('main')}

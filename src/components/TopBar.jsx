@@ -87,6 +87,8 @@ const TopBar = ({
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef(null);
   const [organizationName, setOrganizationName] = useState(organizationNameProp || null);
   const [pendingCount, setPendingCount] = useState(0);
 
@@ -151,6 +153,18 @@ const TopBar = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [dropdownOpen]);
 
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (actionsRef.current && !actionsRef.current.contains(e.target)) {
+        setActionsOpen(false);
+      }
+    };
+    if (actionsOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [actionsOpen]);
+
   const isSpace = view === 'space';
   const showSignIn = view === 'landing' && !user && typeof onSignIn === 'function';
 
@@ -191,7 +205,32 @@ const TopBar = ({
       {isSpace && actions && (
         <>
           <div className="top-bar-divider" />
-          <div className="top-bar-section actions">{actions}</div>
+          <div className="top-bar-section actions" ref={actionsRef}>
+            <button
+              type="button"
+              className="top-bar-btn top-bar-actions-toggle"
+              onClick={() => setActionsOpen((prev) => !prev)}
+              aria-label="Space actions"
+              aria-expanded={actionsOpen}
+              title="Space actions"
+            >
+              ⋯
+            </button>
+            <div
+              className={`top-bar-actions-content${actionsOpen ? ' open' : ''}`}
+              onClick={(e) => {
+                if (
+                  e.target.closest('.top-bar-template-wrap') ||
+                  e.target.closest('.object-search-wrapper')
+                ) {
+                  return;
+                }
+                if (e.target.closest('button')) setActionsOpen(false);
+              }}
+            >
+              {actions}
+            </div>
+          </div>
         </>
       )}
 

@@ -109,6 +109,7 @@ const HandTrackingToggle = () => {
 
   return (
     <button
+      className="top-bar-hands-toggle"
       style={btnStyle}
       onClick={handleClick}
       disabled={transitioning}
