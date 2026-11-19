@@ -18,6 +18,17 @@ import {
   migrateTrialObjects,
 } from './services/trialUpgradeService';
 
+const setPageIndexable = (indexable) => {
+  const robots = document.querySelector('meta[name="robots"]');
+  if (robots) {
+    robots.setAttribute('content', indexable ? 'index, follow' : 'noindex, nofollow');
+  }
+};
+
+const isIndexableLocation = () =>
+  !window.location.hostname.endsWith('.pages.dev') &&
+  window.location.search.length <= 1;
+
 const AppShell = () => {
   const [activeView, setActiveView] = useState('landing'); // 'landing' | 'diagram'
   const [spaceContext, setSpaceContext] = useState(null);
@@ -29,6 +40,7 @@ const AppShell = () => {
 
   // Check URL on mount — if spaceId/space/code exists, go straight to diagram
   useEffect(() => {
+    setPageIndexable(isIndexableLocation());
     const params = new URLSearchParams(window.location.search);
     if (params.get('spaceId') || params.get('space') || params.get('code')) {
       const urlSpaceType = params.get('type');
@@ -41,6 +53,7 @@ const AppShell = () => {
   }, []);
 
   const handleOpenSpace = useCallback((spaceId, ownerId, spaceType = 'diagram') => {
+    setPageIndexable(false);
     setSpaceContext({ spaceId, ownerId, spaceType });
     let newUrl = `${window.location.pathname}?spaceId=${encodeURIComponent(spaceId)}`;
     if (spaceType && spaceType !== 'diagram') {
@@ -59,6 +72,7 @@ const AppShell = () => {
     clearAllCellCaches();
     try { getContentStore().clear(); } catch { /* singleton may not exist */ }
     window.history.pushState({}, '', window.location.pathname);
+    setPageIndexable(isIndexableLocation());
     window.isTrialMode = false;
     setTrialMode(false);
     setSpaceContext(null);
@@ -135,6 +149,7 @@ const AppShell = () => {
 
   useEffect(() => {
     const handlePopState = () => {
+      setPageIndexable(isIndexableLocation());
       const params = new URLSearchParams(window.location.search);
       if (params.get('spaceId') || params.get('space') || params.get('code')) {
         setActiveView('diagram');
