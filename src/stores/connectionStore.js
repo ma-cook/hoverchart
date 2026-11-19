@@ -856,6 +856,9 @@ const useConnectionStore = create((set, get) => ({
       );
 
       const connectionIdsToDelete = connectionsToDelete.map((conn) => conn.id);
+      const connectionCells = new Map(
+        connectionsToDelete.map((conn) => [conn.id, conn.cellId || conn.cell_id])
+      );
 
       // Mark connections as being deleted to prevent re-addition
       const newDeletingSet = new Set(state.deletingConnections);
@@ -903,7 +906,11 @@ const useConnectionStore = create((set, get) => ({
             // Delete each connection via API
             for (const connId of connectionIdsToDelete) {
               try {
-                await api.delete(`/api/spaces/${finalSpaceId}/connections/${connId}`);
+                const cellId = connectionCells.get(connId);
+                const query = cellId
+                  ? `?cell_id=${encodeURIComponent(cellId)}`
+                  : '';
+                await api.delete(`/api/spaces/${finalSpaceId}/connections/${connId}${query}`);
               } catch {
                 // Individual deletion error
               }

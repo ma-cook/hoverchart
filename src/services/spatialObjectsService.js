@@ -640,6 +640,7 @@ export const subscribeToSpatialObjects = (
   let pollTimer = null;
   let isHardIdle = false;
   let idleStreak = 0;
+  let triedUnfilteredFallback = false;
 
   const poll = async () => {
     if (!isSubscribed || isPolling) return;
@@ -689,7 +690,19 @@ export const subscribeToSpatialObjects = (
         if (objects == null) {
           return;
         }
-      } catch {
+        if (
+          Array.isArray(objects) &&
+          objects.length === 0 &&
+          currentCells.length > 0 &&
+          !triedUnfilteredFallback
+        ) {
+          triedUnfilteredFallback = true;
+          console.warn('[SpatialObjects] No objects matched loaded cells, retrying without the cell filter');
+          const allObjects = await api.get(`/api/spaces/${spaceId}/objects`);
+          if (Array.isArray(allObjects)) objects = allObjects;
+        }
+      } catch (error) {
+        console.error('[SpatialObjects] Failed to fetch objects:', error?.message || error);
         fetchFailed = true;
         return;
       }
@@ -810,7 +823,7 @@ export const subscribeToSpatialObjects = (
           }
 
           if (hasChanged) {
-            if (window._bulkDeleteInProgress) {
+            if (window._bulkDeleteInProgress === spaceId) {
               continue;
             }
 

@@ -109,18 +109,22 @@ export const getPublicSpaceMetadata = async (spaceId) => {
       const data = await api.get(`/api/spaces/${spaceId}`, { retries: 1 });
 
       if (data) {
-        console.log('✅ Found public space via API!');
         const ownerId = data.owner_id || data.ownerId || data.owner?.uid;
+        const isPublic = data.is_public === true || data.isPublic === true;
         if (ownerId) {
           sessionStorage.setItem(`sharedSpaceOwner_${spaceId}`, ownerId);
         }
-        sessionStorage.setItem(`isPublicSpace_${spaceId}`, 'true');
+        if (isPublic) {
+          sessionStorage.setItem(`isPublicSpace_${spaceId}`, 'true');
+        } else {
+          sessionStorage.removeItem(`isPublicSpace_${spaceId}`);
+        }
 
         return {
           id: data.id || spaceId,
           ...data,
-          isPublic: true,
-          sharedWith: data.sharedWith || ['everyone'],
+          isPublic,
+          sharedWith: data.sharedWith || data.shared_with || (isPublic ? ['everyone'] : []),
           ownerId,
         };
       }

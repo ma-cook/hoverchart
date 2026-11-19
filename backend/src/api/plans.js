@@ -3,6 +3,33 @@ import pool from '../db.js';
 
 export const router = Router();
 
+export async function resolvePlanSpace(req, res, next) {
+  if (req.body?.spaceId || req.query?.spaceId) return next();
+  try {
+    let row;
+    if (req.params.taskId) {
+      const result = await pool.query(
+        `SELECT space_id FROM plan_tasks WHERE id = $1`,
+        [req.params.taskId]
+      );
+      row = result.rows[0];
+    } else if (req.params.planId) {
+      const result = await pool.query(
+        `SELECT space_id FROM plans WHERE id = $1`,
+        [req.params.planId]
+      );
+      row = result.rows[0];
+    }
+    if (!row) return res.status(404).json({ error: 'Plan not found' });
+    req.body = req.body || {};
+    req.body.spaceId = row.space_id;
+    next();
+  } catch (err) {
+    console.error('Resolve plan space error:', err);
+    res.status(500).json({ error: 'Failed to resolve plan space' });
+  }
+}
+
 // GET /api/plans?spaceId=X — get active plan + tasks for a space
 router.get('/', async (req, res) => {
   const { spaceId } = req.query;
@@ -164,8 +191,8 @@ router.delete('/:planId/tasks/:taskId', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `DELETE FROM plan_tasks WHERE id = $1 RETURNING id`,
-      [taskId]
+      `DELETE FROM plan_tasks WHERE id = $1 AND space_id = $2 RETURNING id`,
+      [taskId, req.body?.spaceId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
     res.json({ deleted: true, taskId });

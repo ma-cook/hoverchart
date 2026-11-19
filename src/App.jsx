@@ -358,7 +358,7 @@ const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypePr
     getTransformStartPosition, // Add this new property
   } = useObjects({
     user,
-    currentSpaceId,
+    currentSpaceId: effectiveSpaceId,
     cameraRef,
     connections,
   });
@@ -654,7 +654,7 @@ const existingIdsRef = useRef(new Set());
       // the space; pulling all still-existing Firestore objects back into the
       // store would re-render every doomed object and tank the frame loop
       // until the cloud function finishes deleting them one by one.
-      if (window._bulkDeleteInProgress) {
+      if (window._bulkDeleteInProgress === effectiveSpaceId) {
         return;
       }
       try {
@@ -690,7 +690,7 @@ const existingIdsRef = useRef(new Set());
         }
         // Re-check the bulk-delete flag after the await — the user may have
         // started a wipe while the fetch was in flight.
-        if (window._bulkDeleteInProgress) {
+        if (window._bulkDeleteInProgress === effectiveSpaceId) {
           return;
         }
         if (initialObjects.length > 0) {
@@ -762,7 +762,7 @@ const existingIdsRef = useRef(new Set());
             case 'batch-added': {
               // Short-circuit: bulk-delete in progress — discard all incoming adds
               // to prevent deleted objects from being re-inserted by stale subscriptions.
-              if (window._bulkDeleteInProgress) return prev;
+              if (window._bulkDeleteInProgress === spaceToLoad) return prev;
 
               const validObjects = [];
               const updatedObjects = new Map(); // Track updates to existing objects

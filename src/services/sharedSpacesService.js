@@ -284,25 +284,27 @@ export const findSpaceOwner = async (spaceId) => {
     console.log(`🔍 Checking space via API: /api/spaces/${spaceId}`);
     const data = await api.get(`/api/spaces/${spaceId}`);
 
-    if (data && data.owner_id) {
+    if (data && (data.owner_id || data.ownerId)) {
+      const ownerId = data.owner_id || data.ownerId;
+      const isPublic = data.is_public === true || data.isPublic === true;
       console.log(
-        `✅ Found space via API, owner: ${data.owner_id}`
+        `✅ Found space via API, owner: ${ownerId}`
       );
       console.log(`🔍 Space data:`, data);
 
-      // Cache this for future use
-      if (data.owner_id) {
-        sessionStorage.setItem(
-          `sharedSpaceOwner_${spaceId}`,
-          data.owner_id
-        );
+      sessionStorage.setItem(`sharedSpaceOwner_${spaceId}`, ownerId);
+      if (isPublic) {
         sessionStorage.setItem(`isPublicSpace_${spaceId}`, 'true');
-        // Also set window globals for consistency
-        window.currentSpaceOwner = data.owner_id;
         window.publicAccessSpace = spaceId;
+      } else {
+        sessionStorage.removeItem(`isPublicSpace_${spaceId}`);
+        if (window.publicAccessSpace === spaceId) {
+          window.publicAccessSpace = undefined;
+        }
       }
+      window.currentSpaceOwner = ownerId;
 
-      return data.owner_id;
+      return ownerId;
     } else {
       console.log(`❌ Space not found via API`);
     }

@@ -10,6 +10,10 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import {
+  deleteSpaceChildren,
+  existingTables,
+} from '../utils/spaceCleanup.js';
 
 export const router = Router();
 
@@ -89,36 +93,6 @@ router.patch('/users/:id/tier', async (req, res) => {
   }
 });
 
-// Space-scoped tables to clear before deleting the spaces themselves.
-// `objects`, `connections`, `spatial_cells` and `plan_tasks` were created with
-// `REFERENCES spaces(id)` and NO ON DELETE CASCADE
-// (migrations/001_initial.sql, migrations/002_plan_overlay.sql), so they must be
-// removed explicitly or the space delete violates the foreign key. The others
-// are cleared for completeness (some have cascades, some hold user ids).
-const SPACE_CHILD_TABLES = [
-  'user_presence',
-  'chat_messages',
-  'plan_tasks',
-  'plans',
-  'objects',
-  'connections',
-  'spatial_cells',
-  'scan_jobs',
-];
-
-// Not every environment has every one of these tables (schema drift between the
-// base and overlay migrations), and a missing table would otherwise make user
-// deletion impossible. Filtering against information_schema keeps the delete
-// working against whatever actually exists.
-async function existingTables(client, names) {
-  const { rows } = await client.query(
-    `SELECT table_name FROM information_schema.tables
-     WHERE table_schema = current_schema() AND table_name = ANY($1::text[])`,
-    [names]
-  );
-  return new Set(rows.map((row) => row.table_name));
-}
-
 // DELETE /api/admin/users/:id
 //
 // Removes the user and everything they own. Runs as one transaction so a
@@ -144,15 +118,7 @@ router.delete('/users/:id', async (req, res) => {
     const owned = await client.query('SELECT id FROM spaces WHERE owner_id = $1', [userId]);
     const spaceIds = owned.rows.map((row) => row.id);
 
-    if (spaceIds.length > 0) {
-      const tables = await existingTables(client, SPACE_CHILD_TABLES);
-      for (const table of SPACE_CHILD_TABLES) {
-        if (!tables.has(table)) continue;
-        await client.query(`DELETE FROM ${table} WHERE space_id = ANY($1::uuid[])`, [
-          spaceIds,
-        ]);
-      }
-    }
+    await deleteSpaceChildren(client, spaceIds);
 
     await client.query('DELETE FROM spaces WHERE owner_id = $1', [userId]);
 

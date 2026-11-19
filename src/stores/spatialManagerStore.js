@@ -429,7 +429,7 @@ const useSpatialManagerStore = create((set, get) => ({
   initializeSpatialSystem: async (user, currentSpaceId, cameraRef) => {
     const state = get();
 
-    if (!currentSpaceId || state.isInitialized || state.initializationPromise || window._bulkDeleteInProgress) {
+    if (!currentSpaceId || state.isInitialized || state.initializationPromise || window._bulkDeleteInProgress === currentSpaceId) {
       return;
     }
 

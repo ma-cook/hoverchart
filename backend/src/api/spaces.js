@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Storage } from '@google-cloud/storage';
 import pool from '../db.js';
 import { buildSpaceSlug, uniqueSlug } from '../utils/slug.js';
+import { deleteSpaceChildren } from '../utils/spaceCleanup.js';
 
 export const router = Router();
 
@@ -18,6 +19,9 @@ export function serializeSpace(row) {
   return {
     ...row,
     slug: row.slug || null,
+    ownerId: row.owner_id,
+    sharedWith: row.shared_with,
+    isPublic: row.is_public,
     markdownStorageUrl: row.markdown_storage_url,
     repoContentsStorageUrl: row.repo_contents_storage_url,
     diagramCommitSha: row.diagram_commit_sha,
@@ -243,11 +247,7 @@ router.delete('/:id', async (req, res) => {
     ].filter((filePath) => filePath?.startsWith('uploads/'));
 
     const spaceId = req.params.id;
-    await client.query(`DELETE FROM user_presence WHERE space_id = $1`, [spaceId]);
-    await client.query(`DELETE FROM chat_messages WHERE space_id = $1`, [spaceId]);
-    await client.query(`DELETE FROM objects WHERE space_id = $1`, [spaceId]);
-    await client.query(`DELETE FROM connections WHERE space_id = $1`, [spaceId]);
-    await client.query(`DELETE FROM spatial_cells WHERE space_id = $1`, [spaceId]);
+    await deleteSpaceChildren(client, [spaceId]);
     await client.query(`DELETE FROM spaces WHERE id = $1`, [spaceId]);
 
     await client.query('COMMIT');

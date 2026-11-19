@@ -27,25 +27,34 @@ export function canReadSpace(space, userId) {
   return Boolean(space.is_owner || space.is_shared_with || space.is_shared_with_org);
 }
 
+export function canWriteSpace(space, userId) {
+  if (!space || !userId) return false;
+  return Boolean(space.is_owner || space.is_shared_with || space.is_shared_with_org);
+}
+
 export async function requireSpaceReadAccess(req, res, next) {
-  const rawSpaceId = req.params?.spaceId || req.query?.spaceId;
+  const rawSpaceId = req.params?.spaceId || req.query?.spaceId || req.body?.spaceId;
   const spaceId = Array.isArray(rawSpaceId) ? rawSpaceId[0] : rawSpaceId;
   if (!spaceId || typeof spaceId !== 'string') {
     return res.status(400).json({ error: 'Space id is required' });
   }
 
   const userId = req.user?.sub || null;
+  const isWrite = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
 
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-    if (!userId || req.guest) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-    return next();
+  if (isWrite && (!userId || req.guest)) {
+    return res.status(401).json({ error: 'Authentication required' });
   }
 
   try {
     const space = await getSpaceAccess(spaceId, userId);
     if (!space) return res.status(404).json({ error: 'Space not found' });
+    if (isWrite) {
+      if (!canWriteSpace(space, userId)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+      return next();
+    }
     if (canReadSpace(space, userId)) return next();
     return res.status(userId ? 403 : 401).json({
       error: userId ? 'Access denied' : 'Authentication required',

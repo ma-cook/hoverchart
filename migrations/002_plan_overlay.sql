@@ -12,7 +12,7 @@ CREATE INDEX idx_plans_space ON plans(space_id);
 CREATE TABLE plan_tasks (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   plan_id      UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
-  space_id     UUID NOT NULL REFERENCES spaces(id),
+  space_id     UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
   user_id      TEXT NOT NULL,
   user_name    TEXT NOT NULL,
   user_picture TEXT,

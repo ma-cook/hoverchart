@@ -767,9 +767,16 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
       getCellId(coords.x, coords.y, coords.z)
     );
 
-    const objects = await api.get(`/api/spaces/${spaceId}/objects`, {
+    let objects = await api.get(`/api/spaces/${spaceId}/objects`, {
       params: { cell_id: cellIds },
     });
+    if (!Array.isArray(objects)) objects = [];
+
+    if (objects.length === 0 && cellIds.length > 0) {
+      console.warn('[spatialPartitioning] No objects matched loaded cells, retrying without the cell filter');
+      const allObjects = await api.get(`/api/spaces/${spaceId}/objects`);
+      if (Array.isArray(allObjects)) objects = allObjects;
+    }
 
     // Normalize: flatten metadata.* to top level for frontend compatibility
     objects.forEach((objectData) => {
@@ -810,7 +817,7 @@ export const getObjectsFromCells = async (userId, spaceId, cellCoords) => {
 
     return objects;
   } catch (error) {
-    console.error('Error loading objects from cells:', error);
+    console.error('Error loading objects from cells:', error?.message || error);
     return [];
   }
 };

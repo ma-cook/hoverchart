@@ -1674,34 +1674,26 @@ const UIOverlay = ({
     if (!confirmed) return;
 
     setIsDeleting(true);
+    window._bulkDeleteInProgress = currentSpaceId;
 
-    // Set global flag to block stale snapshot re-adds during deletion.
-    // Saves of new objects are still permitted — the per-save guard in
-    // spatialObjectsService/spatialPartitioning has been removed so that newly
-    // created objects can be persisted.  The backend cutoff protection (skipping
-    // docs with lastUpdated > jobStartTime) ensures they are not deleted.
-    window._bulkDeleteInProgress = true;
-
-    // ── Clear local state immediately so UI is responsive ──
-    clearAllObjectCaches();
-    resetObjects();
-    resetConnections();
-
-    const loadedCellIds = Array.from(useSpatialManagerStore.getState().loadedCells ?? []);
-    cleanupSpatialObjectSubscriptions(loadedCellIds);
-    useSpatialManagerStore.getState().resetSpatialManager();
-
-    const clearingToastId = notify('Clearing space…', {
-      type: 'info',
-      title: 'Working',
-      duration: 0,
-    });
-
-    // ── Delete all cells via backend API ──
+    let clearingToastId = null;
     try {
+      clearAllObjectCaches();
+      resetObjects();
+      resetConnections();
+
+      const loadedCellIds = Array.from(useSpatialManagerStore.getState().loadedCells ?? []);
+      cleanupSpatialObjectSubscriptions(loadedCellIds);
+      useSpatialManagerStore.getState().resetSpatialManager();
+
+      clearingToastId = notify('Clearing space…', {
+        type: 'info',
+        title: 'Working',
+        duration: 0,
+      });
+
       await deleteAllCellsInSpace(user.uid, currentSpaceId);
 
-      // Final cleanup — re-clear caches in case any stale data leaked in
       clearAllObjectCaches();
       resetObjects();
       resetConnections();
@@ -1711,37 +1703,30 @@ const UIOverlay = ({
       cleanupSpatialObjectSubscriptions(finalLoadedCellIds);
       useSpatialManagerStore.getState().resetSpatialManager();
 
-      // Re-initialize the spatial system to clean, initialized state.
-      // Without this, the system stays uninitialized (guarded by _bulkDeleteInProgress
-      // in initializeSpatialSystem), and new scans/object creation won't work properly.
-      useSpatialManagerStore.getState().setIsInitialized(true);
-
-      // Clear 2D diagram and analysis state
       useDiagramStore.getState().clear();
-
-      // Clear code/repo/techStack and notify SpaceChat to clear messages
       useCodeStore.getState().reset();
       window.dispatchEvent(new CustomEvent('space-objects-cleared'));
 
-      window._bulkDeleteInProgress = false;
-      setIsDeleting(false);
       setCurrentDiagramRepo(null);
       storeGeneratedMarkdown(null, currentSpaceId);
       setLatestMarkdownUrl(null);
       setLastCommitSha(null);
       setAnalysisOpen(false);
-      dismissToast(clearingToastId);
       notify('All objects deleted.', { type: 'success', title: 'Space cleared' });
     } catch (error) {
       console.error('Bulk delete error:', error);
-      window._bulkDeleteInProgress = false;
-      setIsDeleting(false);
-      dismissToast(clearingToastId);
       notify(`Error deleting space: ${error.message}`, {
         type: 'error',
         title: 'Delete failed',
         duration: 6000,
       });
+    } finally {
+      window._bulkDeleteInProgress = null;
+      setIsDeleting(false);
+      if (clearingToastId) dismissToast(clearingToastId);
+      useSpatialManagerStore
+        .getState()
+        .initializeSpatialSystem(user, currentSpaceId, window.cameraRef);
     }
   }, [user, currentSpaceId, resetObjects, resetConnections, storeGeneratedMarkdown]);
 
