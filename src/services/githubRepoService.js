@@ -408,6 +408,12 @@ export const isGithubAuthenticated = () => {
  * @returns {Promise<boolean>} - True if the server holds a token for this user
  */
 export const refreshGithubConnection = async () => {
+  if (!safeGetItem('accessToken')) {
+    safeRemoveItem('github_login');
+    useCodeStore.getState().setGithubConnected(false);
+    return false;
+  }
+
   try {
     const status = await api.get('/api/github/status');
     const connected = !!(status && status.connected);

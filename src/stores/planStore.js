@@ -54,6 +54,11 @@ const usePlanStore = create((set, get) => ({
     const { _unsub } = get();
     if (_unsub) _unsub();
 
+    if (!spaceId) {
+      set({ plan: null, tasks: [], spaceId: null, isLoading: false, _unsub: null });
+      return;
+    }
+
     set({ spaceId, isLoading: true });
 
     try {

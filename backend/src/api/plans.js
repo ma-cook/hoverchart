@@ -32,7 +32,7 @@ export async function resolvePlanSpace(req, res, next) {
 
 // GET /api/plans?spaceId=X — get active plan + tasks for a space
 router.get('/', async (req, res) => {
-  const { spaceId } = req.query;
+  const spaceId = req.query.spaceId || req.body?.spaceId;
   if (!spaceId) return res.status(400).json({ error: 'spaceId is required' });
 
   try {

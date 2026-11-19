@@ -440,11 +440,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   }, [isPrimary, windowId]);
 
   useEffect(() => {
-    useCodeStore.getState().setSpaceId(spaceId);
+    if (spaceId) useCodeStore.getState().setSpaceId(spaceId);
   }, [spaceId]);
 
   useEffect(() => {
-    usePlanStore.getState().initSpace(spaceId);
+    if (spaceId) usePlanStore.getState().initSpace(spaceId);
   }, [spaceId]);
 
   useEffect(() => {
