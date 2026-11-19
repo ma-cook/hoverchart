@@ -85,6 +85,7 @@ app.use('/api/organizations', authenticate, organizationsRouter);
 app.use('/api/storage', authenticate, storageRouter);
 app.use('/api/bulk', authenticate, bulkRouter);
 app.use('/api/updates', authenticate, updatesRouter);
+app.get('/api/plans', optionalAuth, requireSpaceReadAccess, plansRouter);
 app.use('/api/plans', authenticate, plansRouter);
 app.use('/api/github', authenticate, githubRouter);
 app.use('/api/scan-jobs', authenticate, scanJobsRouter);

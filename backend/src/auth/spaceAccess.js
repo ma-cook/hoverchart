@@ -28,8 +28,11 @@ export function canReadSpace(space, userId) {
 }
 
 export async function requireSpaceReadAccess(req, res, next) {
-  const { spaceId } = req.params;
-  if (!spaceId) return res.status(400).json({ error: 'Space id is required' });
+  const rawSpaceId = req.params?.spaceId || req.query?.spaceId;
+  const spaceId = Array.isArray(rawSpaceId) ? rawSpaceId[0] : rawSpaceId;
+  if (!spaceId || typeof spaceId !== 'string') {
+    return res.status(400).json({ error: 'Space id is required' });
+  }
 
   const userId = req.user?.sub || null;
 

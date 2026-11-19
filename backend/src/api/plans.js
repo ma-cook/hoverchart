@@ -17,6 +17,7 @@ router.get('/', async (req, res) => {
 
     let plan;
     if (result.rows.length === 0) {
+      if (!req.user || req.guest) return res.json(null);
       // Auto-create a plan for the space
       result = await pool.query(
         `INSERT INTO plans (space_id, title) VALUES ($1, 'Plan') RETURNING *`,
