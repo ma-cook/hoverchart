@@ -1692,7 +1692,7 @@ body {
   width: 100%;
   background: transparent;
   border: none;
-  color: #333;
+  color: var(--panel-text);
   padding: 10px 14px;
   cursor: pointer;
   font-size: 13px;
@@ -1701,12 +1701,37 @@ body {
 }
 
 .space-chat-provider-option:hover {
-  background: #fff4e0;
+  background: var(--panel-hover-bg);
 }
 
 .space-chat-provider-option.selected {
-  color: #cc8500;
   font-weight: 600;
+}
+
+html[data-theme='dark'] .space-chat-provider-option.selected,
+html[data-theme='dark'] .space-chat-model-option.selected {
+  color: #ffffff;
+}
+
+html[data-theme='light'] .space-chat-provider-option.selected,
+html[data-theme='light'] .space-chat-model-option.selected {
+  color: #000000;
+}
+
+.space-chat-model-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--panel-text-muted);
+}
+
+.space-chat-model-search {
+  margin-bottom: 4px;
+}
+
+.space-chat-model-empty {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--panel-text-muted);
 }
 
 .space-chat-provider-error {

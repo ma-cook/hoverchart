@@ -470,6 +470,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const [showApiKeyInput, setShowApiKeyInput] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [providerModels, setProviderModels] = useState([]);
+  const [modelQuery, setModelQuery] = useState('');
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelFetchError, setModelFetchError] = useState(null);
   const [showManualModelInput, setShowManualModelInput] = useState(false);
@@ -1248,6 +1249,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       setWindowProvider(pendingProviderId);
       setWindowApiKey(key);
       setProviderModels(models);
+      setModelQuery('');
       setShowApiKeyInput(false);
       setShowProviderModal(false);
       setAuthError(null);
@@ -1297,10 +1299,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     try {
       const models = await fetchModels(windowLlm.providerId, windowLlm.apiKey);
       setProviderModels(models);
+      setModelQuery('');
       setShowModelDropdown(true);
     } catch (err) {
       setModelFetchError(err.message);
-      setShowProviderModal(true);
+      setPendingProviderId(windowLlm.providerId);
+      setApiKeyInput(windowLlm.apiKey || '');
+      setShowApiKeyInput(true);
+      setShowProviderModal(false);
     } finally {
       setFetchingModels(false);
     }
@@ -1617,6 +1623,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     if (chatMode === 'plan') return 'Send';
     return 'Generate code';
   };
+
+  const modelQueryLower = modelQuery.trim().toLowerCase();
+  const filteredModels = modelQueryLower
+    ? providerModels.filter((m) =>
+        `${m.name || ''} ${m.id || ''}`.toLowerCase().includes(modelQueryLower)
+      )
+    : providerModels;
 
   if (!isOpen) return null;
 
@@ -2104,9 +2117,19 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       {showModelDropdown && providerModels.length > 0 && (
         <div className="space-chat-modal-overlay" onClick={() => { setShowModelDropdown(false); setProviderModels([]); }}>
           <div className="space-chat-modal" onClick={e => e.stopPropagation()}>
-            <div className="space-chat-modal-title">Select Model</div>
+            <div className="space-chat-modal-title">
+              Select Model <span className="space-chat-model-count">({providerModels.length})</span>
+            </div>
+            <input
+              className="space-chat-modal-input space-chat-model-search"
+              type="text"
+              placeholder="Search models…"
+              value={modelQuery}
+              onChange={e => setModelQuery(e.target.value)}
+              autoFocus
+            />
             <div className="space-chat-provider-list">
-              {providerModels.map(m => (
+              {filteredModels.map(m => (
                 <button
                   key={m.id}
                   className={`space-chat-provider-option ${windowLlm.selectedModel === m.id ? 'selected' : ''}`}
@@ -2116,6 +2139,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
                   {windowLlm.selectedModel === m.id && <span className="space-chat-model-check">✓</span>}
                 </button>
               ))}
+              {filteredModels.length === 0 && (
+                <div className="space-chat-model-empty">No models match “{modelQuery}”</div>
+              )}
             </div>
             {windowLlm.providerId === 'opencode-zen' && /free|-free$|-free\b/i.test(windowLlm.selectedModel || '') && (
               <div className="space-chat-provider-hint">

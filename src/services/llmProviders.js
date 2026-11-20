@@ -13,6 +13,49 @@ function sanitizeMessages(messages) {
   });
 }
 
+function isFreeModel(m) {
+  if (m?.free === true) return true;
+  if (/\bfree\b/i.test(String(m?.id || '')) || /\bfree\b/i.test(String(m?.name || ''))) return true;
+  const inputPrice = m?.cost?.text?.input?.price;
+  const outputPrice = m?.cost?.text?.output?.price;
+  return inputPrice === 0 && outputPrice === 0;
+}
+
+function normalizeModel(m) {
+  const id = String(m?.id || m?.name || '').replace(/^models\//, '');
+  if (!id) return null;
+  const free = isFreeModel(m);
+  const rawName = String(m?.name || m?.display_name || id).replace(/^models\//, '');
+  const baseName = rawName.replace(/\s*-?\s*free\s*$/i, '');
+  return {
+    id,
+    name: free ? `${baseName} - free` : rawName,
+    free,
+    canonicalId: m?.canonical_id || null,
+  };
+}
+
+const OPENCODE_FREE_MODEL_FALLBACKS = [
+  {
+    id: 'deepseek-v4.1-flash-free',
+    name: 'DeepSeek V4.1 Flash Free',
+    canonical_id: 'deepseek/deepseek-v4.1-flash-1017',
+    cost: { text: { input: { price: 0 }, output: { price: 0 } } },
+  },
+];
+
+function parseOpenCodeModels(data) {
+  const rows = Array.isArray(data?.data) ? data.data : [];
+  const models = rows.map(normalizeModel).filter(Boolean);
+  for (const fallback of OPENCODE_FREE_MODEL_FALLBACKS) {
+    if (!models.some((m) => m.id === fallback.id)) {
+      const model = normalizeModel(fallback);
+      if (model) models.push(model);
+    }
+  }
+  return models.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export const PROVIDERS = [
   {
     id: 'anthropic',
@@ -40,8 +83,9 @@ export const PROVIDERS = [
     },
     parseModels: (data) =>
       (data.data || [])
-        .filter((m) => m.id.startsWith('claude-'))
-        .map((m) => ({ id: m.id, name: m.id }))
+        .filter((m) => m.id?.startsWith('claude-'))
+        .map(normalizeModel)
+        .filter(Boolean)
         .sort((a, b) => a.name.localeCompare(b.name)),
     parseStreamLine: (line) => {
       if (!line.startsWith('data: ')) return null;
@@ -82,8 +126,9 @@ export const PROVIDERS = [
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
     parseModels: (data) =>
       (data.models || [])
-        .filter((m) => m.name.startsWith('models/gemini-'))
-        .map((m) => ({ id: m.name.replace('models/', ''), name: m.name.replace('models/', '') }))
+        .filter((m) => m.name?.startsWith('models/gemini-'))
+        .map(normalizeModel)
+        .filter(Boolean)
         .sort((a, b) => a.name.localeCompare(b.name)),
     parseStreamLine: (line) => {
       if (!line.startsWith('data: ')) return null;
@@ -113,10 +158,7 @@ export const PROVIDERS = [
       if (tools && tools.length > 0) body.tools = tools;
       return body;
     },
-    parseModels: (data) =>
-      (data.data || [])
-        .map((m) => ({ id: m.id, name: m.id }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+    parseModels: parseOpenCodeModels,
     parseStreamLine: (line) => {
       if (!line.startsWith('data: ')) return null;
       const data = line.slice(6);
@@ -149,10 +191,7 @@ export const PROVIDERS = [
       if (tools && tools.length > 0) body.tools = tools;
       return body;
     },
-    parseModels: (data) =>
-      (data.data || [])
-        .map((m) => ({ id: m.id, name: m.id }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+    parseModels: parseOpenCodeModels,
     parseStreamLine: (line) => {
       if (!line.startsWith('data: ')) return null;
       const data = line.slice(6);
@@ -185,10 +224,17 @@ export const PROVIDERS = [
       if (tools && tools.length > 0) body.tools = tools;
       return body;
     },
-    parseModels: (data) =>
-      (data.data || [])
-        .map((m) => ({ id: m.id, name: m.id }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+    parseModels: (data) => {
+      const rows = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.models)
+          ? data.models
+          : [];
+      return rows
+        .map((m) => normalizeModel({ ...m, name: m?.display_name || m?.name || m?.id }))
+        .filter(Boolean)
+        .sort((a, b) => a.name.localeCompare(b.name));
+    },
     parseStreamLine: (line) => {
       if (!line.startsWith('data: ')) return null;
       const data = line.slice(6);
@@ -234,11 +280,17 @@ export async function fetchModels(providerId, apiKey) {
       headers: { 'Content-Type': 'application/json' },
       body: await gzipBytes(payload),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(
+        `Failed to fetch models (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`
+      );
+    }
     const data = await res.json();
     return provider.parseModels(data);
-  } catch {
-    return [];
+  } catch (err) {
+    if (err instanceof Error && /Failed to fetch models/.test(err.message)) throw err;
+    throw new Error(`Failed to fetch models: ${err?.message || err}`);
   }
 }
 
@@ -298,6 +350,12 @@ export async function sendToProvider({
       if (retryAfter) err.retryAfterMs = Number(retryAfter) * 1000;
       const typeMatch = errText.match(/"type":\s*"([A-Za-z]+Error)"/);
       if (typeMatch) err.providerErrorType = typeMatch[1];
+      if (/hosted outside Europe and the United States|Select Global/i.test(errText)) {
+        err.providerErrorType = 'RegionRestrictedError';
+        err.regionRestricted = true;
+        const settingsUrl = errText.match(/https:\/\/opencode\.ai\/console\/[^\s"]+/)?.[0];
+        err.message = `${provider.name}: this model is blocked by your OpenCode organization region setting. ${settingsUrl ? `Open ${settingsUrl} and select Global, then retry.` : 'Select Global in the OpenCode console, then retry.'}`;
+      }
       const retryAfterBody = errText.match(/"retryAfter"\s*:\s*(\d+)/);
       if (retryAfterBody && !err.retryAfterMs) err.retryAfterMs = Number(retryAfterBody[1]) * 1000;
       throw err;
