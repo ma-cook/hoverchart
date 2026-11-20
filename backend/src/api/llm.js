@@ -138,9 +138,11 @@ router.post('/chat', async (req, res) => {
   const model = body?.model || 'unknown';
   const keyHint = String(headers?.authorization || '').slice(0, 12) || String(headers?.['x-api-key'] || '').slice(0, 12) || 'none';
   chatRequestTotal++;
-  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint} total=${chatRequestTotal}`);
+  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} reasoning=${body?.reasoning_effort || 'default'} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint} total=${chatRequestTotal}`);
 
   if (!(await waitForThrottleSlot(host, res))) return;
+
+  console.log(`[llm-proxy] FETCH ${new Date().toISOString()} host=${host} model=${model} queueWaitMs=${Date.now() - startedAt}`);
 
   activeChatRequests++;
   let upstreamRateLimited = false;

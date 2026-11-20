@@ -325,6 +325,27 @@ export async function sendToProvider({
   console.log(`[sendToProvider] ${provider.name} request started model=${model} reasoning=${reasoningEffort || 'default'}`);
   onChunk?.('', 'Calling provider…');
 
+  let responseHeadersReceived = false;
+  let firstTokenSeen = false;
+  let waitingIntervalId = null;
+  const clearWaitingTicker = () => {
+    if (waitingIntervalId) {
+      clearInterval(waitingIntervalId);
+      waitingIntervalId = null;
+    }
+  };
+  const startWaitingTicker = () => {
+    clearWaitingTicker();
+    waitingIntervalId = setInterval(() => {
+      if (firstTokenSeen) return;
+      const seconds = Math.round((Date.now() - requestStartedAt) / 1000);
+      const phase = responseHeadersReceived ? 'Waiting for first token' : 'Waiting for provider';
+      onChunk?.('', `${phase}… (${seconds}s)`);
+    }, 3000);
+  };
+  startWaitingTicker();
+
+  try {
   const MAX_RETRIES = 3;
   const timeoutMs = 5 * 60 * 1000;
 
@@ -386,6 +407,7 @@ export async function sendToProvider({
     }
   }
 
+  responseHeadersReceived = true;
   console.log(`[sendToProvider] ${provider.name} response headers received in ${Date.now() - requestStartedAt}ms`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -400,32 +422,19 @@ export async function sendToProvider({
   const toolCallsMap = new Map();
 
   let streamWatchdogId = null;
-  let waitingIntervalId = null;
   const resetStreamWatchdog = () => {
     clearTimeout(streamWatchdogId);
     streamWatchdogId = setTimeout(() => reader.cancel(), timeoutMs);
-  };
-  const clearWaitingTicker = () => {
-    if (waitingIntervalId) {
-      clearInterval(waitingIntervalId);
-      waitingIntervalId = null;
-    }
   };
   const emitStatus = (text) => {
     console.log(`[sendToProvider] ${provider.name}: ${text} (${Date.now() - requestStartedAt}ms)`);
     onChunk?.('', contentSeen ? `${fullText}\n\n${text}` : text);
   };
-  const startWaitingTicker = () => {
+  const markFirstToken = () => {
+    firstTokenSeen = true;
     clearWaitingTicker();
-    waitingIntervalId = setInterval(() => {
-      if (!reasoningSeen && !contentSeen) {
-        const seconds = Math.round((Date.now() - requestStartedAt) / 1000);
-        onChunk?.('', `Waiting for first token… (${seconds}s)`);
-      }
-    }, 3000);
   };
   resetStreamWatchdog();
-  startWaitingTicker();
 
   try {
     while (!streamDone) {
@@ -446,7 +455,7 @@ export async function sendToProvider({
           if (result.done) {
             streamDone = true;
             finishReason = result.finish_reason || null;
-            clearWaitingTicker();
+            markFirstToken();
             emitStatus('Finishing…');
             break;
           }
@@ -454,7 +463,7 @@ export async function sendToProvider({
             reasoningChunks++;
             if (!reasoningSeen) {
               reasoningSeen = true;
-              clearWaitingTicker();
+              markFirstToken();
               emitStatus('Thinking…');
             } else if (reasoningChunks % 12 === 0) {
               emitStatus(`Thinking… (${reasoningChunks} chunks)`);
@@ -462,7 +471,7 @@ export async function sendToProvider({
           } else if (result.type === 'text') {
             if (!contentSeen) {
               contentSeen = true;
-              clearWaitingTicker();
+              markFirstToken();
               console.log(`[sendToProvider] ${provider.name} first content chunk after ${Date.now() - requestStartedAt}ms`);
             }
             fullText += result.text;
@@ -470,7 +479,7 @@ export async function sendToProvider({
           } else if (result.type === 'tool_calls') {
             if (!toolStatusEmitted) {
               toolStatusEmitted = true;
-              clearWaitingTicker();
+              markFirstToken();
               emitStatus('Calling tools…');
             }
             for (const tc of result.tool_calls) {
@@ -486,7 +495,7 @@ export async function sendToProvider({
           } else if (typeof result === 'string') {
             if (!contentSeen) {
               contentSeen = true;
-              clearWaitingTicker();
+              markFirstToken();
               console.log(`[sendToProvider] ${provider.name} first content chunk after ${Date.now() - requestStartedAt}ms`);
             }
             fullText += result;
@@ -519,4 +528,7 @@ export async function sendToProvider({
   }
 
   return { text: fullText, toolCalls };
+  } finally {
+    clearWaitingTicker();
+  }
 }
