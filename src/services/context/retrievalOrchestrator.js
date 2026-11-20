@@ -1179,6 +1179,7 @@ export async function sendWithRetrieval({
     let rawResult = null;
     let sendFailed = false;
     let sendFailedDailyCap = false;
+    let sendFailedReasoningBudget = false;
     let rateLimitRetriesLeft = 1;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
@@ -1199,6 +1200,15 @@ export async function sendWithRetrieval({
         // A user-initiated abort must stop the run immediately — the signal is
         // permanently aborted, so further retries could never succeed.
         if (sendErr?.name === 'AbortError') throw sendErr;
+
+        if (sendErr?.providerErrorType === 'ReasoningBudgetExceeded') {
+          finalText = (finalText ? finalText + '\n\n' : '') +
+            `[${sendErr.message} The model produced reasoning only and no answer. Retry with a shorter prompt, a different model, or a provider with a smaller reasoning budget.]`;
+          console.warn(`[ToolRound] Reasoning budget exhausted for ${sendErr.provider}; stopping run`);
+          sendFailed = true;
+          sendFailedReasoningBudget = true;
+          break;
+        }
 
         // Rate limits only clear when the provider's reset window expires —
         // retrying in 1-2s is guaranteed to fail and only burns quota. Wait out
@@ -1246,6 +1256,10 @@ export async function sendWithRetrieval({
           `the budget resets at local midnight. To continue working today: switch the model/provider to a paid option (e.g. an Anthropic, ` +
           `OpenRouter, or Nvidia API key) in the model picker, or wait for the reset.]`;
         console.warn(`[ToolRound] Round ${rounds + 1}: send failed due to free daily cap, stopping run`);
+        break;
+      }
+      if (sendFailedReasoningBudget) {
+        console.warn(`[ToolRound] Round ${rounds + 1}: reasoning budget exhausted, stopping run`);
         break;
       }
       console.warn(`[ToolRound] Round ${rounds + 1}: all send attempts failed, breaking loop`);

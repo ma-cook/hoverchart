@@ -56,6 +56,56 @@ function parseOpenCodeModels(data) {
   return models.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function applyReasoningModelOptions(body, model) {
+  const modelId = String(model || '').toLowerCase();
+  if (/glm[-_]?5(?:\.3)?/.test(modelId)) {
+    body.reasoning_effort = 'low';
+    body.chat_template_kwargs = {
+      ...(body.chat_template_kwargs || {}),
+      reasoning_effort: 'low',
+      clear_thinking: true,
+    };
+  }
+  return body;
+}
+
+function parseOpenAiStreamLine(line) {
+  if (!line.startsWith('data:')) return null;
+  const data = line.slice(5).trim();
+  if (!data) return null;
+  if (data === '[DONE]') return { done: true };
+  try {
+    const parsed = JSON.parse(data);
+    const choice = parsed.choices?.[0];
+    if (!choice) return null;
+    const delta = choice.delta || {};
+    const results = [];
+    if (delta.reasoning_content) {
+      results.push({ type: 'reasoning', text: delta.reasoning_content });
+    }
+    if (delta.reasoning) {
+      results.push({ type: 'reasoning', text: delta.reasoning });
+    }
+    if (Array.isArray(delta.content)) {
+      for (const part of delta.content) {
+        const text = typeof part === 'string' ? part : part?.text;
+        if (text) results.push({ type: 'text', text });
+      }
+    } else if (delta.content) {
+      results.push({ type: 'text', text: delta.content });
+    }
+    if (delta.tool_calls) {
+      results.push({ type: 'tool_calls', tool_calls: delta.tool_calls });
+    }
+    if (choice.finish_reason) {
+      results.push({ done: true, finish_reason: choice.finish_reason });
+    }
+    return results.length > 0 ? results : null;
+  } catch {
+    return null;
+  }
+}
+
 export const PROVIDERS = [
   {
     id: 'anthropic',
@@ -156,26 +206,10 @@ export const PROVIDERS = [
     formatBody: (messages, model, tools) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools && tools.length > 0) body.tools = tools;
-      return body;
+      return applyReasoningModelOptions(body, model);
     },
     parseModels: parseOpenCodeModels,
-    parseStreamLine: (line) => {
-      if (!line.startsWith('data: ')) return null;
-      const data = line.slice(6);
-      if (data === '[DONE]') return { done: true };
-      try {
-        const parsed = JSON.parse(data);
-        const choice = parsed.choices?.[0];
-        if (!choice) return null;
-        const delta = choice.delta;
-        if (delta?.content) return { type: 'text', text: delta.content };
-        if (delta?.tool_calls) return { type: 'tool_calls', tool_calls: delta.tool_calls };
-        if (choice.finish_reason) return { done: true, finish_reason: choice.finish_reason };
-        return null;
-      } catch {
-        return null;
-      }
-    },
+    parseStreamLine: parseOpenAiStreamLine,
   },
   {
     id: 'opencode-go',
@@ -189,26 +223,10 @@ export const PROVIDERS = [
     formatBody: (messages, model, tools) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools && tools.length > 0) body.tools = tools;
-      return body;
+      return applyReasoningModelOptions(body, model);
     },
     parseModels: parseOpenCodeModels,
-    parseStreamLine: (line) => {
-      if (!line.startsWith('data: ')) return null;
-      const data = line.slice(6);
-      if (data === '[DONE]') return { done: true };
-      try {
-        const parsed = JSON.parse(data);
-        const choice = parsed.choices?.[0];
-        if (!choice) return null;
-        const delta = choice.delta;
-        if (delta?.content) return { type: 'text', text: delta.content };
-        if (delta?.tool_calls) return { type: 'tool_calls', tool_calls: delta.tool_calls };
-        if (choice.finish_reason) return { done: true, finish_reason: choice.finish_reason };
-        return null;
-      } catch {
-        return null;
-      }
-    },
+    parseStreamLine: parseOpenAiStreamLine,
   },
   {
     id: 'nvidia',
@@ -222,7 +240,7 @@ export const PROVIDERS = [
     formatBody: (messages, model, tools) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools && tools.length > 0) body.tools = tools;
-      return body;
+      return applyReasoningModelOptions(body, model);
     },
     parseModels: (data) => {
       const rows = Array.isArray(data?.data)
@@ -235,23 +253,7 @@ export const PROVIDERS = [
         .filter(Boolean)
         .sort((a, b) => a.name.localeCompare(b.name));
     },
-    parseStreamLine: (line) => {
-      if (!line.startsWith('data: ')) return null;
-      const data = line.slice(6);
-      if (data === '[DONE]') return { done: true };
-      try {
-        const parsed = JSON.parse(data);
-        const choice = parsed.choices?.[0];
-        if (!choice) return null;
-        const delta = choice.delta;
-        if (delta?.content) return { type: 'text', text: delta.content };
-        if (delta?.tool_calls) return { type: 'tool_calls', tool_calls: delta.tool_calls };
-        if (choice.finish_reason) return { done: true, finish_reason: choice.finish_reason };
-        return null;
-      } catch {
-        return null;
-      }
-    },
+    parseStreamLine: parseOpenAiStreamLine,
   },
 ];
 
@@ -379,6 +381,7 @@ export async function sendToProvider({
   let buffer = '';
   let streamDone = false;
   let finishReason = null;
+  let reasoningSeen = false;
   const toolCallsMap = new Map();
 
   let streamWatchdogId = null;
@@ -399,33 +402,46 @@ export async function sendToProvider({
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      const result = provider.parseStreamLine(trimmed);
-      if (result === null) continue;
-      if (result.done) {
-        streamDone = true;
-        finishReason = result.finish_reason || null;
-        break;
-      }
-      if (result.type === 'text') {
-        fullText += result.text;
-        onChunk?.(result.text, fullText);
-      } else if (result.type === 'tool_calls') {
-        for (const tc of result.tool_calls) {
-          const idx = tc.index ?? 0;
-          if (!toolCallsMap.has(idx)) {
-            toolCallsMap.set(idx, { id: tc.id || '', name: '', arguments: '' });
-          }
-          const existing = toolCallsMap.get(idx);
-          if (tc.id) existing.id = tc.id;
-          if (tc.function?.name) existing.name += tc.function.name;
-          if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+      const parsed = provider.parseStreamLine(trimmed);
+      if (parsed === null) continue;
+      const results = Array.isArray(parsed) ? parsed : [parsed];
+      for (const result of results) {
+        if (result.done) {
+          streamDone = true;
+          finishReason = result.finish_reason || null;
+          break;
         }
-      } else if (typeof result === 'string') {
-        fullText += result;
-        onChunk?.(result, fullText);
+        if (result.type === 'reasoning') {
+          if (!reasoningSeen) {
+            reasoningSeen = true;
+            console.log(`[sendToProvider] ${provider.name} reasoning stream detected`);
+            if (!fullText.trim() && toolCallsMap.size === 0) {
+              onChunk?.('', 'Thinking…');
+            }
+          }
+        } else if (result.type === 'text') {
+          fullText += result.text;
+          onChunk?.(result.text, fullText);
+        } else if (result.type === 'tool_calls') {
+          for (const tc of result.tool_calls) {
+            const idx = tc.index ?? 0;
+            if (!toolCallsMap.has(idx)) {
+              toolCallsMap.set(idx, { id: tc.id || '', name: '', arguments: '' });
+            }
+            const existing = toolCallsMap.get(idx);
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name += tc.function.name;
+            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+          }
+        } else if (typeof result === 'string') {
+          fullText += result;
+          onChunk?.(result, fullText);
+        }
       }
+      if (streamDone) break;
     }
   }
+  clearTimeout(streamWatchdogId);
 
   const toolCalls = finishReason === 'tool_calls' && toolCallsMap.size > 0
     ? [...toolCallsMap.values()].map(tc => ({
@@ -434,6 +450,15 @@ export async function sendToProvider({
         arguments: JSON.parse(tc.arguments || '{}'),
       }))
     : [];
+
+  const stalledAfterReasoning = reasoningSeen && !fullText.trim() && toolCalls.length === 0
+    && (!finishReason || finishReason === 'length' || finishReason === 'stop');
+  if (stalledAfterReasoning) {
+    const err = new Error(`${provider.name} spent its response budget on reasoning without returning an answer. Try a shorter prompt or a different model.`);
+    err.providerErrorType = 'ReasoningBudgetExceeded';
+    err.provider = provider.name;
+    throw err;
+  }
 
   return { text: fullText, toolCalls };
 }
