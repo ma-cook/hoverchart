@@ -19,7 +19,7 @@ import useLlmStore from '../stores/llmStore';
 import useChatArchiveStore from '../stores/chatArchiveStore';
 import useDiagramStore from '../stores/diagramStore';
 import useLlmEditActivityStore from '../stores/llmEditActivityStore';
-import { PROVIDERS, fetchModels, isFreeUsageLimit } from '../services/llmProviders';
+import { PROVIDERS, REASONING_EFFORTS, fetchModels, isFreeUsageLimit, modelSupportsReasoningEffort } from '../services/llmProviders';
 import { markdownDiagramService } from '../services/markdownDiagramService';
 import { renderMerfolkMarkdownToScene } from '../services/sceneRenderService';
 import {
@@ -167,21 +167,23 @@ function persistMode(spaceId, mode, windowId) {
 function loadWindowLlm(windowId) {
   const s = useLlmStore.getState();
   if (windowId === 0) {
-    return { providerId: s.providerId, apiKey: s.apiKey, selectedModel: s.selectedModel };
+    return { providerId: s.providerId, apiKey: s.apiKey, selectedModel: s.selectedModel, reasoningEffort: s.reasoningEffort || 'low' };
   }
-  let persisted = { providerId: null, apiKey: null, selectedModel: null };
+  let persisted = { providerId: null, apiKey: null, selectedModel: null, reasoningEffort: null };
   try {
     const rawApiKey = JSON.parse(localStorage.getItem(`llm:window:${windowId}:apiKey`) || 'null');
     persisted = {
       providerId: JSON.parse(localStorage.getItem(`llm:window:${windowId}:providerId`) || 'null'),
       apiKey: isEncryptedSecret(rawApiKey) ? null : rawApiKey,
       selectedModel: JSON.parse(localStorage.getItem(`llm:window:${windowId}:selectedModel`) || 'null'),
+      reasoningEffort: JSON.parse(localStorage.getItem(`llm:window:${windowId}:reasoningEffort`) || 'null'),
     };
   } catch { /* ignore */ }
   return {
     providerId: persisted.providerId || s.providerId || null,
     apiKey: persisted.apiKey || s.apiKey || null,
     selectedModel: persisted.selectedModel || s.selectedModel || null,
+    reasoningEffort: persisted.reasoningEffort || s.reasoningEffort || 'low',
   };
 }
 
@@ -364,9 +366,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const llmProviderId = useLlmStore(s => s.providerId);
   const llmApiKey = useLlmStore(s => s.apiKey);
   const llmSelectedModel = useLlmStore(s => s.selectedModel);
+  const llmReasoningEffort = useLlmStore(s => s.reasoningEffort);
   const llmSetProviderId = useLlmStore(s => s.setProviderId);
   const llmSetApiKey = useLlmStore(s => s.setApiKey);
   const llmSetSelectedModel = useLlmStore(s => s.setSelectedModel);
+  const llmSetReasoningEffort = useLlmStore(s => s.setReasoningEffort);
 
   const [windowLlm, setWindowLlm] = useState(() => loadWindowLlm(windowId));
 
@@ -417,15 +421,22 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     markSignificant();
   }, [isPrimary, windowId, llmSetSelectedModel, markSignificant]);
 
+  const setWindowReasoningEffort = useCallback((effort) => {
+    setWindowLlm((prev) => ({ ...prev, reasoningEffort: effort }));
+    if (isPrimary) llmSetReasoningEffort(effort);
+    else persistWindowLlm(windowId, 'reasoningEffort', effort);
+    markSignificant();
+  }, [isPrimary, windowId, llmSetReasoningEffort, markSignificant]);
+
   useEffect(() => {
     if (!isPrimary) return;
     const s = useLlmStore.getState();
     setWindowLlm((prev) =>
-      prev.providerId !== s.providerId || prev.apiKey !== s.apiKey || prev.selectedModel !== s.selectedModel
-        ? { providerId: s.providerId, apiKey: s.apiKey, selectedModel: s.selectedModel }
+      prev.providerId !== s.providerId || prev.apiKey !== s.apiKey || prev.selectedModel !== s.selectedModel || prev.reasoningEffort !== s.reasoningEffort
+        ? { providerId: s.providerId, apiKey: s.apiKey, selectedModel: s.selectedModel, reasoningEffort: s.reasoningEffort || 'low' }
         : prev
     );
-  }, [isPrimary, llmProviderId, llmApiKey, llmSelectedModel]);
+  }, [isPrimary, llmProviderId, llmApiKey, llmSelectedModel, llmReasoningEffort]);
 
   useEffect(() => {
     if (isPrimary) return;
@@ -487,6 +498,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   // Plan/code modes need an LLM provider API key before the user can send.
   // Group mode is a real-time chat and never locked.
   const llmLocked = chatMode !== 'group' && !windowLlm.apiKey;
+  const reasoningEffortSupported = modelSupportsReasoningEffort(windowLlm.selectedModel);
 
   // Hide the "create a 3D diagram" suggestion once the user has actually
   // asked for a diagram in this plan conversation.
@@ -615,6 +627,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     streamingMsgKeyRef.current = `llm-stream-${Date.now()}`;
     const currentStreamKey = streamingMsgKeyRef.current;
 
+    setPlanMessages((prev) => [
+      ...prev.filter(m => m.key !== currentStreamKey),
+      { key: currentStreamKey, role: 'assistant', content: 'Starting…', streaming: true },
+    ]);
+
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
@@ -631,7 +648,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         messages: zenMessages,
         onClarify: handleClarify,
         signal: abortController.signal,
-        llmConfig: { providerId: windowLlm.providerId, apiKey: windowLlm.apiKey, selectedModel: windowLlm.selectedModel },
+        llmConfig: { providerId: windowLlm.providerId, apiKey: windowLlm.apiKey, selectedModel: windowLlm.selectedModel, reasoningEffort: windowLlm.reasoningEffort },
         githubContext,
         fileTree: useCodeStore.getState().repoFileTree || [],
         fileSizes: useCodeStore.getState().fileSizes,
@@ -787,6 +804,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     const currentStreamKey = `code-stream-${Date.now()}`;
     streamingMsgKeyRef.current = currentStreamKey;
 
+    setCodeMessages((prev) => [
+      ...prev.filter(m => m.key !== currentStreamKey),
+      { key: currentStreamKey, role: 'assistant', content: 'Starting…', streaming: true },
+    ]);
+
     // Create a workflow ticket for this LLM task
     let workflowTicket = null;
     try {
@@ -882,7 +904,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         messages: codeGenMessages,
         onClarify: handleClarify,
         signal: abortController.signal,
-        llmConfig: { providerId: windowLlm.providerId, apiKey: windowLlm.apiKey, selectedModel: windowLlm.selectedModel },
+        llmConfig: { providerId: windowLlm.providerId, apiKey: windowLlm.apiKey, selectedModel: windowLlm.selectedModel, reasoningEffort: windowLlm.reasoningEffort },
         githubContext,
         fileTree: repoContext?.fileTree || [],
         fileSizes: useCodeStore.getState().fileSizes,
@@ -2039,6 +2061,19 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               : windowLlm.selectedModel || 'Model'}
             <span className="space-chat-model-arrow">▼</span>
           </button>
+          <select
+            className="space-chat-model-btn space-chat-reasoning-select"
+            value={windowLlm.reasoningEffort || 'low'}
+            onChange={e => setWindowReasoningEffort(e.target.value)}
+            disabled={streaming}
+            title={reasoningEffortSupported
+              ? 'Reasoning effort for this model'
+              : 'Reasoning effort applies to GLM 5.3 models'}
+          >
+            {REASONING_EFFORTS.map(effort => (
+              <option key={effort} value={effort}>Reason: {effort}</option>
+            ))}
+          </select>
         </div>
       )}
 

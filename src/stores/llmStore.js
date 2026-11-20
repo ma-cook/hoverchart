@@ -26,6 +26,7 @@ const useLlmStore = createWithEqualityFn((set, get) => ({
   apiKey: null,
   models: loadPersisted('models') || [],
   selectedModel: loadPersisted('selectedModel') || null,
+  reasoningEffort: loadPersisted('reasoningEffort') || 'low',
 
   setProviderId: (id) => {
     persist('providerId', id);
@@ -49,11 +50,16 @@ const useLlmStore = createWithEqualityFn((set, get) => ({
     set({ selectedModel: model });
   },
 
+  setReasoningEffort: (effort) => {
+    persist('reasoningEffort', effort);
+    set({ reasoningEffort: effort });
+  },
+
   reset: () => {
-    ['providerId', 'apiKey', 'models', 'selectedModel'].forEach((k) => {
+    ['providerId', 'apiKey', 'models', 'selectedModel', 'reasoningEffort'].forEach((k) => {
       try { localStorage.removeItem(`llm:${k}`); } catch { /* ignore */ }
     });
-    set({ providerId: null, apiKey: null, models: [], selectedModel: null });
+    set({ providerId: null, apiKey: null, models: [], selectedModel: null, reasoningEffort: 'low' });
   },
 
   get isConfigured() {

@@ -983,15 +983,18 @@ async function waitForRateLimit(providerId, signal) {
 
 export async function sendToZen({ messages, tools, onChunk, signal, llmConfig }) {
   const global = useLlmStore.getState();
-  const { providerId, apiKey, selectedModel } = llmConfig || {
+  const { providerId, apiKey, selectedModel, reasoningEffort } = llmConfig || {
     providerId: global.providerId,
     apiKey: global.apiKey,
     selectedModel: global.selectedModel,
+    reasoningEffort: global.reasoningEffort,
   };
 
   if (!providerId || !apiKey || !selectedModel) {
     throw new Error('LLM not configured. Click the model button to set up a provider.');
   }
+
+  const effectiveReasoningEffort = reasoningEffort || global.reasoningEffort || 'low';
 
   await acquireInFlightSlot(providerId, signal);
 
@@ -1004,7 +1007,7 @@ export async function sendToZen({ messages, tools, onChunk, signal, llmConfig })
   try {
     await waitForRateLimit(providerId, signal);
 
-    console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} messages=${messages.length} tools=${tools ? tools.length : 0}`);
+    console.log(`[sendToZen] Calling provider=${providerId} model=${selectedModel} reasoning=${effectiveReasoningEffort} messages=${messages.length} tools=${tools ? tools.length : 0}`);
 
     let result;
     try {
@@ -1016,6 +1019,7 @@ export async function sendToZen({ messages, tools, onChunk, signal, llmConfig })
         tools,
         onChunk,
         signal,
+        reasoningEffort: effectiveReasoningEffort,
       });
     } catch (err) {
       if (err?.status === 429 || /rate limit|too many requests/i.test(err?.message || '')) {

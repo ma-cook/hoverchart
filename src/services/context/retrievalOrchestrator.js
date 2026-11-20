@@ -1180,6 +1180,7 @@ export async function sendWithRetrieval({
     let sendFailed = false;
     let sendFailedDailyCap = false;
     let sendFailedReasoningBudget = false;
+    let lastSendError = null;
     let rateLimitRetriesLeft = 1;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
@@ -1200,6 +1201,8 @@ export async function sendWithRetrieval({
         // A user-initiated abort must stop the run immediately — the signal is
         // permanently aborted, so further retries could never succeed.
         if (sendErr?.name === 'AbortError') throw sendErr;
+
+        lastSendError = sendErr;
 
         if (sendErr?.providerErrorType === 'ReasoningBudgetExceeded') {
           finalText = (finalText ? finalText + '\n\n' : '') +
@@ -1262,7 +1265,10 @@ export async function sendWithRetrieval({
         console.warn(`[ToolRound] Round ${rounds + 1}: reasoning budget exhausted, stopping run`);
         break;
       }
-      console.warn(`[ToolRound] Round ${rounds + 1}: all send attempts failed, breaking loop`);
+      const failureDetail = lastSendError?.message ? ` ${lastSendError.message}` : '';
+      finalText = (finalText ? finalText + '\n\n' : '') +
+        `[The LLM request failed and the run stopped.${failureDetail}]`;
+      console.warn(`[ToolRound] Round ${rounds + 1}: all send attempts failed, breaking loop${failureDetail ? `: ${lastSendError.message}` : ''}`);
       break;
     }
 

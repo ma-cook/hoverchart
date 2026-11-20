@@ -1638,6 +1638,18 @@ body {
   font-size: 8px;
 }
 
+.space-chat-reasoning-select {
+  display: inline-block;
+  max-width: 112px;
+  font-family: inherit;
+  outline: none;
+}
+
+.space-chat-reasoning-select option {
+  background: #242424;
+  color: #fff;
+}
+
 .space-chat-model-dropdown {
   position: absolute;
   bottom: 100%;

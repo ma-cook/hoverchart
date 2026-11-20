@@ -56,13 +56,19 @@ function parseOpenCodeModels(data) {
   return models.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function applyReasoningModelOptions(body, model) {
-  const modelId = String(model || '').toLowerCase();
-  if (/glm[-_]?5(?:\.3)?/.test(modelId)) {
-    body.reasoning_effort = 'low';
+export const REASONING_EFFORTS = ['low', 'high', 'max'];
+
+export function modelSupportsReasoningEffort(model) {
+  return /glm[-_]?5(?:\.3)?/i.test(String(model || ''));
+}
+
+function applyReasoningModelOptions(body, model, reasoningEffort) {
+  if (modelSupportsReasoningEffort(model)) {
+    const effort = REASONING_EFFORTS.includes(reasoningEffort) ? reasoningEffort : 'low';
+    body.reasoning_effort = effort;
     body.chat_template_kwargs = {
       ...(body.chat_template_kwargs || {}),
-      reasoning_effort: 'low',
+      reasoning_effort: effort,
       clear_thinking: true,
     };
   }
@@ -203,10 +209,10 @@ export const PROVIDERS = [
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     }),
-    formatBody: (messages, model, tools) => {
+    formatBody: (messages, model, tools, options) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools && tools.length > 0) body.tools = tools;
-      return applyReasoningModelOptions(body, model);
+      return applyReasoningModelOptions(body, model, options?.reasoningEffort);
     },
     parseModels: parseOpenCodeModels,
     parseStreamLine: parseOpenAiStreamLine,
@@ -220,10 +226,10 @@ export const PROVIDERS = [
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     }),
-    formatBody: (messages, model, tools) => {
+    formatBody: (messages, model, tools, options) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools && tools.length > 0) body.tools = tools;
-      return applyReasoningModelOptions(body, model);
+      return applyReasoningModelOptions(body, model, options?.reasoningEffort);
     },
     parseModels: parseOpenCodeModels,
     parseStreamLine: parseOpenAiStreamLine,
@@ -237,10 +243,10 @@ export const PROVIDERS = [
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     }),
-    formatBody: (messages, model, tools) => {
+    formatBody: (messages, model, tools, options) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools && tools.length > 0) body.tools = tools;
-      return applyReasoningModelOptions(body, model);
+      return applyReasoningModelOptions(body, model, options?.reasoningEffort);
     },
     parseModels: (data) => {
       const rows = Array.isArray(data?.data)
@@ -304,15 +310,20 @@ export async function sendToProvider({
   tools,
   onChunk,
   signal,
+  reasoningEffort,
 }) {
   const provider = getProvider(providerId);
   if (!provider) throw new Error(`Unknown provider: ${providerId}`);
 
-  const body = provider.formatBody(messages, model, tools);
+  const body = provider.formatBody(messages, model, tools, { reasoningEffort });
   const url = provider.formatEndpoint
     ? provider.formatEndpoint(apiKey, model)
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
+
+  const requestStartedAt = Date.now();
+  console.log(`[sendToProvider] ${provider.name} request started model=${model} reasoning=${reasoningEffort || 'default'}`);
+  onChunk?.('', 'Calling provider…');
 
   const MAX_RETRIES = 3;
   const timeoutMs = 5 * 60 * 1000;
@@ -375,6 +386,7 @@ export async function sendToProvider({
     }
   }
 
+  console.log(`[sendToProvider] ${provider.name} response headers received in ${Date.now() - requestStartedAt}ms`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let fullText = '';
@@ -382,66 +394,112 @@ export async function sendToProvider({
   let streamDone = false;
   let finishReason = null;
   let reasoningSeen = false;
+  let reasoningChunks = 0;
+  let contentSeen = false;
+  let toolStatusEmitted = false;
   const toolCallsMap = new Map();
 
   let streamWatchdogId = null;
+  let waitingIntervalId = null;
   const resetStreamWatchdog = () => {
     clearTimeout(streamWatchdogId);
     streamWatchdogId = setTimeout(() => reader.cancel(), timeoutMs);
   };
-  resetStreamWatchdog();
-
-  while (!streamDone) {
-    const { done, value } = await reader.read();
-    clearTimeout(streamWatchdogId);
-    if (done) break;
-    resetStreamWatchdog();
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const parsed = provider.parseStreamLine(trimmed);
-      if (parsed === null) continue;
-      const results = Array.isArray(parsed) ? parsed : [parsed];
-      for (const result of results) {
-        if (result.done) {
-          streamDone = true;
-          finishReason = result.finish_reason || null;
-          break;
-        }
-        if (result.type === 'reasoning') {
-          if (!reasoningSeen) {
-            reasoningSeen = true;
-            console.log(`[sendToProvider] ${provider.name} reasoning stream detected`);
-            if (!fullText.trim() && toolCallsMap.size === 0) {
-              onChunk?.('', 'Thinking…');
-            }
-          }
-        } else if (result.type === 'text') {
-          fullText += result.text;
-          onChunk?.(result.text, fullText);
-        } else if (result.type === 'tool_calls') {
-          for (const tc of result.tool_calls) {
-            const idx = tc.index ?? 0;
-            if (!toolCallsMap.has(idx)) {
-              toolCallsMap.set(idx, { id: tc.id || '', name: '', arguments: '' });
-            }
-            const existing = toolCallsMap.get(idx);
-            if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name += tc.function.name;
-            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
-          }
-        } else if (typeof result === 'string') {
-          fullText += result;
-          onChunk?.(result, fullText);
-        }
-      }
-      if (streamDone) break;
+  const clearWaitingTicker = () => {
+    if (waitingIntervalId) {
+      clearInterval(waitingIntervalId);
+      waitingIntervalId = null;
     }
+  };
+  const emitStatus = (text) => {
+    console.log(`[sendToProvider] ${provider.name}: ${text} (${Date.now() - requestStartedAt}ms)`);
+    onChunk?.('', contentSeen ? `${fullText}\n\n${text}` : text);
+  };
+  const startWaitingTicker = () => {
+    clearWaitingTicker();
+    waitingIntervalId = setInterval(() => {
+      if (!reasoningSeen && !contentSeen) {
+        const seconds = Math.round((Date.now() - requestStartedAt) / 1000);
+        onChunk?.('', `Waiting for first token… (${seconds}s)`);
+      }
+    }, 3000);
+  };
+  resetStreamWatchdog();
+  startWaitingTicker();
+
+  try {
+    while (!streamDone) {
+      const { done, value } = await reader.read();
+      clearTimeout(streamWatchdogId);
+      if (done) break;
+      resetStreamWatchdog();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const parsed = provider.parseStreamLine(trimmed);
+        if (parsed === null) continue;
+        const results = Array.isArray(parsed) ? parsed : [parsed];
+        for (const result of results) {
+          if (result.done) {
+            streamDone = true;
+            finishReason = result.finish_reason || null;
+            clearWaitingTicker();
+            emitStatus('Finishing…');
+            break;
+          }
+          if (result.type === 'reasoning') {
+            reasoningChunks++;
+            if (!reasoningSeen) {
+              reasoningSeen = true;
+              clearWaitingTicker();
+              emitStatus('Thinking…');
+            } else if (reasoningChunks % 12 === 0) {
+              emitStatus(`Thinking… (${reasoningChunks} chunks)`);
+            }
+          } else if (result.type === 'text') {
+            if (!contentSeen) {
+              contentSeen = true;
+              clearWaitingTicker();
+              console.log(`[sendToProvider] ${provider.name} first content chunk after ${Date.now() - requestStartedAt}ms`);
+            }
+            fullText += result.text;
+            onChunk?.(result.text, fullText);
+          } else if (result.type === 'tool_calls') {
+            if (!toolStatusEmitted) {
+              toolStatusEmitted = true;
+              clearWaitingTicker();
+              emitStatus('Calling tools…');
+            }
+            for (const tc of result.tool_calls) {
+              const idx = tc.index ?? 0;
+              if (!toolCallsMap.has(idx)) {
+                toolCallsMap.set(idx, { id: tc.id || '', name: '', arguments: '' });
+              }
+              const existing = toolCallsMap.get(idx);
+              if (tc.id) existing.id = tc.id;
+              if (tc.function?.name) existing.name += tc.function.name;
+              if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+            }
+          } else if (typeof result === 'string') {
+            if (!contentSeen) {
+              contentSeen = true;
+              clearWaitingTicker();
+              console.log(`[sendToProvider] ${provider.name} first content chunk after ${Date.now() - requestStartedAt}ms`);
+            }
+            fullText += result;
+            onChunk?.(result, fullText);
+          }
+        }
+        if (streamDone) break;
+      }
+    }
+  } finally {
+    clearWaitingTicker();
+    clearTimeout(streamWatchdogId);
   }
-  clearTimeout(streamWatchdogId);
 
   const toolCalls = finishReason === 'tool_calls' && toolCallsMap.size > 0
     ? [...toolCallsMap.values()].map(tc => ({
