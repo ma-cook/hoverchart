@@ -79,6 +79,7 @@ const TopBar = ({
   onOpenOrgManager,
   onOpenAdmin,
   onOpenFeatures,
+  onOpenFaq,
   isAdmin,
   organizationName: organizationNameProp,
   pendingInviteCount,
@@ -177,6 +178,9 @@ const TopBar = ({
   const showFeaturesEntry =
     view === 'landing' && !user && typeof onOpenFeatures === 'function';
 
+  const showFaqEntry =
+    view === 'landing' && typeof onOpenFaq === 'function';
+
   return (
     <div className="top-bar" onClick={(e) => e.stopPropagation()}>
       <div className="top-bar-section">
@@ -198,6 +202,15 @@ const TopBar = ({
             onClick={onOpenFeatures}
           >
             Features
+          </button>
+        )}
+        {showFaqEntry && (
+          <button
+            type="button"
+            className="top-bar-features top-bar-faq"
+            onClick={onOpenFaq}
+          >
+            FAQ
           </button>
         )}
       </div>

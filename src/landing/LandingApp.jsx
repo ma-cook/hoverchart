@@ -16,6 +16,7 @@ import { ShareSpacePopup } from './components/ShareSpacePopup';
 import { SpacesTable } from './components/SpacesTable';
 import TopBar from '../components/TopBar';
 import { LandingPage } from './components/LandingPage';
+import FaqPage from './components/FaqPage';
 import { OrganizationManager } from './components/OrganizationManager';
 import { AdminDashboard } from './components/AdminDashboard';
 import { FeedbackPanel } from './components/FeedbackPanel';
@@ -79,6 +80,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   const [menuOpen, setMenuOpen] = useState(false);
   // Pre-login landing inner view: 'home' (hero) or 'features'.
   const [landingView, setLandingView] = useState('home');
+  const [showFaq, setShowFaq] = useState(false);
   const [pendingInvites, setPendingInvites] = useState([]);
 
   const isOrgAdmin =
@@ -93,6 +95,7 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
   // is present so a later sign-out doesn't restore the features view.
   useEffect(() => {
     if (user) setLandingView('home');
+    setShowFaq(false);
   }, [user]);
 
   // NOTE: must stay declared ABOVE the effect that lists it as a dependency.
@@ -503,10 +506,13 @@ function LandingApp({ onOpenSpace, onTryWithoutAccount }) {
         onOpenOrgManager={() => setShowOrgManager(true)}
         onOpenAdmin={() => setShowAdminDashboard(true)}
         onOpenFeatures={!user ? () => setLandingView('features') : undefined}
+        onOpenFaq={() => setShowFaq(true)}
         isAdmin={isAppAdmin || isOrgAdmin}
         organizationName={userOrganizations[0]?.name || null}
         pendingInviteCount={pendingInvites.length}
       />
+
+      {showFaq && <FaqPage onClose={() => setShowFaq(false)} />}
 
       <div className={`sidebar-menu ${menuOpen ? 'open' : ''}`}>
         <div className="menu-content">
