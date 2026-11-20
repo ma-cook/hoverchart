@@ -1022,7 +1022,7 @@ export async function sendToZen({ messages, tools, onChunk, signal, llmConfig })
         reasoningEffort: effectiveReasoningEffort,
       });
     } catch (err) {
-      if (err?.status === 429 || /rate limit|too many requests/i.test(err?.message || '')) {
+      if (err?.providerErrorType !== 'ProviderQueueFullError' && (err?.status === 429 || /rate limit|too many requests/i.test(err?.message || ''))) {
         reportProviderRateLimited(providerId, err?.retryAfterMs);
       }
       throw err;

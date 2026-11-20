@@ -47,7 +47,7 @@ function isAllowed(url) {
 // of client-side fan-out (tool rounds, sub-agents, compression summarizers).
 const LLM_MIN_INTERVAL_MS = Number(process.env.LLM_MIN_INTERVAL_MS) || 2_000;
 const LLM_MAX_INTERVAL_MS = Number(process.env.LLM_MAX_INTERVAL_MS) || 60_000;
-const LLM_QUEUE_MAX_WAIT_MS = Number(process.env.LLM_QUEUE_MAX_WAIT_MS) || 120_000;
+const LLM_QUEUE_MAX_WAIT_MS = Number(process.env.LLM_QUEUE_MAX_WAIT_MS) || 6 * 60 * 1000;
 
 const hostThrottle = new Map();
 
@@ -70,9 +70,11 @@ async function waitForThrottleSlot(host, res) {
   while (true) {
     if (t.inFlight < 1 && Date.now() >= t.nextAllowedAt) break;
     if (Date.now() >= deadline) {
-      const retryAfterSec = Math.max(1, Math.ceil((t.nextAllowedAt - Date.now()) / 1000));
+      const remainingSec = Math.ceil((t.nextAllowedAt - Date.now()) / 1000);
+      const retryAfterSec = Math.max(30, Number.isFinite(remainingSec) ? remainingSec : 30);
       res.status(429).setHeader('Retry-After', String(retryAfterSec)).json({
-        error: 'Rate limit — request queue is full, retry after the current request completes',
+        error: 'Provider request queue timed out while waiting for the current request to finish',
+        type: 'ProviderQueueFullError',
         retryAfter: retryAfterSec,
       });
       return false;

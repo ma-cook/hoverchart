@@ -1180,6 +1180,7 @@ export async function sendWithRetrieval({
     let sendFailed = false;
     let sendFailedDailyCap = false;
     let sendFailedReasoningBudget = false;
+    let sendFailedQueueFull = false;
     let lastSendError = null;
     let rateLimitRetriesLeft = 1;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
@@ -1210,6 +1211,16 @@ export async function sendWithRetrieval({
           console.warn(`[ToolRound] Reasoning budget exhausted for ${sendErr.provider}; stopping run`);
           sendFailed = true;
           sendFailedReasoningBudget = true;
+          break;
+        }
+
+        if (sendErr?.providerErrorType === 'ProviderQueueFullError') {
+          finalText = (finalText ? finalText + '\n\n' : '') +
+            `[The ${sendErr.provider || 'LLM'} request queue timed out while another request was still running. ` +
+            `Wait for the current request to finish, use a shorter reasoning effort (Reason: low), or retry.]`;
+          console.warn(`[ToolRound] Provider queue full for ${sendErr.provider}; stopping run`);
+          sendFailed = true;
+          sendFailedQueueFull = true;
           break;
         }
 
@@ -1263,6 +1274,10 @@ export async function sendWithRetrieval({
       }
       if (sendFailedReasoningBudget) {
         console.warn(`[ToolRound] Round ${rounds + 1}: reasoning budget exhausted, stopping run`);
+        break;
+      }
+      if (sendFailedQueueFull) {
+        console.warn(`[ToolRound] Round ${rounds + 1}: provider queue full, stopping run`);
         break;
       }
       const failureDetail = lastSendError?.message ? ` ${lastSendError.message}` : '';

@@ -347,7 +347,7 @@ export async function sendToProvider({
 
   try {
   const MAX_RETRIES = 3;
-  const timeoutMs = 5 * 60 * 1000;
+  const timeoutMs = 12 * 60 * 1000;
 
   let res;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
