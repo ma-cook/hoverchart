@@ -75,28 +75,17 @@ function applyReasoningModelOptions(body, model, reasoningEffort) {
   return body;
 }
 
-// GLM 5.3 on NVIDIA: measured on the live proxy, every request clusters at
-// ~290-302s because the model burns its WHOLE token budget on reasoning
-// (GLM templates derive the thinking budget from max_tokens), right at
-// NVIDIA's ~300s gateway limit -> intermittent 504s / reasoning-only streams.
-// Fix: cap the per-round budget like opencode does (its ~2min responses), and
-// send every known thinking-disable convention — harmless if the template
-// ignores unknown kwargs. low -> disabled, high/max -> enabled.
+// GLM 5.3 on NVIDIA: measured on the live proxy, requests used to cluster at
+// ~290-302s because the model burned its whole token budget on reasoning right
+// at NVIDIA's ~300s gateway limit. Streaming (Accept: text/event-stream in the
+// proxy) removed the 504s, but the model still reasoned for entire rounds
+// without answering. Every thinking-disable convention we tried
+// (reasoning_effort, thinking_mode, thinking, enable_thinking — separately and
+// combined) is ignored by this NIM, and the conflicting mix may make the
+// template reason longer. opencode's validated shape sends NO reasoning
+// parameters at all — match it. Reasoning length is prompt-driven; the client's
+// Reason select is a no-op for Nvidia.
 const NVIDIA_MAX_TOKENS = 8192;
-
-function applyNvidiaReasoningOptions(body, model, reasoningEffort) {
-  if (modelSupportsReasoningEffort(model)) {
-    const effort = REASONING_EFFORTS.includes(reasoningEffort) ? reasoningEffort : 'low';
-    const thinkingDisabled = effort === 'low';
-    body.chat_template_kwargs = {
-      ...(body.chat_template_kwargs || {}),
-      thinking_mode: thinkingDisabled ? 'disabled' : 'enabled',
-      thinking: thinkingDisabled ? false : true,
-      enable_thinking: thinkingDisabled ? false : true,
-    };
-  }
-  return body;
-}
 
 function parseOpenAiStreamLine(line) {
   if (!line.startsWith('data:')) return null;
@@ -266,10 +255,10 @@ export const PROVIDERS = [
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     }),
-    formatBody: (messages, model, tools, options) => {
+    formatBody: (messages, model, tools) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: NVIDIA_MAX_TOKENS };
       if (tools && tools.length > 0) body.tools = tools;
-      return applyNvidiaReasoningOptions(body, model, options?.reasoningEffort);
+      return body;
     },
     parseModels: (data) => {
       const rows = Array.isArray(data?.data)
