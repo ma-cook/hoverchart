@@ -90,25 +90,40 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-async function waitForThrottleSlot(host, res) {
+async function waitForThrottleSlot(host, req, res) {
   const t = getHostThrottle(host);
   const deadline = Date.now() + LLM_QUEUE_MAX_WAIT_MS;
-  while (true) {
-    if (t.inFlight < 1 && Date.now() >= t.nextAllowedAt) break;
-    if (Date.now() >= deadline) {
-      const remainingSec = Math.ceil((t.nextAllowedAt - Date.now()) / 1000);
-      const retryAfterSec = Math.max(30, Number.isFinite(remainingSec) ? remainingSec : 30);
-      res.status(429).setHeader('Retry-After', String(retryAfterSec)).json({
-        error: 'Provider request queue timed out while waiting for the current request to finish',
-        type: 'ProviderQueueFullError',
-        retryAfter: retryAfterSec,
-      });
-      return false;
+  let clientGone = false;
+  const onClose = () => { clientGone = true; };
+  req.once('close', onClose);
+  try {
+    while (true) {
+      // A client that disconnects while queued (refresh, stop button) must not
+      // come back as a zombie that acquires the slot later and streams for the
+      // full fetch timeout to nobody.
+      if (clientGone) return 'aborted';
+      if (t.inFlight < 1 && Date.now() >= t.nextAllowedAt) break;
+      if (Date.now() >= deadline) {
+        const remainingSec = Math.ceil((t.nextAllowedAt - Date.now()) / 1000);
+        const retryAfterSec = Math.max(30, Number.isFinite(remainingSec) ? remainingSec : 30);
+        res.status(429).setHeader('Retry-After', String(retryAfterSec)).json({
+          error: 'Provider request queue timed out while waiting for the current request to finish',
+          type: 'ProviderQueueFullError',
+          retryAfter: retryAfterSec,
+        });
+        return 'timeout';
+      }
+      await sleep(200);
     }
-    await sleep(200);
+    t.inFlight++;
+    if (clientGone) {
+      releaseThrottleSlot(host, { rateLimited: false });
+      return 'aborted';
+    }
+    return 'acquired';
+  } finally {
+    req.off('close', onClose);
   }
-  t.inFlight++;
-  return true;
 }
 
 function releaseThrottleSlot(host, { rateLimited }) {
@@ -169,7 +184,8 @@ router.post('/chat', async (req, res) => {
   chatRequestTotal++;
   console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} reasoning=${body?.reasoning_effort || body?.chat_template_kwargs?.thinking_mode || 'default'} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint} total=${chatRequestTotal}`);
 
-  if (!(await waitForThrottleSlot(host, res))) return;
+  const slot = await waitForThrottleSlot(host, req, res);
+  if (slot !== 'acquired') return;
 
   console.log(`[llm-proxy] FETCH ${new Date().toISOString()} host=${host} model=${model} queueWaitMs=${Date.now() - startedAt}`);
 
@@ -181,6 +197,10 @@ router.post('/chat', async (req, res) => {
     const fetchTimeoutMs = Math.max(30_000, Math.min(hostFetchTimeoutMs, REQUEST_CEILING_MS - queueWaitMs));
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), fetchTimeoutMs);
+    // A client that leaves while we hold the slot (refresh, stop button) must
+    // free it instead of zombie-streaming for the full fetch timeout.
+    const clientGoneController = new AbortController();
+    req.once('close', () => clientGoneController.abort());
 
     const upstreamHeaders = host === 'opencode.ai'
       ? { ...headers, ...opencodeClientHeaders() }
@@ -198,7 +218,7 @@ router.post('/chat', async (req, res) => {
       method: 'POST',
       headers: upstreamHeaders,
       body: JSON.stringify(body),
-      signal: timeoutController.signal,
+      signal: AbortSignal.any([timeoutController.signal, clientGoneController.signal]),
       dispatcher: upstreamDispatcher,
     });
     clearTimeout(timeoutId);
