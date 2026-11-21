@@ -168,9 +168,21 @@ router.post('/chat', async (req, res) => {
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), fetchTimeoutMs);
 
+    const upstreamHeaders = host === 'opencode.ai'
+      ? { ...headers, ...opencodeClientHeaders() }
+      : { ...headers };
+    // Gateways (including NVIDIA NIM) only stream incrementally when the
+    // request advertises SSE; without this they buffer the whole completion
+    // and flush headers+body together — or drop the silent connection at
+    // their ~300s gateway timeout. Clients that stream (opencode) send this
+    // header and get first tokens in minutes on the same endpoint.
+    if (body?.stream === true && !Object.keys(upstreamHeaders).some(k => k.toLowerCase() === 'accept')) {
+      upstreamHeaders['Accept'] = 'text/event-stream';
+    }
+
     const upstream = await fetch(url, {
       method: 'POST',
-      headers: host === 'opencode.ai' ? { ...headers, ...opencodeClientHeaders() } : headers,
+      headers: upstreamHeaders,
       body: JSON.stringify(body),
       signal: timeoutController.signal,
     });
