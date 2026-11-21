@@ -2094,8 +2094,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
             disabled={streaming}
             title={reasoningEffortSupported
               ? (windowLlm.reasoningEffort === 'low'
-                ? 'Reasoning effort for this model'
-                : 'High/max reasoning can delay the first token for minutes on GLM 5.3')
+                ? 'Reason: low disables GLM thinking for the fastest response'
+                : 'Reason: high/max enables GLM thinking, which can add minutes before the first token')
               : 'Reasoning effort applies to GLM 5.3 models'}
           >
             {REASONING_EFFORTS.map(effort => (

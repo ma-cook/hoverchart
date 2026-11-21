@@ -75,6 +75,25 @@ function applyReasoningModelOptions(body, model, reasoningEffort) {
   return body;
 }
 
+// GLM 5.3 on NVIDIA ignores OpenAI-style reasoning_effort and runs its chat
+// template's default full-thinking mode unless told otherwise — the model then
+// burns the entire 32k token budget on unseen reasoning (~5 min before the
+// first byte, since NVIDIA buffers the whole completion; often finish_reason
+// "length" with no answer at all). opencode's validated shape (~2 min) is
+// chat_template_kwargs: { thinking_mode: "enabled" | "disabled" }.
+// Map the Reason select onto the variable the model actually honors:
+// low -> thinking disabled (fastest), high/max -> thinking enabled.
+function applyNvidiaReasoningOptions(body, model, reasoningEffort) {
+  if (modelSupportsReasoningEffort(model)) {
+    const effort = REASONING_EFFORTS.includes(reasoningEffort) ? reasoningEffort : 'low';
+    body.chat_template_kwargs = {
+      ...(body.chat_template_kwargs || {}),
+      thinking_mode: effort === 'low' ? 'disabled' : 'enabled',
+    };
+  }
+  return body;
+}
+
 function parseOpenAiStreamLine(line) {
   if (!line.startsWith('data:')) return null;
   const data = line.slice(5).trim();
@@ -246,7 +265,7 @@ export const PROVIDERS = [
     formatBody: (messages, model, tools, options) => {
       const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
       if (tools && tools.length > 0) body.tools = tools;
-      return applyReasoningModelOptions(body, model, options?.reasoningEffort);
+      return applyNvidiaReasoningOptions(body, model, options?.reasoningEffort);
     },
     parseModels: (data) => {
       const rows = Array.isArray(data?.data)

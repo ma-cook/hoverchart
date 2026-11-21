@@ -153,7 +153,7 @@ router.post('/chat', async (req, res) => {
   const authEntry = Object.entries(headers || {}).find(([k]) => /^(authorization|x-api-key)$/i.test(k));
   const keyHint = authEntry ? String(authEntry[1]).slice(0, 12) : 'none';
   chatRequestTotal++;
-  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} reasoning=${body?.reasoning_effort || 'default'} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint} total=${chatRequestTotal}`);
+  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} reasoning=${body?.reasoning_effort || body?.chat_template_kwargs?.thinking_mode || 'default'} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint} total=${chatRequestTotal}`);
 
   if (!(await waitForThrottleSlot(host, res))) return;
 
