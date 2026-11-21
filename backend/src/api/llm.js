@@ -181,18 +181,31 @@ router.post('/chat', async (req, res) => {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
 
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
 
       const PUMP_WATCHDOG_MS = 5 * 60 * 1000;
+      const HEARTBEAT_MS = 15 * 1000;
       let pumpWatchdogId = null;
+      let heartbeatId = null;
+      const clearStreamTimers = () => {
+        clearTimeout(pumpWatchdogId);
+        clearInterval(heartbeatId);
+        pumpWatchdogId = null;
+        heartbeatId = null;
+      };
       const resetPumpWatchdog = () => {
         clearTimeout(pumpWatchdogId);
         pumpWatchdogId = setTimeout(() => {
           reader.cancel('pump watchdog timeout');
         }, PUMP_WATCHDOG_MS);
       };
+
+      heartbeatId = setInterval(() => {
+        if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n');
+      }, HEARTBEAT_MS);
 
       const pump = async () => {
         try {
@@ -201,6 +214,7 @@ router.post('/chat', async (req, res) => {
             const { done, value } = await reader.read();
             clearTimeout(pumpWatchdogId);
             if (done) {
+              clearStreamTimers();
               res.end();
               return;
             }
@@ -208,13 +222,13 @@ router.post('/chat', async (req, res) => {
             res.write(chunk);
           }
         } catch {
-          clearTimeout(pumpWatchdogId);
+          clearStreamTimers();
           if (!res.writableEnded) res.end();
         }
       };
 
       req.on('close', () => {
-        clearTimeout(pumpWatchdogId);
+        clearStreamTimers();
         reader.cancel();
       });
 

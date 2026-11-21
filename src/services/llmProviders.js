@@ -347,7 +347,7 @@ export async function sendToProvider({
 
   try {
   const MAX_RETRIES = 3;
-  const timeoutMs = 12 * 60 * 1000;
+  const timeoutMs = 18 * 60 * 1000;
 
   let res;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -397,6 +397,10 @@ export async function sendToProvider({
       clearTimeout(timeoutId);
       if (err.name === 'AbortError') throw err;
       if (err.message?.startsWith(provider.name)) throw err;
+      if (/failed to fetch|networkerror|load failed/i.test(err?.message || '')) {
+        err.message = `${provider.name} proxy request failed before response headers (gateway timeout/CORS). Check the backend /api/llm/chat deployment and request timeout.`;
+        err.providerErrorType = 'GatewayTimeoutError';
+      }
       if (attempt < MAX_RETRIES - 1) {
         const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
         console.warn(`[sendToProvider] ${provider.name} request failed (${err.message}), retrying in ${backoffMs}ms (${attempt + 1}/${MAX_RETRIES})`);
