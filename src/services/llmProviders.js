@@ -75,20 +75,24 @@ function applyReasoningModelOptions(body, model, reasoningEffort) {
   return body;
 }
 
-// GLM 5.3 on NVIDIA ignores OpenAI-style reasoning_effort and runs its chat
-// template's default full-thinking mode unless told otherwise — the model then
-// burns the entire 32k token budget on unseen reasoning (~5 min before the
-// first byte, since NVIDIA buffers the whole completion; often finish_reason
-// "length" with no answer at all). opencode's validated shape (~2 min) is
-// chat_template_kwargs: { thinking_mode: "enabled" | "disabled" }.
-// Map the Reason select onto the variable the model actually honors:
-// low -> thinking disabled (fastest), high/max -> thinking enabled.
+// GLM 5.3 on NVIDIA: measured on the live proxy, every request clusters at
+// ~290-302s because the model burns its WHOLE token budget on reasoning
+// (GLM templates derive the thinking budget from max_tokens), right at
+// NVIDIA's ~300s gateway limit -> intermittent 504s / reasoning-only streams.
+// Fix: cap the per-round budget like opencode does (its ~2min responses), and
+// send every known thinking-disable convention — harmless if the template
+// ignores unknown kwargs. low -> disabled, high/max -> enabled.
+const NVIDIA_MAX_TOKENS = 8192;
+
 function applyNvidiaReasoningOptions(body, model, reasoningEffort) {
   if (modelSupportsReasoningEffort(model)) {
     const effort = REASONING_EFFORTS.includes(reasoningEffort) ? reasoningEffort : 'low';
+    const thinkingDisabled = effort === 'low';
     body.chat_template_kwargs = {
       ...(body.chat_template_kwargs || {}),
-      thinking_mode: effort === 'low' ? 'disabled' : 'enabled',
+      thinking_mode: thinkingDisabled ? 'disabled' : 'enabled',
+      thinking: thinkingDisabled ? false : true,
+      enable_thinking: thinkingDisabled ? false : true,
     };
   }
   return body;
@@ -263,7 +267,7 @@ export const PROVIDERS = [
       'Content-Type': 'application/json',
     }),
     formatBody: (messages, model, tools, options) => {
-      const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: 32768 };
+      const body = { model, messages: sanitizeMessages(messages), stream: true, max_tokens: NVIDIA_MAX_TOKENS };
       if (tools && tools.length > 0) body.tools = tools;
       return applyNvidiaReasoningOptions(body, model, options?.reasoningEffort);
     },
