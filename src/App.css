@@ -1650,6 +1650,16 @@ body {
   color: #fff;
 }
 
+.space-chat-cooldown {
+  font-size: 11px;
+  color: rgba(255, 180, 80, 0.9);
+  background: rgba(255, 180, 80, 0.12);
+  border: 1px solid rgba(255, 180, 80, 0.3);
+  border-radius: 6px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
 .space-chat-model-dropdown {
   position: absolute;
   bottom: 100%;

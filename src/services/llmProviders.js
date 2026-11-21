@@ -349,6 +349,11 @@ export async function sendToProvider({
   const MAX_RETRIES = 3;
   const timeoutMs = 18 * 60 * 1000;
 
+  // 5xx / gateway-class failures get exactly one retry. Each failed attempt can
+  // burn minutes while the proxy waits on a slow reasoning model, and three
+  // silent rounds of that read as a dead app instead of an error.
+  let gatewayRetried = false;
+
   let res;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const timeoutController = new AbortController();
@@ -369,15 +374,22 @@ export async function sendToProvider({
 
       if (res.ok) break;
 
-      if (res.status >= 500 && attempt < MAX_RETRIES - 1) {
+      if (res.status >= 500 && !gatewayRetried) {
+        gatewayRetried = true;
         const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
-        console.warn(`[sendToProvider] ${provider.name} error ${res.status}, retrying in ${backoffMs}ms (${attempt + 1}/${MAX_RETRIES})`);
+        console.warn(`[sendToProvider] ${provider.name} error ${res.status}, retrying once in ${backoffMs}ms`);
         await new Promise(r => setTimeout(r, backoffMs));
         continue;
       }
 
       const errText = await res.text().catch(() => '');
-      const err = new Error(`${provider.name} error ${res.status}: ${errText}`);
+      // A 502 from our proxy means the upstream never returned headers within
+      // its timeout — for buffered reasoning models the generation may have
+      // simply needed more time. Say so instead of surfacing a bare 502.
+      const message = res.status === 502
+        ? `${provider.name} did not respond before the proxy timed out. The model may still be generating server-side — try a shorter prompt, a different model, or another provider.`
+        : `${provider.name} error ${res.status}: ${errText}`;
+      const err = new Error(message);
       err.status = res.status;
       err.provider = provider.name;
       const retryAfter = res.headers.get('retry-after');
@@ -398,14 +410,15 @@ export async function sendToProvider({
       if (err.name === 'AbortError') throw err;
       if (err.message?.startsWith(provider.name)) throw err;
       if (/failed to fetch|networkerror|load failed/i.test(err?.message || '')) {
-        err.message = `${provider.name} proxy request failed before response headers (gateway timeout/CORS). Check the backend /api/llm/chat deployment and request timeout.`;
+        if (!gatewayRetried) {
+          gatewayRetried = true;
+          const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+          console.warn(`[sendToProvider] ${provider.name} request failed (${err.message}), retrying once in ${backoffMs}ms`);
+          await new Promise(r => setTimeout(r, backoffMs));
+          continue;
+        }
+        err.message = `${provider.name} proxy request failed twice before response headers (gateway timeout/CORS). Check the backend /api/llm/chat deployment, or switch provider.`;
         err.providerErrorType = 'GatewayTimeoutError';
-      }
-      if (attempt < MAX_RETRIES - 1) {
-        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
-        console.warn(`[sendToProvider] ${provider.name} request failed (${err.message}), retrying in ${backoffMs}ms (${attempt + 1}/${MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, backoffMs));
-        continue;
       }
       throw err;
     }

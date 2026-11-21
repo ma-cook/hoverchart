@@ -8,7 +8,7 @@ import {
   isLocalFallbackError,
 } from '../services/durableScan';
 import { saveScanSession } from '../services/scanJobSession';
-import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker } from '../services/zenService';
+import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, getProviderCooldownRemainingMs } from '../services/zenService';
 import { sendWithRetrieval, getContentStore, waitForContentStoreHydration } from '../services/context';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { enrichPlanMerfolk } from '../services/planMerfolkEnricher';
@@ -492,6 +492,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const [pushNotification, setPushNotification] = useState(null);
   const [associatedCount, setAssociatedCount] = useState(0);
   const [scanProgress, setScanProgress] = useState(null);
+  const [cooldownRemainingMs, setCooldownRemainingMs] = useState(0);
 
   const llmMessages = chatMode === 'plan' ? planMessages : codeMessages;
 
@@ -499,6 +500,25 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   // Group mode is a real-time chat and never locked.
   const llmLocked = chatMode !== 'group' && !windowLlm.apiKey;
   const reasoningEffortSupported = modelSupportsReasoningEffort(windowLlm.selectedModel);
+
+  // The client-side pacer can hold a send silently while a persisted 429
+  // cooldown runs down (see zenService waitForRateLimit). Poll the remaining
+  // time so the model bar can show the wait instead of a dead-looking input.
+  useEffect(() => {
+    if (chatMode !== 'plan' && chatMode !== 'code') {
+      setCooldownRemainingMs(0);
+      return undefined;
+    }
+    const providerId = windowLlm.providerId || useLlmStore.getState().providerId;
+    if (!providerId) {
+      setCooldownRemainingMs(0);
+      return undefined;
+    }
+    const tick = () => setCooldownRemainingMs(getProviderCooldownRemainingMs(providerId));
+    tick();
+    const intervalId = setInterval(tick, 1000);
+    return () => clearInterval(intervalId);
+  }, [chatMode, windowLlm.providerId, isOpen]);
 
   // Hide the "create a 3D diagram" suggestion once the user has actually
   // asked for a diagram in this plan conversation.
@@ -1264,6 +1284,12 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const handleApiKeySubmit = useCallback(async () => {
     const key = apiKeyInput.trim();
     if (!key || !pendingProviderId) return;
+    // NVIDIA keys are nvapi- JWTs; anything else 401s with an opaque
+    // "Invalid JWT serialization" error. Catch the bad paste up front.
+    if (pendingProviderId === 'nvidia' && !key.startsWith('nvapi-')) {
+      setModelFetchError('NVIDIA API keys normally start with "nvapi-". Double-check that you copied the complete key from build.nvidia.com.');
+      return;
+    }
     setFetchingModels(true);
     setModelFetchError(null);
     try {
@@ -2076,6 +2102,14 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               <option key={effort} value={effort}>Reason: {effort}</option>
             ))}
           </select>
+          {cooldownRemainingMs > 0 && (
+            <div
+              className="space-chat-cooldown"
+              title="The provider returned a rate limit recently. New requests wait in a local cooldown until it clears."
+            >
+              ⏳ {Math.ceil(cooldownRemainingMs / 1000)}s
+            </div>
+          )}
         </div>
       )}
 

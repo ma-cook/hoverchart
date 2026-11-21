@@ -49,6 +49,18 @@ const LLM_MIN_INTERVAL_MS = Number(process.env.LLM_MIN_INTERVAL_MS) || 2_000;
 const LLM_MAX_INTERVAL_MS = Number(process.env.LLM_MAX_INTERVAL_MS) || 60_000;
 const LLM_QUEUE_MAX_WAIT_MS = Number(process.env.LLM_QUEUE_MAX_WAIT_MS) || 6 * 60 * 1000;
 
+// Time allowed for the upstream to return response HEADERS. NVIDIA NIM buffers
+// whole completions before flushing, so reasoning models such as GLM 5.3 take
+// ~5 minutes to first byte and occasionally more — a flat 300s abort killed
+// requests right at the finish line. Cloud Run's request ceiling is 1200s
+// (cloudbuild.yaml --timeout), so the effective timeout also absorbs however
+// long a request already spent waiting in the host queue.
+const DEFAULT_FETCH_TIMEOUT_MS = Number(process.env.LLM_FETCH_TIMEOUT_MS) || 5 * 60 * 1000;
+const HOST_FETCH_TIMEOUT_MS = {
+  'integrate.api.nvidia.com': 15 * 60 * 1000,
+};
+const REQUEST_CEILING_MS = 19 * 60 * 1000; // 60s of margin under the 1200s Cloud Run timeout
+
 const hostThrottle = new Map();
 
 function getHostThrottle(host) {
@@ -138,7 +150,8 @@ router.post('/chat', async (req, res) => {
   const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || 'unknown';
   const host = (() => { try { return new URL(url).hostname; } catch { return 'unknown'; } })();
   const model = body?.model || 'unknown';
-  const keyHint = String(headers?.authorization || '').slice(0, 12) || String(headers?.['x-api-key'] || '').slice(0, 12) || 'none';
+  const authEntry = Object.entries(headers || {}).find(([k]) => /^(authorization|x-api-key)$/i.test(k));
+  const keyHint = authEntry ? String(authEntry[1]).slice(0, 12) : 'none';
   chatRequestTotal++;
   console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} reasoning=${body?.reasoning_effort || 'default'} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint} total=${chatRequestTotal}`);
 
@@ -149,8 +162,11 @@ router.post('/chat', async (req, res) => {
   activeChatRequests++;
   let upstreamRateLimited = false;
   try {
+    const queueWaitMs = Date.now() - startedAt;
+    const hostFetchTimeoutMs = HOST_FETCH_TIMEOUT_MS[host] || DEFAULT_FETCH_TIMEOUT_MS;
+    const fetchTimeoutMs = Math.max(30_000, Math.min(hostFetchTimeoutMs, REQUEST_CEILING_MS - queueWaitMs));
     const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), 5 * 60 * 1000);
+    const timeoutId = setTimeout(() => timeoutController.abort(), fetchTimeoutMs);
 
     const upstream = await fetch(url, {
       method: 'POST',

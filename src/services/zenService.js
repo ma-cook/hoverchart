@@ -925,8 +925,14 @@ function sleepAbortable(ms, signal) {
   });
 }
 
+// Retry-After values can be enormous (e.g. a monthly-quota 429 carrying
+// "resets in 8d 21h"); persisting them verbatim silently froze the provider for
+// days across reloads. Clamp so pacing always stays recoverable.
+const MAX_PERSISTED_COOLDOWN_MS = 10 * 60 * 1000;
+
 export function reportProviderRateLimited(providerId, retryAfterMs) {
-  const until = Date.now() + Math.max(retryAfterMs || 0, 60_000);
+  const clampedRetryAfterMs = Math.min(retryAfterMs || 0, MAX_PERSISTED_COOLDOWN_MS);
+  const until = Date.now() + Math.max(clampedRetryAfterMs, 60_000);
   providerCooldownUntil.set(providerId, until);
   persistCooldowns(providerCooldownUntil);
   // Engage the reduced throttled tier so subsequent requests pace more gently
