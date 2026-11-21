@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { createGunzip } from 'zlib';
 import crypto from 'crypto';
+import { Agent } from 'undici';
 
 const router = Router();
 
@@ -62,6 +63,19 @@ const HOST_FETCH_TIMEOUT_MS = {
 const REQUEST_CEILING_MS = 19 * 60 * 1000; // 60s of margin under the 1200s Cloud Run timeout
 
 const hostThrottle = new Map();
+
+// Node's global fetch (undici) silently caps time-to-response-HEADERS at
+// 300s (headersTimeout) and body chunk gaps at 300s (bodyTimeout) — every
+// timeout wired up in this file is irrelevant if undici kills the socket
+// first, which is exactly what "fetch failed" after ~301s was. Buffered
+// reasoning endpoints (NVIDIA GLM) routinely need >300s before the first
+// byte, so raise both to match the per-host fetch budget.
+const UPSTREAM_SOCKET_TIMEOUT_MS = 16 * 60 * 1000;
+const upstreamDispatcher = new Agent({
+  headersTimeout: UPSTREAM_SOCKET_TIMEOUT_MS,
+  bodyTimeout: UPSTREAM_SOCKET_TIMEOUT_MS,
+  connectTimeout: 30_000,
+});
 
 function getHostThrottle(host) {
   let t = hostThrottle.get(host);
@@ -185,6 +199,7 @@ router.post('/chat', async (req, res) => {
       headers: upstreamHeaders,
       body: JSON.stringify(body),
       signal: timeoutController.signal,
+      dispatcher: upstreamDispatcher,
     });
     clearTimeout(timeoutId);
 
@@ -296,6 +311,7 @@ router.post('/models', async (req, res) => {
     const upstream = await fetch(url, {
       method: 'GET',
       headers: host === 'opencode.ai' ? { ...headers, ...opencodeClientHeaders() } : headers,
+      dispatcher: upstreamDispatcher,
     });
     const data = await upstream.json();
     res.status(upstream.status).json(data);
